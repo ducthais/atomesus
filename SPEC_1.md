@@ -1,16 +1,12 @@
 # SPEC.md — Control Plane cho việc sinh pipeline ELT
 
-Đặc tả **hệ thống đích**. Đọc `CLAUDE.md` trước để nắm bảy luật cứng.
+Đặc tả **hệ thống đích**. Bảy bất biến ở mục 19 là luật cứng, không có ngoại lệ.
 
-## 0. Ba tài liệu và quy tắc ưu tiên
+## 0. Phạm vi tài liệu
 
-| Tài liệu | Trả lời câu hỏi | Không chứa |
-|---|---|---|
-| `SPEC.md` (file này) | Hệ thống đích trông như thế nào, hành vi ra sao | Lộ trình, cắt giảm, số ngày |
-| `SCOPE.md` | MVP làm gì, bỏ gì, nghiệm thu ra sao | Chi tiết thiết kế |
-| `UI-SPEC.md` | Giao diện thể hiện hệ thống ra sao | Quyết định phạm vi |
+File này là nguồn duy nhất cho hệ thống đích: trông như thế nào, hành vi ra sao, MVP dừng ở đâu. Không chứa lộ trình và số ngày.
 
-**Khi mâu thuẫn:** `SCOPE.md` thắng về *phạm vi* (làm hay không, ở mức nào). `SPEC.md` thắng về *hành vi* (đã làm thì phải chạy thế nào). `UI-SPEC.md` không bao giờ quyết định phạm vi backend — bỏ một ô hiển thị không có nghĩa là bỏ phép kiểm tra.
+Giao diện không bao giờ quyết định phạm vi backend — bỏ một ô hiển thị không có nghĩa là bỏ phép kiểm tra.
 
 ### 0.1 Tuyên bố governance
 
@@ -47,7 +43,7 @@ Bằng chứng ghi lúc tạo mới chính là đường cơ sở để so sánh
 
 ### 1.3 Vì sao không phải "AI viết SQL"
 
-Ba vấn đề mà công cụ sinh code thuần không giải quyết được:
+Bốn vấn đề mà công cụ sinh code thuần không giải quyết được:
 
 1. **Guardrail phải cưỡng chế, không phải lời dặn.** Agent chạy tự động cần chốt chặn ở tầng hạ tầng (IAM, `maximum_bytes_billed`, `require_partition_filter`), không phải câu "đừng làm hỏng prod" trong prompt.
 2. **Ranh giới nghiệp vụ không suy ra được từ schema.** Khi có 17 bảng tên `customer` ở các domain khác nhau, agent thông minh hơn không giúp được. Nó phải đọc định nghĩa do con người viết, và **biết từ chối** khi chưa có định nghĩa.
@@ -64,15 +60,18 @@ Bộ sinh code là bộ phận thay thế được. Kho chính sách và sổ b�
 
 ## 2. Actor và ranh giới quyền
 
-| Actor | Làm được | Không làm được |
+App có đúng **hai vai**:
+
+| Vai | Làm được | Không làm được |
 |---|---|---|
-| Người yêu cầu | Gửi yêu cầu, xác nhận kế hoạch ở P2, xem kết quả | Duyệt code, deploy |
-| Data engineer | Chạy agent, sửa spec, chạy lại, đọc bằng chứng | Duyệt chính run của mình |
-| Reviewer | Đọc diff và bằng chứng, duyệt / từ chối / yêu cầu sửa, kích hoạt deploy | Sửa code trực tiếp trong app |
-| Data steward | Sở hữu `policy/*.yml`, xử lý phiếu xung đột thực thể | — |
-| Agent | Sinh, chạy thử, tự sửa **trong sandbox** | Chạm prod, deploy khi chưa được duyệt, chạy lệnh shell |
+| **Engineer** | Gửi yêu cầu (chat hoặc wizard), trả lời câu hỏi làm rõ, xác nhận kế hoạch ở P2, sửa spec qua chat, chạy lại, hủy run của mình, đọc bằng chứng | Duyệt hoặc deploy **run của chính mình** |
+| **Reviewer** | Đọc diff và bằng chứng, hỏi trợ lý chat, duyệt / từ chối / yêu cầu sửa, kích hoạt deploy | Tạo run, sửa spec, sửa code trực tiếp trong app |
 
 Quy tắc "engineer không tự duyệt run của mình" là ràng buộc bắt buộc, không phải tùy chọn cấu hình.
+
+Hai bên liên quan **không phải vai trong app**:
+- **Data steward** sở hữu `policy/*.yml` và xử lý phiếu xung đột thực thể. Steward sửa chính sách qua git (pull request), không qua app; app chỉ hiển thị chính sách ở chế độ chỉ đọc (FR-19).
+- **Agent** chỉ sinh, chạy thử và tự sửa **trong sandbox**. Agent không chạm prod, không deploy khi chưa được duyệt, không chạy lệnh shell (mục 19).
 
 ---
 
@@ -90,17 +89,23 @@ Quy tắc "engineer không tự duyệt run của mình" là ràng buộc bắt 
 
 ### 3.2 UC-2 — Onboard hàng loạt bảng
 
-Người dùng chọn N bảng của một hệ thống nguồn mới; hệ thống sinh N pipeline ingestion và staging theo cùng quy ước, thẩm định từng cái, và trình kết quả theo mẻ để duyệt.
+Người dùng chọn N đối tượng (bảng, endpoint hoặc nhóm file) của một hệ thống nguồn mới; hệ thống sinh N pipeline ingestion và staging theo cùng quy ước, thẩm định từng cái, và trình kết quả theo mẻ để duyệt.
 
 **Giá trị:** nhất quán, không chỉ nhanh. Cả N pipeline sinh từ cùng template, cùng quy ước đặt tên, cùng bộ test, cùng đi qua 6 cổng. Đây là câu trả lời trực tiếp cho nỗi đau A.
 
-**Khác UC-1:** fan-out sau P3, mỗi nhánh chạy P4–P14 độc lập, gom lại ở P15. Ngân sách tính trên tổng mẻ, không trên từng nhánh.
+**Khác UC-1:** fan-out sau P3, mỗi nhánh chạy P4–P14 độc lập, gom lại ở P15. Mỗi nhánh vẫn chịu trần `per_run` như một run thường; **tổng** chi phí ước tính của cả mẻ không được vượt phần còn lại của `budgets.yml: per_day.max_usd`, vượt thì chặn cả mẻ với `BLOCKED_BUDGET` trước khi fan-out.
 
 ### 3.3 UC-3 — Tối ưu theo yêu cầu
 
-Người dùng **chủ động** trỏ vào một model đã tồn tại; hệ thống đo baseline, áp luật tối ưu, chạy thử bản ứng viên trên sandbox, và chỉ đề xuất khi bản ứng viên vừa **đúng** vừa **nhanh hơn**.
+Engineer **chủ động** trỏ vào một pipeline đã deploy; hệ thống đo baseline, áp luật tối ưu, chạy thử bản ứng viên trên sandbox, và chỉ đề xuất khi bản ứng viên vừa **đúng** vừa **nhanh hơn**.
 
-**Khác UC-1:** `trigger = "manual_optimize"`, vào thẳng P4 với spec đã có, bỏ qua P0–P3.
+**Khác UC-1:** `trigger = "manual_optimize"`. **Chỉ chạy optimizer**, không gọi LLM, không sinh spec mới:
+
+`P0 intake` → `P6 render` (spec đang chạy) → `P9–P12` (dựng dữ liệu trên sandbox và đo baseline; phải pass) → `P13 optimize` → `P14 report` → `P15 review` → `P16 deploy` → `P17 persist`
+
+Bỏ qua P1–P5 vì spec đã được duyệt. Bỏ qua P7–P8 cho spec đang chạy vì nó đã qua các cổng lúc tạo mới; **bản ứng viên** của optimizer vẫn phải qua `ast_guard` và `budget` (mục 9.3). Nếu schema của bất kỳ nguồn nào đã đổi so với `schema_snapshot` cũ thì dừng với `NEEDS_HUMAN` và gợi ý tạo run mới qua UC-1.
+
+**Kết quả:** optimizer tìm được bản tốt hơn thì run vào hàng đợi review như bình thường. Không tìm được thì run kết thúc ở P14 với trạng thái `NO_IMPROVEMENT` (mục 11.1), báo cho Engineer "không có bản tốt hơn" kèm lý do từng luật bị loại. Không vào hàng đợi review, không có gì để deploy.
 
 ### 3.4 UC-4 — Tự phát hiện suy giảm và đề xuất sửa
 
@@ -110,7 +115,7 @@ Người dùng **chủ động** trỏ vào một model đã tồn tại; hệ t
 
 **Luồng chính:** `monitor` thu số đo sau mỗi lần pipeline chạy → một luật phát hiện ở mục 9.6 vượt ngưỡng → hệ thống tự tạo run mới với `trigger = "regression"`, mang theo spec đang chạy và bằng chứng suy giảm → vào P4 → đi qua P5–P14 như bình thường → nếu bản sửa vừa đúng vừa tốt hơn thì vào hàng đợi review với nhãn "bản sửa cho pipeline đang suy giảm" → kỹ sư duyệt → deploy.
 
-**Luồng thay thế:** không tìm được bản sửa nào tốt hơn → không làm phiền kỹ sư, chỉ ghi vào sổ bằng chứng và gắn cờ pipeline để kỹ sư xem khi rảnh. Suy giảm về độ tươi do nguồn ngừng cấp dữ liệu → không phải lỗi pipeline, chuyển thành cảnh báo hạ tầng, không tạo run sửa.
+**Luồng thay thế:** không tìm được bản sửa nào tốt hơn → run kết thúc với `NO_IMPROVEMENT`, không làm phiền kỹ sư, chỉ ghi vào sổ bằng chứng và gắn cờ pipeline để kỹ sư xem khi rảnh. Suy giảm về độ tươi do nguồn ngừng cấp dữ liệu → không phải lỗi pipeline, chuyển thành cảnh báo hạ tầng, không tạo run sửa.
 
 **Hậu điều kiện:** kỹ sư không phải mở dashboard. Họ chỉ nhận những đề xuất đã có bằng chứng.
 
@@ -126,20 +131,20 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 
 | FR | Yêu cầu | Phase | Nghiệm thu |
 |---|---|---|---|
-| FR-01 | Xác thực và phân biệt hai vai trò Engineer / Reviewer | — | Reviewer không thấy nút tạo; Engineer không duyệt được run của mình |
-| FR-02 | Nhận yêu cầu ngôn ngữ tự nhiên kèm chọn domain | P0–P1 | Yêu cầu tạo ra `run_id` và bản ghi run |
+| FR-01 | Xác thực và phân biệt hai vai trò Engineer / Reviewer | — | Reviewer không thấy nút tạo; Engineer không duyệt được run của mình. Danh tính và vai trò lấy từ phiên đăng nhập ở backend, **không bao giờ** tin trường `user`/`reviewer` do client gửi lên (mục 15) |
+| FR-02 | Nhận yêu cầu ngôn ngữ tự nhiên kèm chọn domain, qua trợ lý chat hoặc wizard | P0–P1 | Yêu cầu tạo ra `run_id` và bản ghi run |
 | FR-03 | Lập kế hoạch và cho người xác nhận trước khi sinh code | P1–P2 | Không sinh spec khi chưa có `PLAN_CONFIRMED` |
-| FR-04 | Phân giải schema thật từ nguồn, không để LLM tự nghĩ tên cột | P3 | `schema_snapshot` có nguồn gốc `information_schema` |
+| FR-04 | Phân giải schema thật từ nguồn, không để LLM tự nghĩ tên cột | P3 | `schema_snapshot.origin` ghi đúng nguồn gốc theo loại nguồn (mục 12.1): `information_schema`, `openapi` hoặc `file_sample` |
 | FR-05 | Phát hiện và chặn xung đột định nghĩa thực thể giữa các domain | P3 | Ca vi phạm trả `BLOCKED_SEMANTIC_CONFLICT` kèm cả hai định nghĩa |
 | FR-06 | Sinh đặc tả pipeline dưới dạng JSON spec, không sinh code tự do | P4 | Spec khớp JSON Schema; code do template render |
 | FR-07 | Phân xử giữa nhiều phương án theo hàm mục tiêu khai báo | P5 | Lý do chọn ghi trong report; không phương án khả thi thì escalate |
-| FR-08 | Render bộ file pipeline đầy đủ: ingestion, model, schema test, orchestration | P6 | 4 file, đúng cú pháp 100% |
+| FR-08 | Render bộ file pipeline đầy đủ: ingestion, staging cho từng nguồn, model gold, schema test, orchestration | P6 | 4 + N file (N = số nguồn), đúng cú pháp 100% |
 | FR-09 | Chặn lệnh nguy hiểm và mẫu SQL xấu bằng phân tích AST | P7 | `DROP`/`DELETE`/cross-db bị chặn với `BLOCKED_AST` |
 | FR-10 | Ước lượng chi phí trước khi chạy và chặn khi vượt ngân sách | P8 | `dry_run` cho byte; vượt trần trả `BLOCKED_BUDGET` |
 | FR-11 | Thực thi pipeline trên sandbox cô lập | P9–P11 | Sandbox mới mỗi run, xóa sau khi xong |
-| FR-12 | Thẩm định tính đúng của ingestion và transform | P10, P12 | 4 phép kiểm tra ở mục 10.1 đều chạy |
+| FR-12 | Thẩm định tính đúng của ingestion, staging và transform | P10, P12 | 5 phép kiểm tra ở mục 10.1 đều chạy |
 | FR-13 | Tự sửa khi lỗi, trong trần đã khai báo | P4/P6 | Ba vòng lặp ở mục 11.3, trần đọc từ `budgets.yml` |
-| FR-14 | Đo và đề xuất tối ưu, chỉ nhận khi vừa đúng vừa nhanh hơn | P13 | Bản ứng viên kém hơn thì bị loại, ghi lý do |
+| FR-14 | Đo và đề xuất tối ưu, chỉ nhận khi vừa đúng vừa nhanh hơn; Engineer chủ động yêu cầu tối ưu một pipeline đã deploy (UC-3) chỉ chạy optimizer | P13 | Bản ứng viên kém hơn thì bị loại, ghi lý do; run UC-3 có `llm_calls = 0` |
 | FR-15 | Xuất bằng chứng có cấu trúc cho mọi run | P14 | `RunReport` đủ `gates`, `checks`, `cost`, `timing` |
 | FR-16 | Review có ba nhánh quyết định, phê duyệt gắn với `files_hash` | P15 | File đổi làm phê duyệt mất hiệu lực |
 | FR-17 | Deploy lên môi trường sandbox sau khi được duyệt | P16 | Mức D1/D2 ở mục 9.5 |
@@ -149,8 +154,12 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 | FR-21 | Thu số đo của mọi lần chạy pipeline đã deploy | Day 2 | Sổ bằng chứng có chuỗi thời gian theo từng pipeline |
 | FR-22 | Phát hiện suy giảm theo luật khai báo, không dùng LLM | Day 2 | 4 luật ở mục 9.6, ngưỡng đọc từ `objectives.yml` |
 | FR-23 | Tự tạo run sửa khi phát hiện suy giảm | Day 2 → P4 | Run mới có `trigger = "regression"` và bằng chứng suy giảm đính kèm |
-| FR-24 | Không làm phiền kỹ sư khi không có bản sửa tốt hơn | P13–P14 | Run không vào hàng đợi review, chỉ gắn cờ |
+| FR-24 | Không làm phiền kỹ sư khi không có bản sửa tốt hơn | P13–P14 | Run kết thúc với `NO_IMPROVEMENT`, không vào hàng đợi review, chỉ gắn cờ |
 | FR-25 | Không tự deploy bản sửa từ Day 2 | P15 | Mọi run `regression` bắt buộc qua cổng người |
+| FR-26 | Sinh một pipeline đọc nhiều nguồn khác loại, làm sạch từng nguồn ở staging rồi join ở gold | P1–P12 | Spec có ≥ 2 phần tử `sources` khác `kind` chạy qua đủ 6 cổng; checks ingestion và staging tách theo `source_id` |
+| FR-27 | Trợ lý chat là cửa vào hội thoại của agent, chỉ hành động qua API đã có | Mọi phase | Tin nhắn được phân loại đúng 4 ý định ở mục 14.5; cổng P2 và P15 chỉ qua nút; câu trả lời `ask` truy về trường trong `RunReport` |
+| FR-28 | Chuẩn hóa dữ liệu từng nguồn trước khi join: đổi tên, ép kiểu, chuẩn hóa ngày và tiền tệ, loại trùng, tách bản ghi rác | P6, P11–P12 | Dòng lỗi không làm hỏng model mà vào bảng `__rejected` kèm lý do; tỷ lệ rejected vượt `objectives.yml: quality.max_reject_pct` thì `staging_reconcile` fail |
+| FR-29 | Engineer hủy được run đang chạy của mình | P0–P13 | Run về `CANCELLED`, không gọi thêm LLM, sandbox bị xóa, sổ bằng chứng ghi phase lúc hủy; không hủy được từ `READY_FOR_REVIEW` trở đi |
 
 ---
 
@@ -162,12 +171,12 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 | NFR-02 | Không node LLM nào thực thi lệnh shell | Rà mã nguồn, test bất biến |
 | NFR-03 | Mọi cổng là hàm thuần, có unit test | Độ phủ test của `control_plane/gates/` |
 | NFR-04 | Mọi trần và ngân sách đọc từ `policy/*.yml`, không hardcode | Đổi giá trị trong YAML thì hành vi đổi theo, không cần build lại |
-| NFR-05 | Một run không treo vô hạn | Trần gọi LLM và timeout mỗi phase |
-| NFR-06 | Đổi warehouse chỉ là đổi một adapter | `WarehouseAdapter` protocol, mục 14 |
+| NFR-05 | Một run không treo vô hạn | Trần gọi LLM và timeout mỗi phase, đọc từ `budgets.yml: per_run.phase_timeout_sec`; quá hạn → `INFRA_ERROR` ghi phase bị treo |
+| NFR-06 | Đổi warehouse chỉ là đổi một adapter; thêm loại nguồn chỉ là thêm một `SourceAdapter`; đổi vector DB chỉ là đổi một `VectorStore` | `WarehouseAdapter`, `SourceAdapter` (mục 12) và `VectorStore` (mục 14.4) |
 | NFR-07 | Đổi model LLM không đụng `control_plane/` | Ranh giới module |
 | NFR-08 | Mọi con số hiển thị truy được về một phép đo trong `RunReport` | Rà UI |
 | NFR-09 | Tái hiện được quá trình khi cần giải trình | `spec_history` lưu mọi phiên bản |
-| NFR-10 | Giao diện truy cập được bằng bàn phím, màu luôn kèm chữ trạng thái | `UI-SPEC.md` |
+| NFR-10 | Giao diện truy cập được bằng bàn phím, màu luôn kèm chữ trạng thái | Rà các màn ở mục 16 |
 
 ---
 
@@ -175,18 +184,18 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 
 | Lớp | Công cụ | Ghi chú |
 |---|---|---|
-| Agent | LangGraph | 4 node: planner → codegen → test-run → optimizer |
-| LLM | Claude (API) | Model rẻ cho phân loại, model mạnh cho sinh spec |
+| Agent | LangGraph | 4 node: planner → codegen → test-run → optimizer (mục 14.2) |
+| LLM | OpenAI (API) | Model rẻ cho phân loại, model mạnh cho sinh spec. Claude chỉ là trợ lý lập trình cho nhóm, **không** nằm trong runtime |
 | Ingestion (E-L) | dlt | Bổ sung so với đề bài gốc; đề bài không có công cụ cho E-L |
 | Transform (T) | dbt-core + dbt-duckdb | dbt-bigquery cho demo cổng chi phí |
 | Orchestration | Dagster (`dagster-dbt`, `dagster-dlt`) | Nhẹ hơn Airflow, asset model hợp với lineage |
 | Sandbox | DuckDB | Môi trường phát triển hằng ngày |
 | Cloud warehouse | BigQuery | Chỉ để chứng minh `dry_run` và cổng chi phí |
 | Phân tích SQL | sqlglot | Phân tích **tĩnh** (AST). Query plan lấy từ `EXPLAIN ANALYZE` / `dry_run` |
-| Vector DB | Qdrant (hoặc pgvector) | Lưu spec **đã duyệt** làm few-shot |
+| Vector DB | Chroma (MVP) → Qdrant (sản phẩm thật) | Lưu spec **đã duyệt** làm few-shot. Truy cập qua `VectorStore` protocol, đổi Chroma sang Qdrant chỉ là đổi một adapter |
 | Backend | FastAPI | SSE streaming |
 | Frontend | Next.js + Monaco (`@monaco-editor/react` DiffEditor) | |
-| Nguồn | Postgres container + FastAPI mock API | |
+| Nguồn | Postgres container + FastAPI mock API + thư mục file (CSV/Parquet/JSONL) | Đủ 3 loại `sources[].kind`, dùng riêng hoặc kết hợp trong một pipeline; mỗi loại một `SourceAdapter` (mục 12.1) |
 | Đóng gói | docker-compose | Cloud Run cho FastAPI + Next.js ở bản deploy |
 
 **Lưu ý thuật ngữ:** đề bài gốc viết "sqlglot phân tích query plan". sqlglot không đọc query plan, nó parse SQL thành AST. Query plan thật đến từ `EXPLAIN ANALYZE` (DuckDB) và `dry_run` (BigQuery). Ghi đúng điều này trong báo cáo.
@@ -197,7 +206,6 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 
 ```
 .
-├── CLAUDE.md
 ├── SPEC.md
 ├── Makefile
 ├── policy/
@@ -205,8 +213,13 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 │   ├── budgets.yml
 │   └── objectives.yml
 ├── templates/
-│   ├── dlt_pipeline.py.j2
-│   ├── dbt_model.sql.j2
+│   ├── dlt_pipeline.py.j2     # 1 file ingestion, gọi macro cho từng nguồn
+│   ├── sources/
+│   │   ├── _postgres.j2       # macro resource cho postgres
+│   │   ├── _rest_api.j2       # macro resource cho rest_api
+│   │   └── _filesystem.j2     # macro resource cho filesystem
+│   ├── dbt_staging.sql.j2     # 1 model staging cho mỗi nguồn
+│   ├── dbt_model.sql.j2       # model gold
 │   ├── dbt_schema.yml.j2
 │   └── dagster_asset.py.j2
 ├── control_plane/
@@ -224,6 +237,11 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 │   │   ├── base.py          # WarehouseAdapter protocol
 │   │   ├── duckdb_adapter.py
 │   │   └── bigquery_adapter.py
+│   ├── sources/
+│   │   ├── base.py          # SourceAdapter protocol
+│   │   ├── postgres.py
+│   │   ├── rest_api.py
+│   │   └── filesystem.py
 │   └── gates/
 │       ├── spec_schema.py
 │       ├── schema_real.py
@@ -235,25 +253,30 @@ Hệ thống không thay thế data engineer mà đổi vai họ từ người v
 │   ├── graph.py             # LangGraph, máy trạng thái
 │   ├── state.py
 │   ├── router.py            # bảng định tuyến lỗi (tất định)
+│   ├── chat.py              # trợ lý chat: phân loại ý định, trả lời từ RunReport (mục 14.5)
 │   ├── nodes/
 │   │   ├── planner.py
-│   │   ├── codegen.py
-│   │   ├── sql_fix.py
+│   │   ├── codegen.py       # sinh spec; chế độ sql_fix sửa biểu thức SQL
+│   │   ├── test_run.py      # tất định: P6–P12
 │   │   └── optimizer.py
 │   ├── prompts/
-│   └── memory.py            # vector DB, spec đã duyệt
+│   └── memory/
+│       ├── base.py          # VectorStore protocol
+│       ├── chroma_store.py  # MVP
+│       └── qdrant_store.py  # sản phẩm thật
 ├── api/
 │   └── main.py
 ├── web/
 ├── infra/
 │   ├── docker-compose.yml
-│   ├── seeds/               # SQL seed dữ liệu bẩn có chủ đích
-│   ├── mock_api/            # FastAPI giả lập nguồn REST
+│   ├── seeds/               # SQL seed dữ liệu bẩn có chủ đích (postgres)
+│   ├── mock_api/            # FastAPI giả lập nguồn REST, có dữ liệu bẩn
+│   ├── landing/             # file nguồn CSV/Parquet/JSONL, có dữ liệu bẩn
 │   └── dagster/
 ├── dbt_project/
 ├── fixtures/                # spec_01..05.json viết tay
 └── eval/
-    ├── cases/               # 15 ca
+    ├── cases/               # 15 ca, mục 18.2
     └── run_eval.py
 ```
 
@@ -265,29 +288,83 @@ Bốn cấu trúc dưới đây là ranh giới giữa các module. **Sửa chú
 
 ### 8.1 Spec (JSON)
 
+**Đa nguồn.** Một pipeline có thể đọc **nhiều nguồn** thuộc cả ba loại. Dữ liệu đi qua ba tầng:
+
+| Tầng | Làm gì | Mỗi pipeline có |
+|---|---|---|
+| **bronze** | Bản sao thô của từng nguồn, không sửa gì (dlt) | 1 bảng cho mỗi nguồn |
+| **staging** | Làm sạch và chuẩn hóa **từng nguồn**: đổi tên cột, ép kiểu, chuẩn hóa ngày và tiền tệ, loại trùng, tách bản ghi rác (dbt, `stg_*`) | 1 model cho mỗi nguồn + 1 bảng `__rejected` |
+| **gold** | Join các bảng staging đã sạch và tính chỉ số (dbt) | 1 model |
+
+Các nguồn **chỉ gặp nhau ở gold**, sau khi mỗi nguồn đã được làm sạch riêng. Pipeline một nguồn là trường hợp `sources` có một phần tử, vẫn đi qua staging.
+
 ```json
 {
-  "spec_version": "1.0",
+  "spec_version": "1.2",
   "domain": "sales",
-  "source": {
-    "kind": "postgres",
-    "connection_ref": "sandbox_pg",
-    "table": "orders",
-    "primary_key": ["order_id"],
-    "cursor_field": "updated_at",
-    "write_disposition": "merge"
-  },
-  "target": { "dataset": "bronze", "table": "raw_orders" },
+  "sources": [
+    {
+      "id": "orders",
+      "kind": "postgres",
+      "source_ref": "sales_pg",
+      "table": "orders",
+      "primary_key": ["order_id"],
+      "cursor_field": "updated_at",
+      "write_disposition": "merge",
+      "target": { "dataset": "bronze", "table": "raw_orders" },
+      "staging": {
+        "columns": [
+          { "from": "order_id",   "as": "order_id",   "type": "bigint" },
+          { "from": "created_at", "as": "order_date", "type": "date" },
+          { "from": "channel",    "as": "channel",    "type": "varchar" },
+          { "from": "status",     "as": "status",     "type": "varchar" },
+          { "from": "amount",     "as": "amount_vnd", "type": "decimal(18,2)",
+            "currency": { "code_column": "currency", "to": "VND" } }
+        ],
+        "dedupe": { "keys": ["order_id"], "keep": "latest", "order_by": "updated_at" },
+        "reject_if": ["order_id IS NULL", "amount_vnd < 0"]
+      }
+    },
+    {
+      "id": "payments",
+      "kind": "rest_api",
+      "source_ref": "sales_api",
+      "endpoint": "/payments",
+      "records_path": "data",
+      "pagination": "page",
+      "primary_key": ["payment_id"],
+      "cursor_field": "updated_at",
+      "write_disposition": "merge",
+      "target": { "dataset": "bronze", "table": "raw_payments" },
+      "staging": {
+        "columns": [
+          { "from": "payment_id", "as": "payment_id", "type": "varchar" },
+          { "from": "orderId",    "as": "order_id",   "type": "bigint" },
+          { "from": "paid_at",    "as": "paid_date",  "type": "date",
+            "date_formats": ["%Y-%m-%d", "%d/%m/%Y"] },
+          { "from": "total",      "as": "amount_vnd", "type": "decimal(18,2)",
+            "currency": { "code_column": "ccy", "to": "VND" } }
+        ],
+        "dedupe": { "keys": ["payment_id"], "keep": "latest", "order_by": "updated_at" },
+        "reject_if": ["order_id IS NULL", "amount_vnd <= 0"]
+      }
+    }
+  ],
   "transform": {
     "model_name": "fct_daily_revenue",
+    "from": "orders",
+    "joins": [
+      { "source": "payments", "type": "left",
+        "on": [["orders.order_id", "payments.order_id"]] }
+    ],
     "materialization": "incremental",
     "unique_key": ["order_date", "channel"],
-    "grain": ["order_date", "channel"],
+    "grain": ["orders.order_date", "orders.channel"],
     "metrics": [
-      { "name": "revenue", "expr": "SUM(amount)" },
-      { "name": "order_count", "expr": "COUNT(DISTINCT order_id)" }
+      { "name": "revenue", "expr": "SUM(payments.amount_vnd)" },
+      { "name": "order_count", "expr": "COUNT(DISTINCT orders.order_id)" }
     ],
-    "filters": ["status <> 'cancelled'"],
+    "filters": ["orders.status <> 'cancelled'"],
     "partition_by": "order_date",
     "tests": [
       { "column": "order_date", "test": "not_null" },
@@ -299,9 +376,35 @@ Bốn cấu trúc dưới đây là ranh giới giữa các module. **Sửa chú
 }
 ```
 
+Trường riêng theo loại nguồn (ngoài `id`, `kind`, `source_ref`, `primary_key`, `cursor_field`, `write_disposition`, `target`, `staging`):
+
+| `kind` | Trường bắt buộc | Ví dụ |
+|---|---|---|
+| `postgres` | `table` | `"table": "orders"` |
+| `rest_api` | `endpoint`, `records_path`, `pagination` ∈ `{page, offset, cursor, none}` | `"endpoint": "/payments", "records_path": "data", "pagination": "page"` |
+| `filesystem` | `path_pattern`, `format` ∈ `{csv, parquet, jsonl}` | `"path_pattern": "refunds/*.csv", "format": "csv"` |
+
 Ràng buộc:
-- `source.kind` ∈ `{postgres, rest_api, filesystem}`
-- `source.write_disposition` ∈ `{append, replace, merge}`; `merge` bắt buộc có `primary_key`
+- `1 ≤ len(sources) ≤ budgets.yml: rules.max_tables_joined`
+- `sources[].id` duy nhất trong spec, là bí danh dùng trong `transform`; `sources[].target.table` duy nhất
+- `sources[].kind` ∈ `{postgres, rest_api, filesystem}` và phải khớp `kind` của nguồn mà `source_ref` trỏ tới
+- `source_ref` trỏ tới một nguồn trong `domains.yml: <spec.domain>.sources`. Đọc nguồn của domain khác bị cổng `semantic` chặn, trừ khi thực thể liên quan nằm trong `conformed_dimensions`
+- `write_disposition` ∈ `{append, replace, merge}`; `merge` bắt buộc có `primary_key`
+- `cursor_field` bắt buộc khi load tăng dần (`merge` hoặc `append`). Với `postgres` và `rest_api` là một cột/trường thời gian hoặc số tăng; với `filesystem` là `modification_date` (thời điểm sửa file). Nguồn không có cursor thì bắt buộc `write_disposition = replace`
+Ràng buộc của khối `staging` (bắt buộc với **mọi** nguồn):
+- `columns[].from` phải tồn tại trong `schema_snapshot` của nguồn; `columns[].as` duy nhất trong nguồn. Cột không khai báo thì không đi tiếp sang staging
+- `columns[].type` ∈ `{bigint, integer, decimal(p,s), double, varchar, boolean, date, timestamp}`. Ép kiểu luôn dùng `TRY_CAST`: dòng ép kiểu thất bại bị **tách sang bảng rejected**, không làm lỗi cả model
+- Cột thô dạng chuỗi ép sang `date`/`timestamp` bắt buộc có `date_formats`, thử lần lượt theo thứ tự khai báo; không khớp định dạng nào thì dòng bị tách sang rejected
+- `currency.code_column` là cột mã tiền tệ ở nguồn; tỷ giá đọc từ `domains.yml: <domain>.currency.rates` (tỷ giá cố định khai báo, không tra cứu bên ngoài). Mã tiền tệ không có trong bảng tỷ giá thì dòng bị tách sang rejected
+- `dedupe.keys` mặc định bằng `primary_key`; `keep` ∈ `{latest, first}` theo `order_by`. Số dòng bị loại vì trùng được đếm, không tính là rejected. Với `write_disposition = merge`, dlt đã gộp theo `primary_key` ngay ở bronze nên `dedupe` thường đếm 0; `dedupe` là nơi xử lý trùng chính khi nguồn load `append` hoặc `replace`
+- `reject_if` là biểu thức điều kiện trên **cột đầu ra** của staging; qua cổng `ast_guard`. Dòng thỏa điều kiện bị tách sang rejected kèm lý do
+- Mọi dòng bị tách đều ghi vào `stg_<model_name>__<id>__rejected` với cột `_reject_reason`, để đếm và để người xem lại
+
+Ràng buộc của `transform`:
+- `transform.from` là một `sources[].id`. Mọi nguồn khác xuất hiện **đúng một lần** trong `transform.joins` — không có nguồn thừa
+- `transform` **chỉ** tham chiếu cột đầu ra của staging (`<id>.<as>`), không bao giờ tham chiếu cột thô ở bronze
+- `joins[].type` ∈ `{inner, left}`; `joins[].on` bắt buộc khác rỗng (không có tích Descartes). Khóa join phải có **cùng `type` sau staging** ở cả hai nguồn (cổng `schema_real`); khác kiểu ở nguồn thô thì staging ép về cùng kiểu
+- Khi có từ hai nguồn trở lên, cột trong `grain`, `metrics`, `filters` viết đủ dạng `<id>.<cột>`. Tên cột đầu ra là phần sau dấu chấm; `unique_key`, `partition_by`, `tests` dùng tên đầu ra
 - `transform.materialization` ∈ `{view, table, incremental}`; `incremental` bắt buộc có `unique_key`
 - `metrics[].expr` chỉ được chứa hàm tổng hợp và tên cột; qua cổng `ast`
 - Viết JSON Schema tương ứng tại `control_plane/schemas/spec.schema.json`
@@ -311,13 +414,16 @@ Ràng buộc:
 ```json
 {
   "run_id": "uuid",
+  "version": 3,
+  "domain": "sales",
+  "created_by": "minh",
   "trigger": "user_request",
   "parent_run_id": null,
   "regression": null,
   "created_at": "iso8601",
   "user_request": "…",
   "status": "READY_FOR_REVIEW",
-  "stage_reached": "measure",
+  "stage_reached": "report",
   "plan": { "…": "…" },
   "spec": { "…": "…" },
   "spec_history": [],
@@ -329,14 +435,23 @@ Ràng buộc:
       "observed": { "bytes": 1234567890 } }
   ],
   "checks": [
-    { "name": "row_reconcile", "result": "pass",
+    { "name": "row_reconcile", "source_id": "orders", "result": "pass",
       "observed": { "source": 12480, "bronze": 12480 } },
-    { "name": "idempotent", "result": "pass",
+    { "name": "row_reconcile", "source_id": "payments", "result": "pass",
+      "observed": { "source": 11902, "bronze": 11902 } },
+    { "name": "idempotent", "source_id": "orders", "result": "pass",
       "observed": { "run1": 12480, "run2": 12480 } },
+    { "name": "staging_reconcile", "source_id": "payments", "result": "pass",
+      "observed": { "bronze": 11902, "staging": 11750, "duplicates": 120,
+                    "rejected": 32, "reject_pct": 0.27,
+                    "reject_reasons": { "date_format": 20, "unknown_currency": 12 },
+                    "reject_samples": [
+                      { "_reject_reason": "unknown_currency", "payment_id": "P-881", "ccy": "EUR" }
+                    ] } },
     { "name": "dbt_test", "result": "pass",
       "observed": { "passed": 6, "failed": 0 } },
     { "name": "metric_reconcile", "result": "pass",
-      "observed": { "gold_sum": 8123456.0, "bronze_sum": 8123456.0 } }
+      "observed": { "gold_sum": 8123456.0, "staging_sum": 8123456.0 } }
   ],
   "cost": { "estimated_bytes": 0, "actual_bytes": 0, "usd": 0.0 },
   "timing": { "baseline_sec": 4.2, "optimized_sec": 0.9 },
@@ -344,12 +459,31 @@ Ràng buộc:
     { "rule": "table_to_incremental", "applied": true,
       "before_sec": 4.2, "after_sec": 0.9 }
   ],
-  "attempts": { "spec": 1, "sql": 2, "el": 0 },
+  "attempts": { "spec": 1, "sql": 2 },
   "llm_calls": 5,
   "error_trace": [],
-  "approval": null
+  "approval": {
+    "decision": "approved",
+    "reviewer": "an",
+    "files_hash": "sha256:…",
+    "version": 3,
+    "at": "iso8601",
+    "comment": "…"
+  }
 }
 ```
+
+Về các trường định danh:
+- **`version`**: một run có nhiều version. Mỗi lần quay lại P4 do con người (Yêu cầu sửa, `revise` trong chat, chạy lại sau khi hủy) tạo version mới cùng `run_id`, có `files_hash` mới và **xóa hiệu lực** mọi `approval` cũ. Vòng spec và vòng SQL tự động **không** tạo version mới
+- **`created_by`**: Engineer tạo run, lấy từ phiên đăng nhập. Là căn cứ duy nhất của quy tắc cấm tự duyệt: `approval.reviewer != created_by`
+- **`approval`**: `null` cho tới P15. `decision` ∈ `{approved, rejected, changes_requested}`. Đây là "chữ ký phê duyệt" ở bất biến 3, mục 19
+- **`reject_samples`**: tối đa 5 dòng rejected mỗi lý do, chép vào report **trước khi xóa sandbox**, để màn Staging vẫn xem được sau khi run kết thúc
+
+Nội dung đầy đủ của các file sinh ra được lưu trong sổ bằng chứng theo `(run_id, version)`, không chỉ hash, để màn Review hiện diff sau khi sandbox đã bị xóa.
+
+Ba phép kiểm tra ingestion (`row_reconcile`, `hash_reconcile`, `idempotent`) và `staging_reconcile` có **một dòng cho mỗi nguồn**, phân biệt bằng `source_id`. `dbt_test` và `metric_reconcile` là của model, không có `source_id`.
+
+`schema_snapshot` trong `AgentState` (mục 14.1) là một dict theo `sources[].id`; mỗi phần tử luôn có trường `origin` ∈ `{information_schema, openapi, file_sample}` để truy được schema lấy từ đâu (FR-04).
 
 ### 8.3 Sự kiện SSE
 
@@ -363,7 +497,7 @@ Tập `stage` cố định, **bằng đúng id phase ở mục 9**, không có t
 
 Ánh xạ `P0→intake`, `P1→plan`, … `P17→persist`. Bất kỳ tên nào ngoài 18 giá trị này là lỗi hợp đồng.
 
-`status` ∈ `{running, pass, fail, escalate, blocked}`
+`status` ∈ `{running, pass, fail, escalate, blocked, cancelled}`
 
 ### 8.4 Ba file chính sách
 
@@ -374,26 +508,48 @@ domains:
   sales:
     datasets: [sales_raw]
     steward: an@company.vn
+    currency:                         # dùng cho staging.columns[].currency
+      base: VND
+      rates: { VND: 1, USD: 25400 }   # tỷ giá cố định, steward cập nhật
+    sources:                          # mọi nguồn domain này được phép đọc
+      sales_pg:      { kind: postgres,   connection_ref: sandbox_pg,    schema: sales_raw }
+      sales_api:     { kind: rest_api,   connection_ref: mock_api,      openapi: /openapi.json }
+      landing_sales: { kind: filesystem, connection_ref: landing_sales, root: infra/landing/sales }
     entities:
       customer:
         canonical: false
         definition: "tài khoản đã ký hợp đồng"
-        tables: [sales_raw.customers, sales_raw.accounts]
+        tables: [sales_pg.customers, sales_pg.accounts]
       order:
         canonical: true
         definition: "đơn hàng đã xác nhận"
-        tables: [sales_raw.orders]
+        tables: [sales_pg.orders]
+      payment:
+        canonical: true
+        definition: "khoản thanh toán đã ghi nhận cho một đơn hàng"
+        tables: [sales_api.payments]
+      refund:
+        canonical: true
+        definition: "khoản hoàn tiền đã duyệt"
+        tables: [landing_sales.refunds]
   marketing:
     datasets: [mkt_raw]
     steward: binh@company.vn
+    currency:
+      base: VND
+      rates: { VND: 1, USD: 25400 }
+    sources:
+      mkt_api: { kind: rest_api, connection_ref: mock_api, openapi: /openapi.json }
     entities:
       customer:
         canonical: false
         definition: "người để lại email"
-        tables: [mkt_raw.leads, mkt_raw.contacts]
+        tables: [mkt_api.leads, mkt_api.contacts]
 
 conformed_dimensions: []   # rỗng nghĩa là chưa có thực thể nào được công nhận dùng chung
 ```
+
+Quy ước tham chiếu đối tượng nguồn: `<source_id>.<tên>`, trong đó `<tên>` là tên bảng (`postgres`), tên endpoint bỏ dấu `/` (`rest_api`), hoặc thư mục con chứa file (`filesystem`). `entity_scan` quét mọi đối tượng khai báo ở đây, bất kể loại nguồn. Spec tham chiếu nguồn bằng `source_ref` = `<source_id>`; thông tin kết nối (`connection_ref`) chỉ nằm ở file này.
 
 **`policy/budgets.yml`**
 
@@ -404,10 +560,14 @@ per_run:
   max_bytes_scanned: 5_000_000_000
   max_usd: 0.05
   max_llm_calls: 6          # trần toàn cục 1 run; router VÀ UI đều đọc từ đây
+  max_chat_calls: 20        # trần câu hỏi `ask` trong chat cho 1 run (mục 14.5), tách khỏi max_llm_calls
+  max_spec_attempts: 2      # vòng spec, mục 11.3
+  max_sql_attempts: 2       # vòng SQL, mục 11.3
+  phase_timeout_sec: 300    # một phase chạy quá thời gian này thì dừng (NFR-05)
 per_day:
-  max_usd: 2.00
+  max_usd: 2.00             # tổng chi phí mọi run trong ngày; cổng budget cộng dồn (mục 10)
 rules:
-  - require_partition_filter_on: [sales_raw.orders]
+  - require_partition_filter_on: [sales_pg.orders]
   - forbid_select_star_in: [gold]
   - max_tables_joined: 6
 ```
@@ -422,6 +582,8 @@ sales:
     cost_usd_per_day: 1.0
   prefer: cheapest_feasible
   degrade_order: [freshness, completeness]
+  quality:
+    max_reject_pct: 1.0           # staging: tỷ lệ dòng bị tách sang rejected tối đa, theo từng nguồn
   regression:                     # Day 2 — ngưỡng phát hiện suy giảm
     window_runs: 7                # so trung vị 7 lần chạy gần nhất
     runtime_increase_pct: 50      # chậm hơn đường cơ sở 50% thì báo
@@ -435,31 +597,41 @@ marketing:
     cost_usd_per_day: 0.5
   prefer: cheapest_feasible
   degrade_order: [freshness, completeness]
+  quality:
+    max_reject_pct: 2.0
+  regression:
+    window_runs: 7
+    runtime_increase_pct: 50
+    cost_increase_pct: 40
+    test_fail_rate_pct: 5
+    cooldown_hours: 24
 ```
+
+Mọi domain **bắt buộc** có khối `quality` và `regression`. `policy.py` từ chối nạp `objectives.yml` nếu một domain khai báo trong `domains.yml` thiếu một trong hai khối này.
 
 ---
 
 ## 9. Workflow runtime — 18 phase P0–P17
 
-**P0–P17 là bộ định danh duy nhất của dự án.** Dùng ở `SPEC.md`, `SCOPE.md`, `UI-SPEC.md`, trong mã nguồn, trong SSE `stage`, trong log. Không có hệ đánh số thứ hai.
+**P0–P17 là bộ định danh duy nhất của dự án.** Dùng ở `SPEC.md`, trên giao diện, trong mã nguồn, trong SSE `stage`, trong log. Không có hệ đánh số thứ hai.
 
 Mỗi phase ghi state xuống sổ bằng chứng trước khi sang phase sau.
 
 | P | id | Loại | Mô tả |
 |---|---|---|---|
 | P0 | `intake` | Tất định | Sinh `run_id`, tạo sandbox mới, ghi bản ghi run |
-| P1 | `plan` | LLM | Sinh kế hoạch: nguồn, bảng, độ hạt, chỉ số, tần suất. Tối đa 1 câu hỏi làm rõ |
-| P2 | `confirm` | **Người** | Cổng HITL 1: người dùng xác nhận kế hoạch |
-| P3 | `resolve` | Tất định | Schema thật từ `information_schema`, 20 dòng mẫu, lineage từ dbt manifest, `entity_scan` → cổng `semantic` |
+| P1 | `plan` | LLM | Sinh kế hoạch: các nguồn và đối tượng cần đọc, cách join giữa chúng, độ hạt, chỉ số, tần suất. Tối đa 1 câu hỏi làm rõ, hỏi trong khung chat (mục 14.5) |
+| P2 | `confirm` | **Người** | Cổng HITL 1: Engineer xác nhận kế hoạch bằng nút bấm |
+| P3 | `resolve` | Tất định | Với **từng nguồn** trong kế hoạch: schema thật qua `SourceAdapter.get_schema` (mục 12.1), 20 dòng mẫu; lineage từ dbt manifest; `entity_scan` → cổng `semantic` |
 | P4 | `propose` | LLM | Sinh JSON spec. Nhiều phương án khả dĩ thì sinh cả hai kèm số đo |
 | P5 | `arbitrate` | Tất định | Đối chiếu phương án với `objectives.yml` |
-| P6 | `render` | Tất định | Jinja render 4 file. Lỗi ở đây là bug template → `INTERNAL_ERROR` |
+| P6 | `render` | Tất định | Jinja render 4 + N file: ingestion (một resource cho mỗi nguồn), N model staging, model gold, schema test, asset Dagster. Lỗi ở đây là bug template → `INTERNAL_ERROR` |
 | P7 | `static` | Tất định | `compile()` + `sqlglot.parse` + cổng `spec_schema`, `schema_real`, `ast_guard` |
-| P8 | `budget` | Tất định | `dry_run` lấy byte, quy USD, cổng `budget` |
-| P9 | `el_run` | Tất định | Chạy dlt đổ vào bronze trên sandbox |
-| P10 | `el_validate` | Tất định | 3 phép: `row_reconcile`, `hash_reconcile`, `idempotent` |
-| P11 | `t_run` | Tất định | `dbt run` |
-| P12 | `t_validate` | Tất định | `dbt test` + `metric_reconcile` |
+| P8 | `budget` | Tất định | `dry_run` lấy byte, quy USD, cổng `budget`. Tính trên **tổng** mọi nguồn cộng model |
+| P9 | `el_run` | Tất định | Chạy dlt đổ **mọi nguồn** vào bronze trên sandbox, mỗi nguồn một bảng |
+| P10 | `el_validate` | Tất định | 3 phép `row_reconcile`, `hash_reconcile`, `idempotent`, chạy **cho từng nguồn**; một nguồn fail là cả phase fail |
+| P11 | `t_run` | Tất định | `dbt run`: các model staging trước, rồi model gold |
+| P12 | `t_validate` | Tất định | `staging_reconcile` cho từng nguồn + `dbt test` + `metric_reconcile` |
 | P13 | `optimize` | Hỗn hợp | Đo baseline, áp luật, chạy lại, đo. **Không bao giờ làm fail run** |
 | P14 | `report` | Tất định | Gom RunReport, tính `files_hash`, lấy chi phí thật |
 | P15 | `review` | **Người** | Cổng HITL 2: duyệt / từ chối / yêu cầu sửa |
@@ -487,15 +659,15 @@ def entity_scan(request: str, catalog: Catalog, domains: DomainRegistry) -> Enti
 
 Thuật toán:
 1. Trích danh từ thực thể từ yêu cầu (LLM hoặc từ khoá, MVP dùng từ khoá + danh sách trong `domains.yml`)
-2. Tìm mọi bảng khớp thực thể đó trên toàn catalog
-3. Nếu các bảng khớp nằm ở **nhiều hơn một domain** và thực thể chưa nằm trong `conformed_dimensions` → trả về `EntityConflict`
+2. Tìm mọi đối tượng nguồn khớp thực thể đó trên toàn catalog. Catalog là **mọi nguồn** khai báo trong `domains.yml`, gồm cả bảng Postgres, endpoint REST và thư mục file
+3. Nếu các đối tượng khớp nằm ở **nhiều hơn một domain** và thực thể chưa nằm trong `conformed_dimensions` → trả về `EntityConflict`
 4. Chặng dừng ngay với `status = BLOCKED_SEMANTIC_CONFLICT`, tạo phiếu chuyển steward
 
 Chặn ở đây, **trước** khi tốn bất kỳ lần gọi LLM nào cho việc sinh code.
 
 Thông điệp trả về phải nêu rõ cả hai định nghĩa, ví dụ:
 
-> Phát hiện thực thể `customer` ở 2 domain. Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng). Marketing định nghĩa là người để lại email (2 bảng). Chưa có định nghĩa chuẩn. Chuyển tới steward domain Sales: an@company.vn
+> Phát hiện thực thể `customer` ở 2 domain. Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng Postgres). Marketing định nghĩa là người để lại email (2 endpoint REST). Chưa có định nghĩa chuẩn. Chuyển tới steward domain Sales: an@company.vn
 
 ### 9.2 Chi tiết `arbitrate`
 
@@ -515,17 +687,19 @@ Hai luật cố định:
 1. **`table_to_incremental`**: nếu `materialization == "table"` và bảng nguồn có cột thời gian và ước tính số dòng > ngưỡng → đề xuất `incremental` với `unique_key` từ `grain`
 2. **`missing_partition_filter`**: nếu SQL không có điều kiện trên cột `partition_by` → cảnh báo và đề xuất thêm
 
-Quy trình: đo baseline bằng `EXPLAIN ANALYZE` → render bản tối ưu → chạy lại **P11 và P12** trên bản đó → đo lại. Nếu bản tối ưu sai hoặc chậm hơn, **vứt đi, giữ bản gốc, ghi lý do**.
+Quy trình: đo baseline bằng `EXPLAIN ANALYZE` → render bản tối ưu → cho bản tối ưu qua cổng `ast_guard` và `budget` → chạy lại **P11 và P12** trên bản đó → đo lại. Nếu bản tối ưu không qua cổng, sai hoặc chậm hơn, **vứt đi, giữ bản gốc, ghi lý do**.
+
+Optimizer ở MVP là tất định, không gọi LLM. Với `trigger = "manual_optimize"` (UC-3), đây là bước duy nhất tạo ra thay đổi; nếu không luật nào cho bản tốt hơn thì run không có gì để duyệt.
 
 ### 9.4 Chi tiết `el_validate` và `t_validate`
 
-Bốn phép kiểm tra ở mục 10.1 là **bắt buộc ở backend**, không phụ thuộc vào việc UI có hiện ô tương ứng hay không. `UI-SPEC.md` chỉ quyết định cách trình bày.
+Năm phép kiểm tra ở mục 10.1 là **bắt buộc ở backend**, không phụ thuộc vào việc UI có hiện ô tương ứng hay không. UI chỉ quyết định cách trình bày.
 
 ### 9.5 Chi tiết `deploy` — hai mức D1 và D2
 
 | Mức | Hành vi | Tiêu chí nghiệm thu |
 |---|---|---|
-| **D1** | Ghi 4 file vào code location của Dagster. Người dùng nạp lại Dagster thủ công và thấy asset xuất hiện | File tồn tại đúng đường dẫn; asset hiện trong đồ thị; `status = DEPLOYED` |
+| **D1** | Ghi 4 + N file vào code location của Dagster. Người dùng nạp lại Dagster thủ công và thấy asset xuất hiện | File tồn tại đúng đường dẫn; asset hiện trong đồ thị; `status = DEPLOYED` |
 | **D2** | D1 cộng: gọi API nạp lại, trigger một lần chạy, chờ xanh trong 120s; không xanh thì xóa file, nạp lại, `DEPLOY_FAILED` | Run xanh, **hoặc** file đã bị xóa và trạng thái đúng là `DEPLOY_FAILED` |
 
 MVP dừng ở **D1**. D2 là thiết kế đích. Cả hai mức đều yêu cầu `approval.hash == files_hash`.
@@ -543,10 +717,12 @@ Day 2 **không thêm phase mới**. Nó dùng lại nguyên P4–P16, chỉ khá
 | `trigger` | Ai tạo | Vào từ phase | Mang theo |
 |---|---|---|---|
 | `user_request` | Người dùng | P0 | Yêu cầu ngôn ngữ tự nhiên |
-| `manual_optimize` | Người dùng trỏ vào model | P4 | Spec đang chạy |
-| `regression` | `monitor` tự tạo | P4 | Spec đang chạy + bằng chứng suy giảm + `parent_run_id` |
+| `manual_optimize` | Engineer trỏ vào pipeline đã deploy | P0, rồi nhảy P6 → P9–P13 (chỉ optimizer, không LLM; mục 3.3) | Spec đang chạy + `parent_run_id` |
+| `regression` | `monitor` tự tạo | P0, rồi nhảy P4 | Spec đang chạy + bằng chứng suy giảm + `parent_run_id` |
 
-Run `regression` bỏ qua P0–P3 vì spec đã được duyệt và schema đã được phân giải từ lần tạo mới. Riêng P3 chạy lại nếu schema nguồn đã đổi so với `schema_snapshot` cũ.
+Mọi run, kể cả run tự động, đều qua **P0** để có `run_id` và sandbox mới (bất biến 1, mục 19). Run `regression` bỏ qua P1–P3 vì spec đã được duyệt và schema đã được phân giải từ lần tạo mới. Riêng P3 chạy lại nếu schema của **bất kỳ nguồn nào** đã đổi so với `schema_snapshot` cũ.
+
+Trạng thái khởi đầu theo `trigger`: `user_request` bắt đầu ở `DRAFT`; `regression` bắt đầu ở `GENERATING` (đã có kế hoạch); `manual_optimize` bắt đầu ở `VALIDATING` (không sinh spec). `created_by` của run tự động là `system`, nên mọi Reviewer đều duyệt được.
 
 #### 9.6.2 Monitor thu gì
 
@@ -577,8 +753,8 @@ Tất cả tất định, không dùng LLM, ngưỡng đọc từ `objectives.ym
 
 Không phải suy giảm nào cũng là lỗi của pipeline:
 
-- **Độ tươi vi phạm vì nguồn ngừng cấp dữ liệu** — kiểm tra số dòng mới ở nguồn trước. Nguồn trống thì đây là sự cố hạ tầng, chuyển thành cảnh báo, không tạo run.
-- **P13 không tìm được bản nào tốt hơn** — ghi vào sổ bằng chứng, gắn cờ pipeline, **không** đưa vào hàng đợi review. Kỹ sư chỉ bị làm phiền khi có đề xuất đáng xem.
+- **Độ tươi vi phạm vì nguồn ngừng cấp dữ liệu** — kiểm tra số bản ghi mới ở nguồn trước, bằng `SourceAdapter.count` với khoảng từ lần chạy cuối (mục 12.1), áp dụng cho cả ba loại nguồn và cho **từng nguồn** của pipeline. Có nguồn trống thì đây là sự cố hạ tầng, chuyển thành cảnh báo nêu rõ nguồn nào, không tạo run.
+- **P13 không tìm được bản nào tốt hơn** — run kết thúc với `NO_IMPROVEMENT`, ghi vào sổ bằng chứng, gắn cờ pipeline, **không** đưa vào hàng đợi review. Kỹ sư chỉ bị làm phiền khi có đề xuất đáng xem.
 
 #### 9.6.5 Hiển thị trong hàng đợi review
 
@@ -596,27 +772,38 @@ Day 2 **không bao giờ tự deploy**. Mọi run `regression` bắt buộc qua 
 
 ## 10. Sáu cổng
 
-Mọi cổng là hàm thuần, không gọi LLM, có unit test. **Sáu cổng và bốn phép kiểm tra đều bắt buộc trong MVP.** Việc UI rút gọn số ô hiển thị không làm giảm số phép kiểm tra chạy ở backend.
+Mọi cổng là hàm thuần, không gọi LLM, có unit test. **Sáu cổng và năm phép kiểm tra đều bắt buộc trong MVP.** Việc UI rút gọn số ô hiển thị không làm giảm số phép kiểm tra chạy ở backend.
 
 | Cổng | Chữ ký | Kiểm tra | Nguồn luật |
 |---|---|---|---|
 | `spec_schema` | `(spec) -> GateResult` | Khớp JSON Schema | `schemas/spec.schema.json` |
-| `schema_real` | `(spec, catalog) -> GateResult` | PK tồn tại và unique; cursor tồn tại và là timestamp/số tăng | `information_schema` |
+| `schema_real` | `(spec, catalog) -> GateResult` | Với **từng nguồn**: cột PK tồn tại và không NULL trên dữ liệu mẫu; cursor tồn tại và là timestamp/số tăng. Tính unique của PK **không** kiểm ở đây (dữ liệu nguồn được phép trùng) mà do dlt `merge` / staging `dedupe` xử lý và dbt test `unique` chứng minh. Với **từng join**: khóa có cùng `type` **sau staging** ở cả hai nguồn | `schema_snapshot` (mục 12.1) |
 | `semantic` | `(request, catalog, domains) -> GateResult` | Thực thể mơ hồ chưa có định nghĩa chuẩn | `domains.yml` |
 | `ast_guard` | `(sql_files) -> GateResult` | Chặn DROP/DELETE/TRUNCATE/ALTER, cross-database ref, SELECT * ở gold, join quá `max_tables_joined`, tích Descartes | sqlglot + `budgets.yml` |
-| `budget` | `(sql, adapter, budgets) -> GateResult` | `dry_run` bytes vượt `max_bytes_scanned` hoặc `max_usd`; thiếu partition filter trên bảng bắt buộc | `budgets.yml` |
-| `post_run` | `(exec_result, adapter) -> list[GateResult]` | 4 phép kiểm tra sau chạy | Dữ liệu thật |
+| `budget` | `(sql, adapter, budgets, spent_today) -> GateResult` | **Tổng** `dry_run` bytes của mọi nguồn và model vượt `per_run.max_bytes_scanned` hoặc `per_run.max_usd`; `spent_today` + ước tính vượt `per_day.max_usd`; thiếu partition filter trên bảng bắt buộc. `detail` liệt kê byte theo từng nguồn | `budgets.yml` + sổ bằng chứng (chi phí đã dùng trong ngày) |
+| `post_run` | `(exec_result, adapter) -> list[GateResult]` | 5 phép kiểm tra sau chạy | Dữ liệu thật + `objectives.yml: quality` |
 
-### 10.1 Bốn phép kiểm tra của `post_run`
+`schema_real` với staging: mỗi `staging.columns[].from` tồn tại ở nguồn; ép kiểu và parse ngày được **thử trên 20 dòng mẫu** của P3, dòng mẫu nào thất bại thì ghi vào `detail` để LLM sửa `staging` ngay ở vòng spec, trước khi chạy thật.
+
+### 10.1 Năm phép kiểm tra của `post_run`
 
 | Phép | Cách làm | Pass khi |
 |---|---|---|
-| `row_reconcile` | `COUNT(*)` nguồn trong khoảng đã lấy vs bronze | Bằng nhau |
-| `hash_reconcile` | Hash các cột PK ở hai đầu | Trùng khớp |
+| `row_reconcile` | `SourceAdapter.count` trong khoảng đã lấy vs `COUNT(*)` ở bronze. Với `merge`, cả hai đầu đếm **số khóa `primary_key` phân biệt** (vì dlt đã gộp trùng ở bronze) | Bằng nhau |
+| `hash_reconcile` | `SourceAdapter.key_hashes` vs hash các cột PK ở bronze, trên tập khóa phân biệt | Trùng khớp |
 | `idempotent` | Chạy pipeline lần hai | Số dòng không đổi |
-| `metric_reconcile` | Tổng chỉ số ở gold vs tính trực tiếp từ bronze | Chênh lệch < 0.01% |
+| `staging_reconcile` | Với từng nguồn: số dòng bronze = staging + trùng bị loại + rejected | Cân bằng đúng **và** tỷ lệ rejected ≤ `objectives.yml: <domain>.quality.max_reject_pct` |
+| `metric_reconcile` | Tổng chỉ số ở gold vs tính lại bằng một câu SQL độc lập trên các bảng staging, join theo đúng `transform.joins` | Chênh lệch < 0.01% |
 
 `idempotent` **không được bỏ qua** trong bất kỳ trường hợp nào.
+
+`row_reconcile`, `hash_reconcile` và `idempotent` chạy **riêng cho từng nguồn** (so nguồn đó với bảng bronze của nó) và ghi một dòng check có `source_id`. Cách đếm và băm ở phía nguồn khác nhau theo loại nguồn, nhưng cổng `post_run` chỉ gọi qua `SourceAdapter`, không biết nguồn là gì:
+
+| Loại nguồn | `count` | `key_hashes` |
+|---|---|---|
+| `postgres` | `COUNT(*)` có điều kiện theo `cursor_field` | Hash các cột PK bằng SQL |
+| `rest_api` | Gọi lần lượt mọi trang theo `pagination`, đếm bản ghi | Hash PK của từng bản ghi đã tải về |
+| `filesystem` | Đọc các file khớp `path_pattern` trong khoảng, đếm dòng | Hash PK của từng dòng đã đọc |
 
 ---
 
@@ -628,9 +815,18 @@ Luồng chính:
 `DRAFT → PLAN_CONFIRMED → GENERATING → VALIDATING → READY_FOR_REVIEW → APPROVED → DEPLOYED`
 
 Kết thúc sớm:
-`NEEDS_HUMAN, BLOCKED_SEMANTIC_CONFLICT, BLOCKED_BUDGET, BLOCKED_AST, REJECTED, INFRA_ERROR, INTERNAL_ERROR, DEPLOY_FAILED`
+`NEEDS_HUMAN, BLOCKED_SEMANTIC_CONFLICT, BLOCKED_BUDGET, BLOCKED_AST, REJECTED, INFRA_ERROR, INTERNAL_ERROR, DEPLOY_FAILED, CANCELLED, NO_IMPROVEMENT`
+
+**`NO_IMPROVEMENT`** chỉ dùng cho run có `trigger` ∈ `{manual_optimize, regression}` khi P13 không tìm được bản vừa đúng vừa tốt hơn. Run kết thúc ở P14, có đủ RunReport (baseline và lý do từng luật bị loại), **không** vào hàng đợi review. Với `regression`, pipeline gốc được gắn cờ để kỹ sư xem khi rảnh (FR-24).
 
 Chỉ `READY_FOR_REVIEW` mới được duyệt. Chỉ `APPROVED` mới được deploy. Không có đường tắt.
+
+**`CANCELLED` — hủy run.** Engineer sở hữu run được hủy khi run đang ở `DRAFT`, `PLAN_CONFIRMED`, `GENERATING` hoặc `VALIDATING`; không hủy được từ `READY_FOR_REVIEW` trở đi (lúc đó dùng Từ chối). Khi hủy:
+- Graph dừng ngay sau phase đang chạy; không gọi thêm LLM, không bắt đầu phase mới
+- Sandbox của run bị xóa như khi run kết thúc bình thường (bất biến 1, mục 19)
+- Sổ bằng chứng ghi phase đang chạy lúc hủy, người hủy và thời điểm; mọi số đo đã có vẫn giữ nguyên
+- SSE phát một sự kiện cuối với `status = cancelled`, rồi đóng stream
+- Chạy lại sau khi hủy là tạo **version mới** của run, không mở lại run đã hủy
 
 ### 11.2 Bảng định tuyến
 
@@ -643,15 +839,16 @@ Cài trong `agent/router.py` dưới dạng bảng dữ liệu, không phải ch
 | P6 | Render lỗi | Dừng, `INTERNAL_ERROR` | 0 |
 | P7 | `spec_schema` fail | P4 | 2 |
 | P7 | `schema_real` fail | P4 | 2 |
-| P7 | SQL sai cú pháp | `sql_fix` → P6 | 3 |
+| P7 | SQL sai cú pháp | `codegen` (chế độ `sql_fix`) → P6 | 2 |
 | P7 | `ast_guard` fail | Dừng, `BLOCKED_AST` | 0 |
 | P8 | `budget` fail | P4, kèm số byte cụ thể phải rút xuống | 2 |
-| P9 | Không kết nối được nguồn | Dừng, `INFRA_ERROR` | 0 |
+| P9 | Không kết nối được một nguồn | Dừng, `INFRA_ERROR`, ghi `source_id` bị lỗi | 0 |
 | P9 | Sai kiểu dữ liệu / sai cột | P4 | 2 |
-| P10 | `row_reconcile` hoặc `hash_reconcile` lệch | P4 | 2 |
-| P10 | `idempotent` fail | P4, ép xem lại `primary_key` | 2 |
-| P11 | dbt run lỗi | `sql_fix` → P6 | 3 |
-| P12 | dbt test hoặc `metric_reconcile` fail | `sql_fix` → P6 | 2 |
+| P10 | `row_reconcile` hoặc `hash_reconcile` lệch ở một nguồn | P4, kèm `source_id` bị lệch | 2 |
+| P10 | `idempotent` fail ở một nguồn | P4, ép xem lại `primary_key` của nguồn đó | 2 |
+| P11 | dbt run lỗi | `codegen` (chế độ `sql_fix`) → P6 | 2 |
+| P12 | `staging_reconcile` fail vì tỷ lệ rejected vượt ngưỡng | P4, kèm lý do bị tách nhiều nhất theo từng nguồn (ví dụ `date_format: 20 dòng`) để sửa khối `staging` | 2 |
+| P12 | dbt test hoặc `metric_reconcile` fail | `codegen` (chế độ `sql_fix`) → P6 | 2 |
 | P13 | Bản tối ưu sai/chậm hơn | Bỏ qua, đi tiếp P14 | 0 |
 | P16 | D2: Dagster không xanh trong 120s | Rollback, `DEPLOY_FAILED` | 0 |
 
@@ -661,8 +858,8 @@ Cả hệ thống chỉ có ba đường quay lui. Mọi lỗi khác dừng hẳ
 
 | Vòng | Đường đi | Trần | Bộ đếm |
 |---|---|---|---|
-| Vòng spec | P7/P8/P9/P10 → P4 | 2 | `attempts.spec` |
-| Vòng SQL | P7/P11/P12 → `sql_fix` → P6 | 3 | `attempts.sql` |
+| Vòng spec | P7/P8/P9/P10/P12 (`staging_reconcile`) → P4 | 2 (`budgets.yml: per_run.max_spec_attempts`) | `attempts.spec` |
+| Vòng SQL | P7/P11/P12 → `codegen` (chế độ `sql_fix`) → P6 | 2 (`budgets.yml: per_run.max_sql_attempts`) | `attempts.sql` |
 | Vòng người | P15 → P4 | không tính | đặt lại `attempts.spec = 0` |
 
 ### 11.4 Trần toàn cục
@@ -688,23 +885,47 @@ class WarehouseAdapter(Protocol):
 
 **DuckDB:** `dry_run` ước tính byte từ thống kê bảng (số dòng × kích thước dòng trung bình). `usd` quy đổi từ byte theo đơn giá BigQuery on-demand khai báo trong `budgets.yml: pricing.usd_per_tb`, và `DryRunResult.estimated = True` để UI gắn nhãn "ước tính". `explain` dùng `EXPLAIN ANALYZE`. `job_cost` trả cùng giá trị ước tính đó, cũng kèm `estimated = True`.
 
-Lý do quy đổi thay vì trả 0: dải bằng chứng phải luôn hiện chi phí bằng tiền (`UI-SPEC.md` mục 8, nguyên tắc 10). Một ô trống ở mọi run trừ run BigQuery duy nhất sẽ làm nguyên tắc đó vô nghĩa. Nhãn "ước tính" giữ cho con số không bị hiểu nhầm là chi phí thật.
+Lý do quy đổi thay vì trả 0: bảng bằng chứng phải luôn hiện chi phí bằng tiền (mục 16). Một ô trống ở mọi run trừ run BigQuery duy nhất sẽ làm nguyên tắc đó vô nghĩa. Nhãn "ước tính" giữ cho con số không bị hiểu nhầm là chi phí thật.
 
 **BigQuery:** `dry_run` dùng `QueryJobConfig(dry_run=True)` → `total_bytes_processed`, quy ra USD theo đơn giá. `execute` đặt `maximum_bytes_billed`. Mọi job gắn label `run_id`. `job_cost` truy vấn `INFORMATION_SCHEMA.JOBS_BY_PROJECT` lọc theo label.
 
-Phần lớn phát triển chạy trên DuckDB. BigQuery chỉ dùng cho cảnh demo số 2 và 4.
+Phần lớn phát triển chạy trên DuckDB. BigQuery chỉ dùng để demo cổng chi phí với `dry_run` thật.
+
+### 12.1 Adapter nguồn
+
+`WarehouseAdapter` là phía **đích**. Phía **nguồn** có protocol riêng, để P3, `schema_real`, `post_run` và `monitor` không phải biết nguồn là Postgres, API hay file.
+
+```python
+class SourceAdapter(Protocol):
+    def get_schema(self, obj: str) -> TableSchema              # kèm origin
+    def sample(self, obj: str, n: int = 20) -> list[dict]
+    def count(self, obj: str, since: Any | None) -> int
+    def key_hashes(self, obj: str, keys: list[str], since: Any | None) -> str
+```
+
+| Loại | `get_schema` lấy từ | `origin` |
+|---|---|---|
+| `postgres` | `information_schema.columns` và ràng buộc khóa | `information_schema` |
+| `rest_api` | Mô tả OpenAPI của mock API (`/openapi.json`) | `openapi` |
+| `filesystem` | Suy kiểu từ file mẫu (dòng đầu, tối đa 1.000 dòng) | `file_sample` |
+
+Nguồn luôn **chỉ đọc**: adapter không có phương thức ghi.
 
 ---
 
 ## 13. Template Jinja
 
-Bốn template, mỗi cái nhận `spec` làm biến đầu vào.
+Năm template chính, mỗi cái nhận `spec` làm biến đầu vào. Mỗi pipeline render ra **4 + N file** (N = số nguồn): một file ingestion chứa một resource dlt cho **mỗi** phần tử `sources[]` (sinh bằng macro theo `kind`), N model staging, một model gold, một file schema test, một asset Dagster.
 
 | Template | Xuất ra | Nội dung chính |
 |---|---|---|
-| `dlt_pipeline.py.j2` | `ingestion/{table}_pipeline.py` | `@dlt.resource` với `primary_key`, `write_disposition`, `dlt.sources.incremental(cursor_field)`; `dlt.pipeline(destination=…)` |
-| `dbt_model.sql.j2` | `dbt_project/models/gold/{model_name}.sql` | `{{ config(materialized=…, unique_key=…, partition_by=…) }}`, SELECT với `grain` + `metrics` + `filters`, khối `{% if is_incremental() %}` |
-| `dbt_schema.yml.j2` | `dbt_project/models/gold/{model_name}.yml` | Khai báo cột và `tests` từ spec |
+| `dlt_pipeline.py.j2` | `ingestion/{model_name}_pipeline.py` | Lặp `sources[]`, gọi macro theo `kind`; mỗi resource ghi vào `sources[].target.table`; một `dlt.pipeline(destination=…)` chạy tất cả |
+| `sources/_postgres.j2` | (macro) | `sql_table` từ `dlt.sources.sql_database`, `primary_key`, `write_disposition`, `dlt.sources.incremental(cursor_field)` |
+| `sources/_rest_api.j2` | (macro) | `rest_api_source` với `endpoint`, `records_path`, `pagination`; incremental theo `cursor_field` |
+| `sources/_filesystem.j2` | (macro) | `filesystem(path_pattern)` nối với reader theo `format`; incremental theo `modification_date` |
+| `dbt_staging.sql.j2` | `dbt_project/models/staging/stg_{model_name}__{id}.sql` (một file cho mỗi nguồn) | Đọc bảng bronze; `TRY_CAST` theo `columns[].type`; parse ngày theo `date_formats`; quy đổi tiền tệ theo `domains.yml: currency.rates`; loại trùng bằng `ROW_NUMBER()` theo `dedupe`; tách dòng lỗi và dòng thỏa `reject_if` sang `stg_{model_name}__{id}__rejected` kèm `_reject_reason` (dbt post-hook) |
+| `dbt_model.sql.j2` | `dbt_project/models/gold/{model_name}.sql` | `{{ config(materialized=…, unique_key=…, partition_by=…) }}`, `FROM` model staging của `transform.from`, `JOIN` các model staging theo `transform.joins`, SELECT với `grain` + `metrics` + `filters`, khối `{% if is_incremental() %}` |
+| `dbt_schema.yml.j2` | `dbt_project/models/gold/{model_name}.yml` | Khai báo cột và `tests` cho model gold; `unique` + `not_null` trên khóa `dedupe` của từng model staging |
 | `dagster_asset.py.j2` | `infra/dagster/generated/{model_name}_asset.py` | `@dlt_assets` cho E-L, `@dbt_assets` cho T, `ScheduleDefinition` từ `schedule.cron` |
 
 **Nguyên tắc:** template phải render đúng cú pháp 100%. Nếu render ra file lỗi cú pháp, đó là bug template, không phải lỗi agent → `INTERNAL_ERROR`.
@@ -720,12 +941,15 @@ Cách làm đúng: viết tay một pipeline hoàn chỉnh chạy được **tr�
 ```python
 class AgentState(TypedDict):
     run_id: str
+    version: int                   # tăng khi con người yêu cầu sửa (mục 8.2)
+    domain: str
+    created_by: str                # từ phiên đăng nhập; "system" với run tự động
     trigger: str                   # user_request | manual_optimize | regression
     parent_run_id: str | None      # run tạo mới mà run này đang sửa
     regression: dict | None        # bằng chứng suy giảm, chỉ có khi trigger = regression
     user_request: str
     plan: dict | None
-    schema_snapshot: dict          # từ resolve, KHÔNG do LLM sinh
+    schema_snapshot: dict          # từ resolve, theo sources[].id, KHÔNG do LLM sinh
     proposals: list[dict]
     spec: dict | None
     spec_history: list[dict]
@@ -738,14 +962,17 @@ class AgentState(TypedDict):
     status: str
 ```
 
-### 14.2 Bốn node LLM
+### 14.2 Bốn node
 
-| Node | Đầu vào | Đầu ra | Model |
-|---|---|---|---|
-| `planner` | yêu cầu + danh sách bảng (tên + mô tả ngắn) | kế hoạch JSON | rẻ |
-| `codegen` | kế hoạch đã duyệt + schema thật + few-shot từ vector DB | 1–2 spec JSON | mạnh |
-| `sql_fix` | Biểu thức SQL hiện tại + thông báo lỗi + schema thật | Biểu thức đã sửa | mạnh |
-| `optimizer` | không dùng LLM ở MVP | — | — |
+Graph có đúng 4 node: `planner → codegen → test-run → optimizer`. Các phase tất định (P0, P3, P5, P14–P17) là bước nối giữa các node, không phải node riêng.
+
+| Node | Phase | Loại | Đầu vào | Đầu ra | Model |
+|---|---|---|---|---|---|
+| `planner` | P1 | LLM | yêu cầu (từ chat hoặc wizard) + danh sách đối tượng nguồn của domain (tên, loại nguồn, mô tả ngắn) | kế hoạch JSON: các nguồn cần đọc và cách join | rẻ |
+| `codegen` | P4 | LLM | kế hoạch đã duyệt + schema thật + 20 dòng mẫu mỗi nguồn (để suy ra định dạng ngày, mã tiền tệ, cột cần ép kiểu) + few-shot từ vector DB | 1–2 spec JSON, gồm khối `staging` cho từng nguồn | mạnh |
+| `codegen` (chế độ `sql_fix`) | vòng SQL | LLM | biểu thức SQL hiện tại + thông báo lỗi + schema thật | biểu thức đã sửa | mạnh |
+| `test-run` | P6–P12 | Tất định | spec | file đã render + kết quả cổng và kiểm tra | — |
+| `optimizer` | P13 | Tất định ở MVP | spec + số đo baseline | bản tối ưu hoặc lý do loại | — |
 
 ### 14.3 Quy tắc prompt
 
@@ -754,6 +981,41 @@ class AgentState(TypedDict):
 - Few-shot lấy 3 spec đã duyệt gần nhất từ vector DB, chọn theo tương đồng với yêu cầu.
 - Khi quay lại `propose` sau khi fail cổng, đưa **thông báo lỗi cụ thể** vào prompt, không đưa lời khuyên chung chung.
 
+### 14.4 Vector DB
+
+```python
+class VectorStore(Protocol):
+    def add(self, run_id: str, request: str, spec: dict, metadata: dict) -> None
+    def search(self, request: str, k: int = 3, filters: dict | None = None) -> list[dict]
+```
+
+| Môi trường | Adapter | Ghi chú |
+|---|---|---|
+| MVP | `ChromaStore` | Chạy nhúng, lưu ra thư mục cục bộ; không cần thêm container |
+| Sản phẩm thật | `QdrantStore` | Chạy như một service riêng; lọc theo `domain` và `sources[].kind` |
+
+Chọn adapter bằng cấu hình (biến môi trường), không sửa code. `agent/` và `control_plane/` chỉ gọi `VectorStore`, không import trực tiếp thư viện Chroma hay Qdrant. Chỉ spec **đã deploy thành công** mới được `add` (FR-18).
+
+### 14.5 Trợ lý chat — giao diện hội thoại của agent
+
+Trợ lý chat là **cửa vào chính** để người dùng làm việc với agent: mô tả nhu cầu ELT từ nhiều nguồn bằng lời, trả lời câu hỏi làm rõ, xem kế hoạch, hỏi vì sao run bị chặn, và yêu cầu chỉnh sửa. Chat là lớp hội thoại **bọc quanh** graph ở mục 14.2, không phải node thứ năm và không có quyền nào ngoài những gì graph và API đã cho phép.
+
+**Mỗi tin nhắn được phân loại** (model rẻ) vào một trong bốn ý định, rồi đi đúng một đường:
+
+| Ý định | Ví dụ | Đi đâu | Tính vào |
+|---|---|---|---|
+| `new_request` | "Gộp đơn hàng Postgres với thanh toán từ API, tính doanh thu ngày" | Tạo run mới, vào P0 → P1 | `max_llm_calls` của run mới |
+| `clarify_answer` | Trả lời câu hỏi làm rõ của P1 | Quay lại P1 của run đang mở | `max_llm_calls` của run |
+| `revise` | "Đổi sang merge theo `order_id`, bỏ nguồn refunds" | Engineer: tạo version mới, vào P4 kèm nhận xét (vòng người, mục 11.3) | `max_llm_calls` của version mới |
+| `ask` | "Vì sao run này bị chặn?", "Nguồn payments có bao nhiêu dòng?" | Trả lời, **không** đổi trạng thái run | `max_chat_calls` |
+
+**Quy tắc cứng:**
+- **Cổng người chỉ qua nút bấm.** Xác nhận kế hoạch (P2) và Duyệt / Từ chối (P15) hiện trong chat dưới dạng thẻ có nút; không bao giờ suy ra từ câu chữ như "ok", "được rồi".
+- **Chỉ trả lời từ dữ liệu có thật.** Câu trả lời `ask` chỉ dùng `RunReport`, `error_trace`, `schema_snapshot` và 3 file chính sách; mỗi con số kèm tham chiếu tới trường nguồn (NFR-08). Không có dữ liệu thì nói không có, không đoán.
+- **Không có quyền hành động ngoài API.** Chat không duyệt, không deploy, không sửa `policy/*.yml`, không chạy lệnh shell, không đọc dữ liệu nguồn ngoài 20 dòng mẫu của P3 (NFR-02).
+- **Tôn trọng vai trò.** Reviewer gửi `new_request` hoặc `revise` thì bị từ chối kèm lý do (FR-01).
+- Lịch sử hội thoại của một run được lưu cùng run, để truy vết ai yêu cầu gì (FR-20).
+
 ---
 
 ## 15. API
@@ -761,30 +1023,50 @@ class AgentState(TypedDict):
 | Method | Path | Mô tả |
 |---|---|---|
 | `POST` | `/runs` | Tạo run mới từ yêu cầu, trả `run_id` |
-| `GET` | `/runs/{id}/events` | SSE stream theo hợp đồng 6.3 |
+| `GET` | `/runs/{id}/events` | SSE stream theo hợp đồng 8.3 |
 | `GET` | `/runs/{id}` | RunReport đầy đủ |
 | `POST` | `/runs/{id}/confirm-plan` | Cổng HITL 1 |
-| `POST` | `/runs/{id}/approve` | Body: `{files_hash, reviewer}`. Từ chối nếu hash không khớp |
+| `POST` | `/runs/{id}/approve` | Body: `{files_hash, version}`. Từ chối nếu hash hoặc version không khớp, hoặc người duyệt là `created_by` |
+| `POST` | `/runs/{id}/deploy` | Chỉ Reviewer; chỉ khi `status = APPROVED` và `approval.files_hash == files_hash` (P16) |
+| `GET` | `/runs/{id}/files` | Nội dung các file của một version (query `version`), dùng cho diff |
 | `POST` | `/runs/{id}/reject` | Body: `{reason}` |
 | `POST` | `/runs/{id}/request-changes` | Body: `{feedback}` → quay về `propose` |
+| `POST` | `/pipelines/{model_name}/optimize` | UC-3: tạo run `manual_optimize` từ spec đang chạy, trả `run_id`. Chỉ Engineer |
+| `POST` | `/runs/{id}/cancel` | Chỉ Engineer sở hữu run, chỉ khi run chưa tới `READY_FOR_REVIEW` (mục 11.1); sai điều kiện trả 409 |
 | `GET` | `/policy` | Trả 3 file chính sách hiện hành |
 | `GET` | `/runs` | Lịch sử, lọc theo status |
+| `POST` | `/chat` | Body: `{message, domain, run_id?}`. Phân loại ý định (mục 14.5); trả `{intent, reply, run_id?}`. `new_request` tạo run mới và trả `run_id` |
+| `GET` | `/runs/{id}/messages` | Lịch sử chat của run |
+
+**Danh tính và phân quyền:**
+- Mọi endpoint lấy người gọi và vai trò từ **phiên đăng nhập ở backend**. Body không có trường `user`/`reviewer`; nếu client gửi lên thì bỏ qua
+- MVP dùng đăng nhập giả lập: danh sách người dùng cố định (tên, vai trò) trong cấu hình backend, chọn người dùng ở màn đăng nhập. Không có mật khẩu, không dùng ở môi trường thật; đổi sang SSO chỉ là đổi lớp xác thực
+- Kiểm tra quyền (vai trò, `created_by`, trạng thái run) nằm ở **backend**. UI ẩn nút chỉ để tiện, không phải lớp bảo vệ
+- Sai vai trò trả 403; đúng vai trò nhưng sai trạng thái run trả 409
 
 ---
 
 ## 16. Frontend
 
-Chi tiết màn hình, mức độ sâu và thứ tự dựng nằm ở `UI-SPEC.md`. Bảng dưới chỉ nêu màn mà hệ thống đích cần có.
+Bảng dưới nêu các màn mà hệ thống đích cần có.
 
 | Màn | Nội dung |
 |---|---|
-| Gửi yêu cầu | Ô nhập, chọn domain, nút gạt vai trò Engineer/Reviewer |
-| Theo dõi tiến trình | 6 nhóm phase (mục 9.0), bung ra thấy P0–P17, cập nhật realtime qua SSE, hiện ba bộ đếm vòng lặp |
-| Review | Monaco DiffEditor (4 file) bên trái; bảng bằng chứng bên phải: gates, checks, cost, timing; 3 nút Duyệt / Từ chối / Yêu cầu sửa |
+| Đăng nhập | MVP: chọn một người dùng trong danh sách cố định (mục 15); hiện tên và vai trò đang đăng nhập ở góc trên |
+| Trợ lý chat | Khung chat luôn mở bên phải; gửi yêu cầu, trả lời câu hỏi làm rõ, hiện thẻ kế hoạch có nút Xác nhận, hỏi về run, yêu cầu sửa (mục 14.5) |
+| Gửi yêu cầu | Wizard thay thế cho chat: ô nhập, chọn domain, nút gạt vai trò Engineer/Reviewer |
+| Theo dõi tiến trình | 6 nhóm phase (mục 9.0), bung ra thấy P0–P17, cập nhật realtime qua SSE, hiện ba bộ đếm: `attempts.spec`, `attempts.sql` và `llm_calls` so với trần trong `budgets.yml` |
+| Review | Monaco DiffEditor (4 + N file) bên trái; bảng bằng chứng bên phải: gates, checks (tách theo từng nguồn), cost, timing; 3 nút Duyệt / Từ chối / Yêu cầu sửa |
+| Staging | Với từng nguồn: số dòng bronze → trùng bị loại → rejected → staging; lý do bị tách theo nhóm; xem vài dòng rejected mẫu |
 | Chính sách | Hiển thị 3 file YAML ở chế độ chỉ đọc |
 | Lịch sử | Bảng run, ai duyệt, lúc nào, chi phí bao nhiêu |
 
 Màn Review là màn quan trọng nhất. Bảng bằng chứng phải hiện con số cụ thể, ví dụ "Nguồn 12.480 dòng, bronze 12.480 dòng, khớp", "Chạy lần 2 không phát sinh dòng mới", "4,2 giây → 0,9 giây", "0,012 USD". Những con số này làm sản phẩm trông chín hơn bất kỳ hiệu ứng giao diện nào.
+
+Nguyên tắc hiển thị bắt buộc:
+- Bảng bằng chứng **luôn** hiện chi phí bằng tiền. Con số ước tính (`estimated = True`, mục 12) gắn nhãn "ước tính", không để ô trống.
+- Mọi con số hiển thị truy được về một phép đo trong `RunReport` (NFR-08).
+- Màu trạng thái luôn kèm chữ; mọi thao tác dùng được bằng bàn phím (NFR-10).
 
 ---
 
@@ -801,21 +1083,32 @@ Màn Review là màn quan trọng nhất. Bảng bằng chứng phải hiện co
 
 ### 17.2 Yêu cầu với dữ liệu kiểm thử
 
-Dữ liệu dùng để kiểm thử hệ thống phải chứa lỗi **có chủ đích**, và mỗi lỗi phải ánh xạ tới đúng một phép kiểm tra sẽ bắt được nó. Dữ liệu sạch làm tầng thẩm định không chứng minh được gì.
+Dữ liệu dùng để kiểm thử hệ thống phải chứa lỗi **có chủ đích**, và mỗi lỗi phải ánh xạ tới đúng chỗ **xử lý** nó (staging) và đúng phép kiểm tra **chứng minh** nó đã được xử lý. Dữ liệu sạch làm tầng staging và tầng thẩm định không chứng minh được gì.
 
-| Loại lỗi gieo vào | Phép bắt được | Phase |
-|---|---|---|
-| Khóa trùng giữa hai kênh | `hash_reconcile`, dbt test `unique` | P10, P12 |
-| Khóa chính chọn sai gây nhân đôi | `idempotent` | P10 |
-| Giá trị âm và NULL ở cột số | dbt test `not_negative`, `not_null` | P12 |
-| Định dạng ngày lẫn lộn | `metric_reconcile` lệch | P12 |
-| Thiếu dữ liệu một số ngày | Kiểm tra freshness | P12 |
-| Thực thể cùng tên ở nhiều domain | `entity_scan` | P3 |
-| Bảng đủ lớn để vượt trần byte | `dry_run` | P8 |
+Lỗi phải được gieo ở **cả ba loại nguồn**, để mọi phép kiểm tra được chứng minh trên nguồn không phải SQL.
+
+| Loại lỗi gieo vào | Gieo ở | Staging xử lý bằng | Phép chứng minh | Phase |
+|---|---|---|---|---|
+| Khóa trùng giữa hai kênh | Postgres `sales_pg.orders_events` (load `append`) | `dedupe` | `staging_reconcile` (đếm trùng), dbt test `unique` | P12 |
+| Bản ghi lặp ở hai trang API liền nhau | REST `sales_api.payments` (load `merge`) | — (dlt `merge` theo `payment_id` đã gộp ở bronze) | `row_reconcile` (đếm khóa phân biệt), `idempotent` | P10 |
+| Khóa chính chọn sai gây nhân đôi | REST `mkt_api.leads` | — (lỗi của spec, không phải của dữ liệu) | `idempotent` | P10 |
+| Giá trị âm và NULL ở cột số | Postgres `sales_pg.orders`, file `landing_sales/refunds` | `reject_if` | `staging_reconcile`, dbt test `not_negative`, `not_null` | P12 |
+| Định dạng ngày lẫn lộn | File `landing_sales/refunds` (`dd/mm/yyyy` lẫn ISO), REST `paid_at` | `date_formats` | `staging_reconcile`; `metric_reconcile` nếu parse sai | P12 |
+| Ngày không đúng định dạng nào | File `landing_sales/refunds` (vài dòng `31-02-2026`) | Tách sang rejected, lý do `date_format` | `staging_reconcile` | P12 |
+| Lẫn tiền tệ USD và VND | Postgres `sales_pg.orders`, REST `sales_api.payments` | `currency` | `metric_reconcile` | P12 |
+| Mã tiền tệ lạ | REST `sales_api.payments` (vài dòng `EUR`) | Tách sang rejected, lý do `unknown_currency` | `staging_reconcile` | P12 |
+| Khóa join lệch kiểu giữa hai nguồn | `order_id` là số ở `sales_pg.orders`, là chuỗi ở `sales_api.payments` | Ép kiểu `order_id` về `bigint` | `schema_real` (khóa join sau staging), `metric_reconcile` | P7, P12 |
+| Khóa join không ép kiểu được | REST `sales_api.payments` (vài `orderId` dạng `"ORD-12"`) | Tách sang rejected, lý do `cast` | `staging_reconcile` | P12 |
+| Tên cột khác nhau giữa các nguồn | `amount` ở Postgres, `total` ở REST | Đổi tên qua `columns[].as` | `schema_real`, `metric_reconcile` | P7, P12 |
+| Tỷ lệ dòng rác quá cao | File `landing_sales/refunds_bad` (15% dòng lỗi) | Tách sang rejected | `staging_reconcile` **fail** vì vượt `max_reject_pct` | P12 |
+| Thiếu dữ liệu một số ngày | File `landing_sales/refunds` (thiếu file của 2 ngày) | — | Luật `freshness_breach` và kiểm tra nguồn trống (mục 9.6.3–9.6.4) | Day 2 |
+| Bản ghi mồ côi khi join | `sales_api.payments` có thanh toán trỏ tới `order_id` không tồn tại | — (join `left` giữ nguyên, không bịa dữ liệu) | `metric_reconcile` | P12 |
+| Thực thể cùng tên ở nhiều domain | `customer`: Postgres (sales) và REST (marketing) | — | `entity_scan` | P3 |
+| Bảng đủ lớn để vượt trần byte | Postgres `sales_pg.orders_history` | — | `dry_run` | P8 |
 
 Hai dòng cuối là dữ liệu tồn tại **chỉ để kiểm chứng cổng ngữ nghĩa và cổng ngân sách**. Thiếu chúng thì hai cổng quan trọng nhất không có ca kiểm thử.
 
-Bộ seed cụ thể cho MVP nằm ở `SCOPE.md`.
+Seed nằm ở `infra/seeds/` (Postgres), `infra/mock_api/` (REST) và `infra/landing/` (file).
 
 ---
 
@@ -829,11 +1122,13 @@ Tính đúng của hệ thống điều khiển đo bằng **tỷ lệ chặn đ
 
 ### 18.2 Cấu trúc tập eval
 
-`eval/cases/` chứa các ca dạng `{request, expected_outcome, golden_result?}`, chia ba nhóm:
+`eval/cases/` chứa **15 ca** dạng `{request, expected_outcome, golden_result?}`, chia ba nhóm:
 
-- **Hợp lệ** — có `golden_result` viết tay, dùng đo tính đúng
-- **Vi phạm** — mong đợi một mã `BLOCKED_*` cụ thể, dùng đo tỷ lệ chặn đúng, phủ cả ba cổng `semantic`, `budget`, `ast_guard`
-- **Mơ hồ** — mong đợi agent hỏi lại ở P1 thay vì đoán
+| Nhóm | Số ca | Mục đích | Phân bổ |
+|---|---|---|---|
+| **Hợp lệ** | 6 | Có `golden_result` viết tay, dùng đo tính đúng | 1 ca mỗi loại nguồn đơn (`postgres`, `rest_api`, `filesystem`) + 3 ca đa nguồn (Postgres + REST, Postgres + file, cả ba). Cả 3 ca đa nguồn đều đọc dữ liệu bẩn, để chứng minh staging chuẩn hóa đúng trước khi join |
+| **Vi phạm** | 6 | Mong đợi một mã `BLOCKED_*` cụ thể, dùng đo tỷ lệ chặn đúng | 2 ca mỗi cổng: `semantic`, `budget`, `ast_guard` |
+| **Mơ hồ** | 3 | Mong đợi agent hỏi lại ở P1 thay vì đoán | — |
 
 ### 18.3 Nhóm chỉ số
 
@@ -845,7 +1140,7 @@ Tính đúng của hệ thống điều khiển đo bằng **tỷ lệ chặn đ
 | Hiệu năng | Thời gian chạy trước và sau khi optimizer can thiệp |
 | Baseline | Thời gian từ yêu cầu tới pipeline chạy được, so với người viết tay |
 
-Số lượng ca, giá trị mục tiêu và cách phát biểu kết quả nằm ở `SCOPE.md`.
+Kết quả luôn phát biểu kèm mẫu số, ví dụ "chặn đúng 6/6 ca vi phạm", "khớp golden output 5/6 ca hợp lệ", và tách theo loại nguồn khi đo tính đúng. Không làm tròn thành phần trăm khi mẫu số nhỏ.
 
 ---
 
