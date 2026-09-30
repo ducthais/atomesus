@@ -3,8 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from src.models.run_report import RunReport
-from src.services.run_report_store import FIXTURES_DIR
+from src.run_report import FIXTURES_DIR, RunReport
 
 
 def _load(name: str) -> dict:

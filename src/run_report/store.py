@@ -6,7 +6,7 @@ Sẽ được thay bằng sổ bằng chứng thật; API chỉ phụ thuộc v�
 from functools import lru_cache
 from pathlib import Path
 
-from src.models.run_report import RunReport, RunStatus
+from src.run_report.models import RunReport, RunStatus
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "run_reports"
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from src.models.run_report import RunReport, RunStatus
-from src.services.run_report_store import get_run_report, list_run_reports
+from src.run_report.models import RunReport, RunStatus
+from src.run_report.store import get_run_report, list_run_reports
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
