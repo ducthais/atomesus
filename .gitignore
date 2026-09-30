@@ -59,3 +59,4 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
+WORKLOG.md
