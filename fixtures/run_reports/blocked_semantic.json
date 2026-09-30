@@ -1,0 +1,47 @@
+{
+  "run_id": "c4b8f0d3-1e2a-4f5b-b7c9-6a0e3d2f1b50",
+  "version": 1,
+  "domain": "sales",
+  "created_by": "binh",
+  "trigger": "user_request",
+  "parent_run_id": null,
+  "regression": null,
+  "created_at": "2026-09-29T10:40:00+07:00",
+  "user_request": "Đếm số customer mới mỗi tuần",
+  "status": "BLOCKED_SEMANTIC_CONFLICT",
+  "stage_reached": "resolve",
+  "plan": {
+    "sources": ["sales_pg.customers"],
+    "grain": ["week"],
+    "metrics": ["new_customers"]
+  },
+  "spec": null,
+  "spec_history": [],
+  "files": {},
+  "files_hash": null,
+  "gates": [
+    {
+      "name": "semantic",
+      "result": "fail",
+      "detail": "Phát hiện thực thể customer ở 2 domain. Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng Postgres). Marketing định nghĩa là người để lại email (2 endpoint REST). Chưa có định nghĩa chuẩn. Chuyển tới steward domain Sales: an@company.vn",
+      "observed": {
+        "entity": "customer",
+        "domains": {
+          "sales": { "definition": "tài khoản đã ký hợp đồng", "tables": ["sales_pg.customers", "sales_pg.accounts"] },
+          "marketing": { "definition": "người để lại email", "tables": ["mkt_api.leads", "mkt_api.contacts"] }
+        },
+        "steward": "an@company.vn"
+      }
+    }
+  ],
+  "checks": [],
+  "cost": { "estimated_bytes": 0, "actual_bytes": 0, "usd": 0.0 },
+  "timing": { "baseline_sec": null, "optimized_sec": null },
+  "optimizer": [],
+  "attempts": { "spec": 0, "sql": 0 },
+  "llm_calls": 1,
+  "error_trace": [
+    { "stage": "resolve", "status": "blocked", "code": "BLOCKED_SEMANTIC_CONFLICT", "message": "Thực thể customer chưa có định nghĩa chuẩn giữa sales và marketing" }
+  ],
+  "approval": null
+}
