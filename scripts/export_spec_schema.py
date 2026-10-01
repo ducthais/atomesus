@@ -1,4 +1,4 @@
-"""Sinh src/spec/spec.schema.json từ model Spec. Chạy lại sau mỗi lần sửa src/spec/models.py.
+"""Sinh src/spec/schemas/spec.schema.json từ model Spec. Chạy lại sau mỗi lần sửa src/spec/models.py.
 
 .venv/Scripts/python.exe scripts/export_spec_schema.py
 """
@@ -20,5 +20,11 @@ def render_schema() -> str:
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    SCHEMA_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCHEMA_PATH.write_text(render_schema(), encoding="utf-8")
     print(f"đã ghi {SCHEMA_PATH}")

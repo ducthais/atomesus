@@ -1,6 +1,6 @@
 # Spec mẫu (Sprint 0 - Role C)
 
-Bản thiết kế pipeline dạng JSON theo SPEC §8.1 (bản `SPEC_1.md` ở commit `6c32c2f`), model ở `src/spec/models.py`, JSON Schema sinh tự động ở `src/spec/spec.schema.json`.
+Bản thiết kế pipeline dạng JSON theo SPEC §8.1 (bản `SPEC_1.md` ở commit `6c32c2f`), model ở `src/spec/models.py`, JSON Schema sinh tự động ở `src/spec/schemas/spec.schema.json`.
 
 | File | Nguồn | Dùng để |
 |---|---|---|
