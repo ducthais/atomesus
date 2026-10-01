@@ -7,7 +7,8 @@ export type RunRequest = { title: string; table: 'sales_raw.orders'; columns: Co
 export type RejectedRow = { row: number; reason: string; columns: string[]; values: Record<string, string | null> };
 export type StagingObserved = {
   bronze: number; staging: number; rejected: number; reject_pct: number; reject_reasons: Record<string, number>;
-  reject_samples: RejectedRow[]; output_schema: { name: string; type: string }[]; output_samples: Record<string, string | null>[];
+  // Run làm sạch Postgres có output_*; run do agent tạo có mẫu gold ở gate post_run và reject_samples dạng {_reject_reason, ...giá trị thô}.
+  reject_samples: (RejectedRow | Record<string, unknown>)[]; output_schema?: { name: string; type: string }[]; output_samples?: Record<string, string | null>[];
 };
 export type RunReport = {
   run_id: string; version: number; domain: string; created_by: string; created_at: string; user_request: string;
@@ -20,6 +21,10 @@ export type RunReport = {
 export function stagingOf(report: RunReport): StagingObserved | null {
   const check = report.checks.find(item => item.name === 'staging_reconcile');
   return check ? check.observed as StagingObserved : null;
+}
+export function goldPreview(report: RunReport): Record<string, string | null>[] {
+  const gate = report.gates.find(item => item.name === 'post_run');
+  return (gate?.observed.gold_samples as Record<string, string | null>[] | undefined) ?? [];
 }
 export function runError(report: RunReport): string | null {
   return report.error_trace.at(-1)?.error ?? null;

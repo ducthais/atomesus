@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ApiError, COLUMN_TYPES, apiRequest, defaultColumns, pipelineRequest, runError, stagingOf, validateColumns,
-  type ColumnRule, type RunReport, type RunRequest, type Source, type User } from '@/lib/postgres-api';
+import { ApiError, COLUMN_TYPES, apiRequest, defaultColumns, goldPreview, pipelineRequest, runError, stagingOf, validateColumns,
+  type ColumnRule, type RunReport, type RunRequest, type Source, type StagingObserved, type User } from '@/lib/postgres-api';
 import styles from './postgres.module.css';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -26,6 +26,7 @@ export default function PostgresPage() {
   const [sourceError, setSourceError] = useState('');
   const validation = validateColumns(columns);
   const staged = report ? stagingOf(report) : null;
+  const gold = report ? goldPreview(report) : [];
   const handleError = useCallback((err: unknown) => {
     setError(err instanceof Error ? err.message : 'Thao tác thất bại. Vui lòng thử lại.');
     if (err instanceof ApiError && err.status === 401) { setUser(null); setReport(null); setRuns([]); }
@@ -133,10 +134,20 @@ export default function PostgresPage() {
         {staged && <div className={styles.metrics}><div><strong>{staged.bronze}</strong>Đã đọc</div><div><strong>{staged.staging}</strong>Hợp lệ</div><div><strong>{staged.rejected}</strong>Bị tách</div></div>}
         {report.status === 'NEEDS_HUMAN' && <p className={styles.error}>Cần kiểm tra dữ liệu bị tách hoặc nguồn không có dòng nào.</p>}
         <p>Phê duyệt: chưa có. Kết quả này ghi nhận bước đọc và làm sạch dữ liệu.</p>
-        {staged && <><h3>Dữ liệu sau làm sạch</h3><p>Sổ bằng chứng lưu tối đa 20 dòng mẫu cho mỗi run.</p>
+        {staged?.output_schema && staged.output_samples && <><h3>Dữ liệu sau làm sạch</h3><p>Sổ bằng chứng lưu tối đa 20 dòng mẫu cho mỗi run.</p>
         <div className={styles.scroll}><table><thead><tr>{staged.output_schema.map(column => <th key={column.name}>{column.name}<small>{column.type}</small></th>)}</tr></thead>
-          <tbody>{staged.output_samples.map((row, index) => <tr key={index}>{staged.output_schema.map(column => <td key={column.name}>{row[column.name] ?? 'NULL'}</td>)}</tr>)}</tbody></table></div></>}
-        {staged && staged.reject_samples.length > 0 && <><h3>Dòng ép kiểu lỗi (tối đa 20 dòng)</h3><div className={styles.scroll}><table><thead><tr><th>Dòng</th><th>Cột lỗi</th><th>Giá trị gốc</th></tr></thead><tbody>{staged.reject_samples.map(row => <tr key={row.row}><td>{row.row}</td><td>{row.columns.join(', ')}</td><td><code>{JSON.stringify(row.values)}</code></td></tr>)}</tbody></table></div></>}
+          <tbody>{staged.output_samples.map((row, index) => <tr key={index}>{staged.output_schema!.map(column => <td key={column.name}>{row[column.name] ?? 'NULL'}</td>)}</tr>)}</tbody></table></div></>}
+        {gold.length > 0 && <><h3>Kết quả gold (tối đa 20 dòng)</h3>
+        <div className={styles.scroll}><table><thead><tr>{Object.keys(gold[0]).map(name => <th key={name}>{name}</th>)}</tr></thead>
+          <tbody>{gold.map((row, index) => <tr key={index}>{Object.keys(gold[0]).map(name => <td key={name}>{row[name] ?? 'NULL'}</td>)}</tr>)}</tbody></table></div></>}
+        {report.checks.filter(check => check.name === 'staging_reconcile').map(check => {
+          const samples = (check.observed as StagingObserved).reject_samples;
+          return samples.length > 0 && <div key={check.source_id}><h3>Dòng bị tách{check.source_id ? ` · nguồn ${check.source_id}` : ''} (tối đa 20 dòng)</h3><div className={styles.scroll}><table><thead><tr><th>Lý do</th><th>Giá trị gốc</th></tr></thead><tbody>{samples.map((row, index) => {
+            const { _reject_reason, row: _line, columns, values, ...raw } = row as Record<string, unknown>;
+            const reason = (_reject_reason as string | undefined) ?? `cast: ${(columns as string[]).join(', ')}`;
+            return <tr key={index}><td>{reason}</td><td><code>{JSON.stringify(values ?? raw)}</code></td></tr>;
+          })}</tbody></table></div></div>;
+        })}
         <details><summary>Xem RunReport (JSON)</summary><pre className={styles.json}>{JSON.stringify(report, null, 2)}</pre></details>
       </section>}
     </>}
