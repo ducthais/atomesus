@@ -1,0 +1,75 @@
+{
+  "spec_version": "1.2",
+  "domain": "sales",
+  "sources": [
+    {
+      "id": "orders",
+      "kind": "postgres",
+      "source_ref": "sales_pg",
+      "table": "orders",
+      "primary_key": ["order_id"],
+      "cursor_field": "updated_at",
+      "write_disposition": "merge",
+      "target": { "dataset": "bronze", "table": "raw_orders" },
+      "staging": {
+        "columns": [
+          { "from": "order_id",   "as": "order_id",   "type": "bigint" },
+          { "from": "created_at", "as": "order_date", "type": "date" },
+          { "from": "channel",    "as": "channel",    "type": "varchar" },
+          { "from": "status",     "as": "status",     "type": "varchar" },
+          { "from": "amount",     "as": "amount_vnd", "type": "decimal(18,2)",
+            "currency": { "code_column": "currency", "to": "VND" } }
+        ],
+        "dedupe": { "keys": ["order_id"], "keep": "latest", "order_by": "updated_at" },
+        "reject_if": ["order_id IS NULL", "amount_vnd < 0"]
+      }
+    },
+    {
+      "id": "payments",
+      "kind": "rest_api",
+      "source_ref": "sales_api",
+      "endpoint": "/payments",
+      "records_path": "data",
+      "pagination": "page",
+      "primary_key": ["payment_id"],
+      "cursor_field": "updated_at",
+      "write_disposition": "merge",
+      "target": { "dataset": "bronze", "table": "raw_payments" },
+      "staging": {
+        "columns": [
+          { "from": "payment_id", "as": "payment_id", "type": "varchar" },
+          { "from": "orderId",    "as": "order_id",   "type": "bigint" },
+          { "from": "paid_at",    "as": "paid_date",  "type": "date",
+            "date_formats": ["%Y-%m-%d", "%d/%m/%Y"] },
+          { "from": "total",      "as": "amount_vnd", "type": "decimal(18,2)",
+            "currency": { "code_column": "ccy", "to": "VND" } }
+        ],
+        "dedupe": { "keys": ["payment_id"], "keep": "latest", "order_by": "updated_at" },
+        "reject_if": ["order_id IS NULL", "amount_vnd <= 0"]
+      }
+    }
+  ],
+  "transform": {
+    "model_name": "fct_daily_revenue",
+    "from": "orders",
+    "joins": [
+      { "source": "payments", "type": "left",
+        "on": [["orders.order_id", "payments.order_id"]] }
+    ],
+    "materialization": "incremental",
+    "unique_key": ["order_date", "channel"],
+    "grain": ["orders.order_date", "orders.channel"],
+    "metrics": [
+      { "name": "revenue", "expr": "SUM(payments.amount_vnd)" },
+      { "name": "order_count", "expr": "COUNT(DISTINCT orders.order_id)" }
+    ],
+    "filters": ["orders.status <> 'cancelled'"],
+    "partition_by": "order_date",
+    "tests": [
+      { "column": "order_date", "test": "not_null" },
+      { "column": "revenue", "test": "not_negative" }
+    ]
+  },
+  "schedule": { "cron": "0 * * * *" },
+  "estimates": { "bytes_scanned": 0, "usd": 0.0, "latency_sec": 0 }
+}
