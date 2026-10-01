@@ -1,0 +1,72 @@
+[#- Dagster: @dlt_assets cho E-L, @dbt_assets cho T, ScheduleDefinition từ schedule.cron.
+    Asset key của từng bảng bronze trùng với key của dbt source ("bronze", <bảng>), nên Dagster nối
+    lineage dlt → staging → gold và chạy theo đúng thứ tự. -#]
+[%- set name = model_name -%]
+"""Dagster code location cho pipeline [[ name ]]. Sinh tự động từ Spec, không sửa tay."""
+
+from pathlib import Path
+
+from dagster import (
+    AssetExecutionContext,
+    AssetKey,
+    AssetSelection,
+    Definitions,
+    ScheduleDefinition,
+    define_asset_job,
+)
+from dagster_dbt import DbtCliResource, DbtProject, dbt_assets
+from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
+from dagster_dlt.translator import DltResourceTranslatorData
+
+from ingestion.[[ name ]]_pipeline import pipeline, source
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DBT_PROJECT = DbtProject(project_dir=REPO_ROOT / "dbt_project", profiles_dir=REPO_ROOT / "dbt_project")
+DBT_PROJECT.prepare_if_dev()
+
+
+class BronzeTranslator(DagsterDltTranslator):
+    def get_asset_spec(self, data: DltResourceTranslatorData):
+        return super().get_asset_spec(data).replace_attributes(key=AssetKey(["bronze", data.resource.table_name]))
+
+
+@dlt_assets(
+    dlt_source=source(),
+    dlt_pipeline=pipeline(),
+    name=[[ (name ~ "_ingestion") | pystr ]],
+    group_name=[[ name | pystr ]],
+    dagster_dlt_translator=BronzeTranslator(),
+)
+def [[ name ]]_ingestion(context: AssetExecutionContext, dlt: DagsterDltResource):
+    yield from dlt.run(context=context)
+
+
+@dbt_assets(manifest=DBT_PROJECT.manifest_path, select=[[ ("+" ~ name) | pystr ]], name=[[ (name ~ "_transform") | pystr ]])
+def [[ name ]]_transform(context: AssetExecutionContext, dbt: DbtCliResource):
+    yield from dbt.cli(["build"], context=context).stream()
+
+
+[[ name ]]_job = define_asset_job(
+    [[ (name ~ "_job") | pystr ]],
+    selection=AssetSelection.assets([[ name ]]_ingestion, [[ name ]]_transform),
+)
+
+[[ name ]]_schedule = ScheduleDefinition(
+    job=[[ name ]]_job,
+    cron_schedule=[[ spec.schedule.cron | pystr ]],
+    execution_timezone="Asia/Ho_Chi_Minh",
+)
+
+defs = Definitions(
+    assets=[
+        [[ name ]]_ingestion,
+        [[ name ]]_transform,
+    ],
+    jobs=[
+        [[ name ]]_job,
+    ],
+    schedules=[
+        [[ name ]]_schedule,
+    ],
+    resources={"dlt": DagsterDltResource(), "dbt": DbtCliResource(project_dir=DBT_PROJECT)},
+)

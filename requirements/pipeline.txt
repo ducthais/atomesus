@@ -1,3 +1,2 @@
+# Giữ để tương thích (CI pipeline.yml, docker/pipeline.Dockerfile). Mọi thư viện nằm trong requirements.txt.
 -r ../requirements.txt
-psycopg[binary]>=3.2,<4
-duckdb>=1.4,<2

@@ -1,0 +1,9 @@
+# Sandbox: một file DuckDB riêng cho mỗi run (WAREHOUSE_PATH do bước chạy thử đặt).
+p045:
+  target: sandbox
+  outputs:
+    sandbox:
+      type: duckdb
+      path: "{{ env_var('WAREHOUSE_PATH') }}"
+      schema: main
+      threads: 1

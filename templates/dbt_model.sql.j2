@@ -1,0 +1,37 @@
+[#- Model gold: join các model staging đã sạch theo transform.joins, nhóm theo grain, tính metrics. -#]
+[%- set t = spec.transform -%]
+[%- set partition = t.grain | select("grain_named", t.partition_by) | first if t.partition_by else none -%]
+-- Model gold [[ t.model_name ]]. Sinh tự động từ Spec, không sửa tay.
+{{ config(
+    materialized='[[ t.materialization ]]'
+[%- if t.unique_key %],
+    unique_key=[[ t.unique_key | pylist ]]
+[%- endif %]
+) }}
+
+select
+[%- for grain in t.grain %]
+    [[ grain ]] as [[ grain | output_name | ident ]],
+[%- endfor %]
+[%- for metric in t.metrics %]
+    [[ metric.expr ]] as [[ metric.name | ident ]][% if not loop.last %],[% endif %]
+[%- endfor %]
+
+from {{ ref('[[ staging_models[t.from] ]]') }} as [[ t.from ]]
+[%- for join in t.joins %]
+[[ join.type ]] join {{ ref('[[ staging_models[join.source] ]]') }} as [[ join.source ]]
+    on [% for left, right in join.on %][[ left ]] = [[ right ]][% if not loop.last %] and [% endif %][% endfor %]
+[%- endfor %]
+
+where true
+[%- for condition in t.filters %]
+    and ([[ condition ]])
+[%- endfor %]
+[%- if t.materialization == "incremental" and partition %]
+{% if is_incremental() %}
+    -- Chỉ tính lại từ phân vùng mới nhất đã có; unique_key gộp đè phần trùng.
+    and [[ partition ]] >= (select max([[ t.partition_by | ident ]]) from {{ this }})
+{% endif %}
+[%- endif %]
+
+group by [% for grain in t.grain %][[ loop.index ]][% if not loop.last %], [% endif %][% endfor %]

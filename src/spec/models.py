@@ -232,8 +232,13 @@ def _check_join_graph(transform: Transform, outputs: dict[str, dict[str, str]]) 
 
 def _ref_source(ref: str, outputs: dict[str, dict[str, str]]) -> str:
     source_id, _, column = ref.partition(".")
-    if source_id not in outputs or column not in outputs[source_id]:
-        raise ValueError(f"'{ref}' không phải cột đầu ra staging dạng <id>.<as>")
+    if source_id not in outputs:
+        raise ValueError(f"'{ref}': '{source_id}' không phải sources[].id; các id hiện có: {sorted(outputs)}")
+    if column not in outputs[source_id]:
+        raise ValueError(
+            f"'{ref}' không phải cột đầu ra staging của '{source_id}' (đang có: {sorted(outputs[source_id])}); "
+            f"muốn dùng cột này thì khai báo nó trong staging.columns của nguồn '{source_id}'"
+        )
     return source_id
 
 
@@ -245,7 +250,9 @@ def _check_column_refs(transform: Transform, outputs: dict[str, dict[str, str]])
         elif multi_source:
             raise ValueError(f"grain '{grain}': khi có từ hai nguồn phải viết dạng <id>.<cột>")
         elif grain not in outputs[transform.from_]:
-            raise ValueError(f"grain '{grain}' không phải cột đầu ra staging")
+            raise ValueError(
+                f"grain '{grain}' không phải cột đầu ra staging (đang có: {sorted(outputs[transform.from_])})"
+            )
     for expression in [m.expr for m in transform.metrics] + transform.filters:
         for source_id, column in _refs(expression):
             _ref_source(f"{source_id}.{column}", outputs)

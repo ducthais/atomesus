@@ -1,0 +1,55 @@
+[#- Ingestion (E-L): một resource dlt cho mỗi sources[], tất cả đổ vào dataset bronze. -#]
+[%- import "sources/_postgres.j2" as postgres -%]
+[%- import "sources/_rest_api.j2" as rest_api -%]
+[%- import "sources/_filesystem.j2" as filesystem -%]
+[%- set kinds = spec.sources | map(attribute="kind") | list -%]
+"""Ingestion cho pipeline [[ model_name ]]. Sinh tự động từ Spec, không sửa tay.
+
+Kết nối đọc từ biến môi trường theo quy ước dlt, ví dụ SOURCES__SALES_PG__CREDENTIALS.
+Đích là DuckDB tại WAREHOUSE_PATH, dataset bronze.
+"""
+
+import os
+
+import dlt
+[%- if "postgres" in kinds %]
+from dlt.sources.sql_database import sql_table
+[%- endif %]
+[%- if "rest_api" in kinds %]
+from dlt.sources.rest_api import rest_api_source
+[%- endif %]
+[%- if "filesystem" in kinds %]
+from dlt.sources.filesystem import filesystem, read_csv, read_jsonl, read_parquet
+[%- endif %]
+
+PIPELINE_NAME = [[ model_name | pystr ]]
+[% for source in spec.sources %]
+
+[% if source.kind == "postgres" -%]
+[[ postgres.resource(source, policy_sources[source.source_ref]) ]]
+[%- elif source.kind == "rest_api" -%]
+[[ rest_api.resource(source) ]]
+[%- else -%]
+[[ filesystem.resource(source) ]]
+[%- endif %]
+[% endfor %]
+
+@dlt.source(name=PIPELINE_NAME)
+def source():
+    return [
+[%- for source in spec.sources %]
+        resource_[[ source.id ]](),
+[%- endfor %]
+    ]
+
+
+def pipeline() -> dlt.Pipeline:
+    return dlt.pipeline(
+        pipeline_name=PIPELINE_NAME,
+        destination=dlt.destinations.duckdb(os.environ["WAREHOUSE_PATH"]),
+        dataset_name="bronze",
+    )
+
+
+if __name__ == "__main__":
+    print(pipeline().run(source()))

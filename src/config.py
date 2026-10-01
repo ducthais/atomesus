@@ -22,7 +22,8 @@ class Settings(BaseSettings):
 
     # LLM
     openai_api_key: str = ""
-    model_name: str = "gpt-4o-mini"
+    model_name: str = "gpt-4o-mini"  # model rẻ: lập kế hoạch, phân loại
+    model_name_strong: str = ""  # model mạnh: sinh Spec; để trống thì dùng model_name
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
     # Database

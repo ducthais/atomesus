@@ -2,18 +2,22 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ApiError, COLUMN_TYPES, defaultColumns, pipelineRequest, validateColumns,
-  type ColumnRule, type RunReport, type RunRequest, type RunSummary, type Source, type User } from '@/lib/postgres-api';
+import { ApiError, COLUMN_TYPES, apiRequest, defaultColumns, goldPreview, pipelineRequest, runError, stagingOf, validateColumns,
+  type ColumnRule, type RunReport, type RunRequest, type Source, type StagingObserved, type User } from '@/lib/postgres-api';
 import styles from './postgres.module.css';
 
-const statusLabel = { SUCCEEDED: 'Hoàn thành', NEEDS_HUMAN: 'Cần kiểm tra', FAILED: 'Thất bại' };
+const STATUS_LABEL: Record<string, string> = {
+  READY_FOR_REVIEW: 'Chờ duyệt', NEEDS_HUMAN: 'Cần kiểm tra', INFRA_ERROR: 'Lỗi kết nối nguồn', INTERNAL_ERROR: 'Lỗi hệ thống',
+  APPROVED: 'Đã duyệt', DEPLOYED: 'Đã triển khai', REJECTED: 'Bị từ chối',
+};
+const statusLabel = (status: string) => STATUS_LABEL[status] ?? status;
 
 export default function PostgresPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [source, setSource] = useState<Source | null>(null);
   const [columns, setColumns] = useState<ColumnRule[]>([]);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [runs, setRuns] = useState<RunReport[]>([]);
   const [report, setReport] = useState<RunReport | null>(null);
   const [title, setTitle] = useState('Làm sạch đơn hàng Postgres');
   const [busy, setBusy] = useState(false);
@@ -21,6 +25,8 @@ export default function PostgresPage() {
   const [error, setError] = useState('');
   const [sourceError, setSourceError] = useState('');
   const validation = validateColumns(columns);
+  const staged = report ? stagingOf(report) : null;
+  const gold = report ? goldPreview(report) : [];
   const handleError = useCallback((err: unknown) => {
     setError(err instanceof Error ? err.message : 'Thao tác thất bại. Vui lòng thử lại.');
     if (err instanceof ApiError && err.status === 401) { setUser(null); setReport(null); setRuns([]); }
@@ -36,7 +42,7 @@ export default function PostgresPage() {
       else setSourceError(err instanceof Error ? err.message : 'Không đọc được schema.');
     }
   }, [handleError]);
-  const refreshRuns = useCallback(async () => setRuns(await pipelineRequest<RunSummary[]>('/runs')), []);
+  const refreshRuns = useCallback(async () => setRuns(await apiRequest<RunReport[]>('/runs')), []);
   useEffect(() => {
     let active = true;
     async function init() {
@@ -84,7 +90,7 @@ export default function PostgresPage() {
   }
   async function openRun(id: string) {
     setBusy(true); setError('');
-    try { setReport(await pipelineRequest<RunReport>(`/runs/${encodeURIComponent(id)}`)); }
+    try { setReport(await apiRequest<RunReport>(`/runs/${encodeURIComponent(id)}`)); }
     catch (err) { handleError(err); }
     finally { setBusy(false); }
   }
@@ -117,22 +123,32 @@ export default function PostgresPage() {
           </form></> : !sourceError && <p role="status">Đang đọc schema…</p>}
       </section><section className={styles.card}>
         <div className={styles.sectionHead}><h2>Lịch sử run</h2><button className="studio-button" disabled={busy} onClick={() => refreshRuns().catch(handleError)}>Tải lại</button></div>
-        <p>100 run gần nhất, lưu tại backend.</p>
-        {runs.length === 0 ? <p>Chưa có run. Chọn cấu hình và chạy pipeline để bắt đầu.</p> : <ul className={styles.runs}>{runs.map(item => <li key={item.run_id}><button disabled={busy} aria-pressed={report?.run_id === item.run_id} onClick={() => openRun(item.run_id)}><strong>{item.title}</strong><span>{statusLabel[item.status]} · {item.rows_written}/{item.rows_read} dòng</span><small>{item.created_by} · v{item.version} · {new Date(item.started_at).toLocaleString('vi-VN')}</small></button></li>)}</ul>}
+        <p>100 run gần nhất trong sổ bằng chứng.</p>
+        {runs.length === 0 ? <p>Chưa có run. Chọn cấu hình và chạy pipeline để bắt đầu.</p> : <ul className={styles.runs}>{runs.map(item => { const counts = stagingOf(item); return <li key={item.run_id}><button disabled={busy} aria-pressed={report?.run_id === item.run_id} onClick={() => openRun(item.run_id)}><strong>{item.user_request}</strong><span>{statusLabel(item.status)}{counts && ` · ${counts.staging}/${counts.bronze} dòng`}</span><small>{item.created_by} · v{item.version} · {new Date(item.created_at).toLocaleString('vi-VN')}</small></button></li>; })}</ul>}
       </section></div>
       {busy && <p role="status">Đang gửi yêu cầu tới backend. Kết quả sẽ hiện bên dưới.</p>}
       {report && <section className={styles.card} aria-label="Kết quả pipeline">
-        <h2>3. Kết quả: {statusLabel[report.status]}</h2><p>{report.title} · người tạo: {report.created_by} · version {report.version}</p>
-        <p><code>{report.run_id}</code> · {report.duration_ms} ms</p>
-        {report.error && <p className={styles.error} role="alert">{report.error}</p>}
-        <div className={styles.metrics}><div><strong>{report.rows_read}</strong>Đã đọc</div><div><strong>{report.rows_written}</strong>Hợp lệ</div><div><strong>{report.rows_rejected}</strong>Bị tách</div></div>
+        <h2>3. Kết quả: {statusLabel(report.status)}</h2><p>{report.user_request} · người tạo: {report.created_by} · version {report.version}</p>
+        <p><code>{report.run_id}</code>{report.timing.baseline_sec !== null && ` · ${report.timing.baseline_sec} s`}</p>
+        {runError(report) && <p className={styles.error} role="alert">{runError(report)}</p>}
+        {staged && <div className={styles.metrics}><div><strong>{staged.bronze}</strong>Đã đọc</div><div><strong>{staged.staging}</strong>Hợp lệ</div><div><strong>{staged.rejected}</strong>Bị tách</div></div>}
         {report.status === 'NEEDS_HUMAN' && <p className={styles.error}>Cần kiểm tra dữ liệu bị tách hoặc nguồn không có dòng nào.</p>}
         <p>Phê duyệt: chưa có. Kết quả này ghi nhận bước đọc và làm sạch dữ liệu.</p>
-        <h3>Dữ liệu sau làm sạch</h3><p>Hiển thị tối đa 20 dòng; JSON bên dưới chứa đầy đủ kết quả trong giới hạn run.</p>
-        <div className={styles.scroll}><table><thead><tr>{report.output_schema.map(column => <th key={column.name}>{column.name}<small>{column.type}</small></th>)}</tr></thead>
-          <tbody>{report.output.slice(0, 20).map((row, index) => <tr key={index}>{report.output_schema.map(column => <td key={column.name}>{row[column.name] ?? 'NULL'}</td>)}</tr>)}</tbody></table></div>
-        {report.rejected.length > 0 && <><h3>Dòng ép kiểu lỗi (tối đa 20 dòng)</h3><div className={styles.scroll}><table><thead><tr><th>Dòng</th><th>Cột lỗi</th><th>Giá trị gốc</th></tr></thead><tbody>{report.rejected.slice(0, 20).map(row => <tr key={row.row}><td>{row.row}</td><td>{row.columns.join(', ')}</td><td><code>{JSON.stringify(row.values)}</code></td></tr>)}</tbody></table></div></>}
-        <details><summary>Xem JSON kết quả và cấu hình</summary><pre className={styles.json}>{JSON.stringify(report, null, 2)}</pre></details>
+        {staged?.output_schema && staged.output_samples && <><h3>Dữ liệu sau làm sạch</h3><p>Sổ bằng chứng lưu tối đa 20 dòng mẫu cho mỗi run.</p>
+        <div className={styles.scroll}><table><thead><tr>{staged.output_schema.map(column => <th key={column.name}>{column.name}<small>{column.type}</small></th>)}</tr></thead>
+          <tbody>{staged.output_samples.map((row, index) => <tr key={index}>{staged.output_schema!.map(column => <td key={column.name}>{row[column.name] ?? 'NULL'}</td>)}</tr>)}</tbody></table></div></>}
+        {gold.length > 0 && <><h3>Kết quả gold (tối đa 20 dòng)</h3>
+        <div className={styles.scroll}><table><thead><tr>{Object.keys(gold[0]).map(name => <th key={name}>{name}</th>)}</tr></thead>
+          <tbody>{gold.map((row, index) => <tr key={index}>{Object.keys(gold[0]).map(name => <td key={name}>{row[name] ?? 'NULL'}</td>)}</tr>)}</tbody></table></div></>}
+        {report.checks.filter(check => check.name === 'staging_reconcile').map(check => {
+          const samples = (check.observed as StagingObserved).reject_samples;
+          return samples.length > 0 && <div key={check.source_id}><h3>Dòng bị tách{check.source_id ? ` · nguồn ${check.source_id}` : ''} (tối đa 20 dòng)</h3><div className={styles.scroll}><table><thead><tr><th>Lý do</th><th>Giá trị gốc</th></tr></thead><tbody>{samples.map((row, index) => {
+            const { _reject_reason, row: _line, columns, values, ...raw } = row as Record<string, unknown>;
+            const reason = (_reject_reason as string | undefined) ?? `cast: ${(columns as string[]).join(', ')}`;
+            return <tr key={index}><td>{reason}</td><td><code>{JSON.stringify(values ?? raw)}</code></td></tr>;
+          })}</tbody></table></div></div>;
+        })}
+        <details><summary>Xem RunReport (JSON)</summary><pre className={styles.json}>{JSON.stringify(report, null, 2)}</pre></details>
       </section>}
     </>}
   </main>;

@@ -1,0 +1,15 @@
+[#- Resource dlt cho nguồn filesystem: filesystem(path_pattern) | reader theo format. -#]
+[% macro resource(source) -%]
+def resource_[[ source.id ]]():
+    files = filesystem(
+        bucket_url=dlt.config[[ ("sources." ~ source.source_ref ~ ".bucket_url") | pyindex ]],
+        file_glob=[[ source.path_pattern | pystr ]],
+    )
+[%- if source.cursor_field %]
+    files.apply_hints(incremental=dlt.sources.incremental("modification_date"))
+[%- endif %]
+    return (files | read_[[ source.format ]]()).with_name([[ source.target.table | pystr ]]).apply_hints(
+        primary_key=[[ source.primary_key | pylist ]],
+        write_disposition=[[ source.write_disposition | pystr ]],
+    )
+[%- endmacro %]
