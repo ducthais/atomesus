@@ -3,24 +3,38 @@ export const COLUMN_TYPES = ['bigint', 'integer', 'decimal(18,2)', 'double', 'va
 export type ColumnRule = { from: string; as: string; type: typeof COLUMN_TYPES[number] };
 export type Source = { table: 'sales_raw.orders'; columns: { name: string; type: string }[]; max_rows: number };
 export type RunRequest = { title: string; table: 'sales_raw.orders'; columns: ColumnRule[] };
-export type RunSummary = {
-  run_id: string; title: string; version: number; created_by: string;
-  status: 'SUCCEEDED' | 'NEEDS_HUMAN' | 'FAILED'; started_at: string; finished_at: string;
-  duration_ms: number; rows_read: number; rows_written: number; rows_rejected: number;
-  output_schema: { name: string; type: string }[]; error: string | null; approval: null; spec_hash: string;
+/** Bản rút gọn của `RunReport` (src/run_report/models.py) — hợp đồng của sổ bằng chứng. */
+export type RejectedRow = { row: number; reason: string; columns: string[]; values: Record<string, string | null> };
+export type StagingObserved = {
+  bronze: number; staging: number; rejected: number; reject_pct: number; reject_reasons: Record<string, number>;
+  reject_samples: RejectedRow[]; output_schema: { name: string; type: string }[]; output_samples: Record<string, string | null>[];
 };
-export type RunReport = RunSummary & {
-  spec: RunRequest; output: Record<string, string | null>[];
-  rejected: { row: number; reason: string; columns: string[]; values: Record<string, string | null> }[];
+export type RunReport = {
+  run_id: string; version: number; domain: string; created_by: string; created_at: string; user_request: string;
+  status: string; stage_reached: string; spec: RunRequest | null;
+  gates: { name: string; result: 'pass' | 'fail'; detail: string; observed: Record<string, unknown> }[];
+  checks: { name: string; source_id: string | null; result: 'pass' | 'fail'; observed: Record<string, unknown> }[];
+  timing: { baseline_sec: number | null; optimized_sec: number | null };
+  error_trace: { stage: string; error: string; source_id?: string }[]; approval: unknown | null;
 };
+export function stagingOf(report: RunReport): StagingObserved | null {
+  const check = report.checks.find(item => item.name === 'staging_reconcile');
+  return check ? check.observed as StagingObserved : null;
+}
+export function runError(report: RunReport): string | null {
+  return report.error_trace.at(-1)?.error ?? null;
+}
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
-export async function pipelineRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export function pipelineRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return apiRequest<T>(`/pipeline${path}`, init);
+}
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`/api/v1/pipeline${path}`, {
+    response = await fetch(`/api/v1${path}`, {
       ...init, credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', ...init?.headers },
     });

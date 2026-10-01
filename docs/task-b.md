@@ -61,7 +61,7 @@ npm run dev
 
 Mở <http://localhost:3000/postgres> hoặc nút **Postgres** ở thanh trên của Studio.
 
-Frontend proxy `/api/v1/pipeline/*` sang backend `http://127.0.0.1:8000`, nên cookie cùng origin và không cần thêm cấu hình CORS. Nếu backend ở địa chỉ khác, đặt `PIPELINE_BACKEND_URL` khi khởi động Next. Với `next build`/`next start`, đặt URL này khi build vì rewrites được ghi vào bản build.
+Frontend proxy `/api/v1/*` sang backend `http://127.0.0.1:8000`, nên cookie cùng origin và không cần thêm cấu hình CORS. Nếu backend ở địa chỉ khác, đặt `PIPELINE_BACKEND_URL` khi khởi động Next. Với `next build`/`next start`, đặt URL này khi build vì rewrites được ghi vào bản build.
 
 ## Demo nghiệm thu
 
@@ -76,25 +76,39 @@ Frontend proxy `/api/v1/pipeline/*` sang backend `http://127.0.0.1:8000`, nên c
 
 ## API cho A/C/D tích hợp
 
-Prefix: `/api/v1/pipeline`.
+Mọi API nằm dưới `/api/v1` và dùng chung phiên đăng nhập (`src/pipeline/auth.py`, cookie `Path=/api/v1`). Danh tính luôn lấy từ phiên, không nhận từ body.
 
 | Method | Path | Kết quả |
 |---|---|---|
-| GET | `/users` | Danh sách người dùng demo |
-| POST | `/session` | Body `{ "user_id": "minh" }`; tạo session cookie |
-| GET / DELETE | `/session` | Xem phiên / đăng xuất |
-| GET | `/source` | Schema thật và giới hạn số dòng |
-| POST | `/runs` | Chạy đồng bộ, trả kết quả thực thi đã lưu |
-| GET | `/runs` | Tóm tắt 100 run gần nhất |
-| GET | `/runs/{id}` | Kết quả đầy đủ, gồm output và rejected |
+| GET | `/pipeline/users` | Danh sách người dùng demo |
+| POST | `/pipeline/session` | Body `{ "user_id": "minh" }`; tạo session cookie |
+| GET / DELETE | `/pipeline/session` | Xem phiên / đăng xuất |
+| GET | `/pipeline/source` | Schema thật và giới hạn số dòng |
+| POST | `/pipeline/runs` | Chạy đồng bộ, ghi và trả `RunReport` |
+| GET | `/runs?status=` | 100 `RunReport` gần nhất trong sổ bằng chứng, lọc theo status |
+| GET | `/runs/{id}` | `RunReport` đầy đủ |
 
 Body ví dụ ở `examples/pipeline/postgres_cleaning.json`. Mapping sử dụng `from`, `as`, `type`; đây là phần đổi tên/ép kiểu của staging, không thay thế Spec đầy đủ do C quản lý.
 
-Kết quả thực thi gồm `run_id`, `created_by`, `version`, `spec_hash`, thời gian, số dòng, schema đầu ra, dữ liệu đầu ra và rejected. `created_by` lấy từ session backend, không nhận từ body. Mỗi lần bấm chạy tạo run mới, version 1. `approval` luôn là `null`: bước làm sạch chưa phải bước phê duyệt.
+### Sổ bằng chứng
 
-Đây là **kết quả thực thi task B**, chưa phải hợp đồng `src/run_report/models.py` của toàn bộ control plane. D có thể dùng số liệu này cho `checks[].observed`, `error_trace` và thời gian trong RunReport. `SUCCEEDED` chỉ có nghĩa đọc/làm sạch thành công; không có nghĩa toàn bộ cổng kiểm tra đã đạt hoặc run đã được duyệt.
+Chỉ có một sổ bằng chứng: bảng `run_reports` trong SQLite `PIPELINE_STORE_PATH` (mặc định `data/pipeline/runs.sqlite3`, cùng file với bảng `sessions`), quản lý bởi `src/run_report/store.py`. Mỗi bản ghi đúng hợp đồng `RunReport` trong `src/run_report/models.py`; ghi lại cùng `run_id` là cập nhật run đó.
 
-`src/run_report/` và API mẫu `/api/v1/runs` của D vẫn giữ nguyên. Khung chat, review và các kịch bản demo trên trang Studio hiện hữu vẫn thuộc task A/D. Màn `/postgres` là luồng gọi API thật cho phạm vi Sprint 1-B.
+Run làm sạch Postgres được ghi như sau:
+
+| Tình huống | `status` | `stage_reached` | Bằng chứng |
+|---|---|---|---|
+| Làm sạch xong, không dòng lỗi | `READY_FOR_REVIEW` | `report` | gate `schema_real` pass, check `staging_reconcile` pass |
+| Có dòng ép kiểu lỗi hoặc nguồn rỗng | `NEEDS_HUMAN` | `report` | check `staging_reconcile` fail |
+| Spec tham chiếu cột không có ở nguồn | `NEEDS_HUMAN` | `static` | gate `schema_real` fail, `observed.missing_columns` |
+| Không kết nối được Postgres | `INFRA_ERROR` | `el_run` | `error_trace` có `source_id` |
+| Lỗi sandbox / thiếu dependency | `INTERNAL_ERROR` | `t_run` | `error_trace` |
+
+`staging_reconcile.observed` chứa `bronze`, `staging`, `rejected`, `reject_pct`, `reject_reasons`, tối đa 20 `reject_samples` và 20 `output_samples` kèm `output_schema`; sổ bằng chứng không lưu toàn bộ dữ liệu đầu ra. `user_request` là tên run, `spec` là body gửi lên, `timing.baseline_sec` là thời gian chạy. `cost` bằng 0 vì DuckDB local không quét warehouse. `approval` luôn là `null`: bước làm sạch chưa phải bước phê duyệt.
+
+Muốn có sẵn các run mẫu (`READY_FOR_REVIEW`, `DEPLOYED`, `BLOCKED_SEMANTIC_CONFLICT`) để demo UI: `python scripts/seed_run_reports.py`. Chạy lại không nhân đôi.
+
+Khung chat, review và các kịch bản demo trên trang Studio hiện hữu vẫn thuộc task A/D. Màn `/postgres` là luồng gọi API thật cho phạm vi Sprint 1-B.
 
 ## Phạm vi sandbox
 
@@ -107,7 +121,7 @@ Giới hạn mặc định: 1.000 dòng, 2 MB giá trị đầu vào, DuckDB 128
 ## Kiểm thử
 
 ```bash
-ruff check src/pipeline pipeline_tests scripts/setup_pipeline.py scripts/seed_pipeline.py
+ruff check src/pipeline src/run_report pipeline_tests scripts/setup_pipeline.py scripts/seed_pipeline.py scripts/seed_run_reports.py
 pytest tests pipeline_tests -q --tb=short
 ```
 
@@ -129,7 +143,6 @@ Frontend:
 cd web
 npm run typecheck
 npm test
-node --experimental-strip-types --test tests/postgres-api.test.ts
 npm run build
 ```
 

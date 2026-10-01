@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ApiError, defaultColumns, pipelineRequest, validateColumns } from '../lib/postgres-api.ts';
+import { ApiError, apiRequest, defaultColumns, pipelineRequest, runError, stagingOf, validateColumns, type RunReport } from '../lib/postgres-api.ts';
 
 test('schema mapping uses actual names and selects decimal/date defaults', () => {
   const columns = defaultColumns({ table: 'sales_raw.orders', max_rows: 1000, columns: [
@@ -38,4 +38,20 @@ test('API surfaces authorization and validation errors, without demo fallback', 
   await assert.rejects(pipelineRequest('/runs'), /Backend chưa sẵn sàng/);
   mock.mock.mockImplementation(async () => { throw new Error('Network down'); });
   await assert.rejects(pipelineRequest('/runs'), /Không kết nối được backend/);
+});
+
+test('run history comes from the shared evidence ledger and reads RunReport staging check', async t => {
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    assert.equal(url, '/api/v1/runs');
+    return Response.json([]);
+  });
+  assert.deepEqual(await apiRequest('/runs'), []);
+  const observed = { bronze: 2, staging: 1, rejected: 1, reject_pct: 50, reject_reasons: { cast: 1 },
+    reject_samples: [], output_schema: [], output_samples: [] };
+  const report = { checks: [{ name: 'staging_reconcile', source_id: 'sales_raw.orders', result: 'fail', observed }],
+    error_trace: [{ stage: 'el_run', error: 'Database offline' }] } as unknown as RunReport;
+  assert.deepEqual(stagingOf(report), observed);
+  assert.equal(runError(report), 'Database offline');
+  assert.equal(stagingOf({ ...report, checks: [] }), null);
+  assert.equal(runError({ ...report, error_trace: [] }), null);
 });

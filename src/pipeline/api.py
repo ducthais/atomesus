@@ -1,7 +1,9 @@
-"""Local Sprint 1 API. Demo identity selection is disabled in production."""
+"""Local Sprint 1 API. Demo identity selection is disabled in production.
+
+Mỗi run ghi một `RunReport` vào sổ bằng chứng; đọc lại qua `GET /api/v1/runs`.
+"""
 
 import hashlib
-import json
 import secrets
 import time
 from datetime import UTC, datetime
@@ -9,39 +11,26 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from src.config import get_settings
 from src.pipeline import postgres, store
+from src.pipeline.auth import (
+    COOKIE,
+    COOKIE_PATH,
+    SESSION_SECONDS,
+    USERS,
+    current_user,
+    demo_only,
+    session_digest,
+    settings,
+)
 from src.pipeline.cleaning import clean_rows
 from src.pipeline.models import LoginRequest, RunRequest
 from src.pipeline.settings import PipelineSettings
+from src.run_report import Check, Cost, GateResult, RunReport, Timing, save_run_report
 
 router = APIRouter(prefix="/pipeline", tags=["Postgres pipeline"])
-USERS = {
-    "minh": {"id": "minh", "name": "Minh", "role": "Engineer"},
-    "an": {"id": "an", "name": "An", "role": "Reviewer"},
-}
-COOKIE = "pipeline_session"
-
-
-def settings() -> PipelineSettings:
-    return PipelineSettings()
-
-
-def demo_only():
-    if get_settings().app_env == "production":
-        raise HTTPException(403, "Đăng nhập chọn người dùng chỉ dành cho demo local.")
-
-
-def current_user(request: Request, config: PipelineSettings = Depends(settings)) -> dict:
-    demo_only()
-    digest = hashlib.sha256(request.cookies.get(COOKIE, "").encode()).hexdigest()
-    with store.database(config.store_path) as conn:
-        row = conn.execute(
-            "SELECT user_id FROM sessions WHERE token = ? AND expires > ?", (digest, time.time())
-        ).fetchone()
-    if not row or row[0] not in USERS:
-        raise HTTPException(401, "Vui lòng chọn người dùng để đăng nhập.")
-    return USERS[row[0]]
+DOMAIN = "sales"
+SAMPLE_ROWS = 20
+MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema nguồn."
 
 
 @router.get("/users", dependencies=[Depends(demo_only)])
@@ -56,9 +45,9 @@ def login(body: LoginRequest, response: Response, config: PipelineSettings = Dep
         conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
         conn.execute(
             "INSERT INTO sessions VALUES (?, ?, ?)",
-            (hashlib.sha256(token.encode()).hexdigest(), body.user_id, time.time() + 28800),
+            (hashlib.sha256(token.encode()).hexdigest(), body.user_id, time.time() + SESSION_SECONDS),
         )
-    response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=28800, path="/api/v1/pipeline")
+    response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=SESSION_SECONDS, path=COOKIE_PATH)
     return USERS[body.user_id]
 
 
@@ -69,10 +58,9 @@ def session(user: dict = Depends(current_user)):
 
 @router.delete("/session")
 def logout(request: Request, response: Response, config: PipelineSettings = Depends(settings)):
-    digest = hashlib.sha256(request.cookies.get(COOKIE, "").encode()).hexdigest()
     with store.database(config.store_path) as conn:
-        conn.execute("DELETE FROM sessions WHERE token = ?", (digest,))
-    response.delete_cookie(COOKIE, path="/api/v1/pipeline")
+        conn.execute("DELETE FROM sessions WHERE token = ?", (session_digest(request),))
+    response.delete_cookie(COOKIE, path=COOKIE_PATH)
     return {"ok": True}
 
 
@@ -84,61 +72,86 @@ def source(config: PipelineSettings = Depends(settings)):
         raise HTTPException(503, str(exc)) from exc
 
 
-@router.get("/runs", dependencies=[Depends(current_user)])
-def list_runs(config: PipelineSettings = Depends(settings)):
-    return [
-        {key: value for key, value in report.items() if key not in {"output", "rejected", "spec"}}
-        for report in store.reports(config.store_path)
-    ]
+def _staging_check(table: str, cleaned: dict) -> Check:
+    """Đối soát bronze → staging của nguồn, kèm mẫu dòng sạch và dòng rác để màn Staging hiển thị."""
+    read, rejected = cleaned["rows_read"], cleaned["rows_rejected"]
+    return Check(
+        name="staging_reconcile",
+        source_id=table,
+        result="pass" if read and not rejected else "fail",
+        observed={
+            "bronze": read,
+            "staging": cleaned["rows_written"],
+            "rejected": rejected,
+            "reject_pct": round(rejected * 100 / read, 2) if read else 0.0,
+            "reject_reasons": {"cast": rejected} if rejected else {},
+            "reject_samples": cleaned["rejected"][:SAMPLE_ROWS],
+            "output_schema": cleaned["output_schema"],
+            "output_samples": cleaned["output"][:SAMPLE_ROWS],
+        },
+    )
 
 
-@router.get("/runs/{run_id}", dependencies=[Depends(current_user)])
-def get_run(run_id: str, config: PipelineSettings = Depends(settings)):
-    report = store.report_by_id(config.store_path, run_id)
-    if report is None:
-        raise HTTPException(404, "Không tìm thấy run.")
-    return report
-
-
-@router.post("/runs", status_code=201)
-def create_run(body: RunRequest, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)):
+@router.post("/runs", status_code=201, response_model=RunReport)
+def create_run(
+    body: RunRequest, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
+) -> RunReport:
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được chạy pipeline.")
-    spec = body.model_dump(by_alias=True)
+    created_at = datetime.now(UTC)
     started = time.perf_counter()
-    report = {
-        "run_id": str(uuid4()),
-        "title": body.title,
-        "version": 1,
-        "created_by": user["id"],
-        "started_at": datetime.now(UTC).isoformat(),
-        "status": "FAILED",
-        "spec": spec,
-        "spec_hash": hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest(),
-        "approval": None,
-        "rows_read": 0,
-        "rows_written": 0,
-        "rows_rejected": 0,
-        "output_schema": [],
-        "output": [],
-        "rejected": [],
-        "error": None,
-    }
+    gates: list[GateResult] = []
+    checks: list[Check] = []
+    error_trace: list[dict] = []
     try:
         schema = postgres.source_schema(config)
-        available = {col["name"] for col in schema}
-        if any(col.source not in available for col in body.columns):
-            raise ValueError("Spec tham chiếu cột không tồn tại trong schema nguồn.")
+        missing = sorted({col.source for col in body.columns} - {col["name"] for col in schema})
+        if missing:
+            gates.append(
+                GateResult(
+                    name="schema_real",
+                    result="fail",
+                    detail=MISSING_COLUMNS,
+                    observed={"source_id": body.table, "missing_columns": missing},
+                )
+            )
+            raise ValueError(MISSING_COLUMNS)
+        gates.append(
+            GateResult(name="schema_real", result="pass", detail="Mọi cột trong Spec có ở nguồn.", observed={})
+        )
         rows = postgres.read_rows(config, [col.source for col in body.columns])
-        report.update(clean_rows(rows, body.columns))
-        report["status"] = "NEEDS_HUMAN" if report["rows_rejected"] or not rows else "SUCCEEDED"
-    except (postgres.SourceUnavailableError, ValueError) as exc:
-        report["error"] = str(exc)
+        checks.append(_staging_check(body.table, clean_rows(rows, body.columns)))
+        status, stage = ("READY_FOR_REVIEW" if checks[0].result == "pass" else "NEEDS_HUMAN"), "report"
+    except postgres.SourceUnavailableError as exc:
+        status, stage = "INFRA_ERROR", "el_run"
+        error_trace.append({"stage": stage, "source_id": body.table, "error": str(exc)})
+    except ValueError as exc:
+        status, stage = "NEEDS_HUMAN", "static"
+        error_trace.append({"stage": stage, "error": str(exc)})
     except ImportError:
-        report["error"] = "Backend cần cài requirements/pipeline.txt."
+        status, stage = "INTERNAL_ERROR", "t_run"
+        error_trace.append({"stage": stage, "error": "Backend cần cài requirements/pipeline.txt."})
     except Exception:
-        report["error"] = "Chạy sandbox thất bại. Kiểm tra cấu hình và tài nguyên backend."
-    report["finished_at"] = datetime.now(UTC).isoformat()
-    report["duration_ms"] = round((time.perf_counter() - started) * 1000, 2)
-    store.save_report(config.store_path, report)
+        status, stage = "INTERNAL_ERROR", "t_run"
+        error_trace.append({"stage": stage, "error": "Chạy sandbox thất bại. Kiểm tra cấu hình và tài nguyên backend."})
+    report = RunReport(
+        run_id=str(uuid4()),
+        version=1,
+        domain=DOMAIN,
+        created_by=user["id"],
+        trigger="user_request",
+        created_at=created_at,
+        user_request=body.title,
+        status=status,
+        stage_reached=stage,
+        spec=body.model_dump(by_alias=True),
+        gates=gates,
+        checks=checks,
+        # Chạy DuckDB local, không quét warehouse nên chưa có chi phí để ghi.
+        cost=Cost(estimated_bytes=0, actual_bytes=0, usd=0),
+        timing=Timing(baseline_sec=round(time.perf_counter() - started, 3)),
+        llm_calls=0,
+        error_trace=error_trace,
+    )
+    save_run_report(config.store_path, report)
     return report

@@ -1,31 +1,59 @@
-"""Kho RunReport mẫu (mock) — đọc từ fixtures/run_reports/*.json.
+"""Sổ bằng chứng: lưu RunReport vào SQLite (cùng file với phiên đăng nhập, `PIPELINE_STORE_PATH`).
 
-Sẽ được thay bằng sổ bằng chứng thật; API chỉ phụ thuộc vào hai hàm dưới đây.
+Mỗi run một dòng, khóa theo `run_id`; bản ghi được kiểm tra bằng `RunReport` khi đọc ra.
 """
 
-from functools import lru_cache
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC
 from pathlib import Path
 
 from src.run_report.models import RunReport, RunStatus
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "run_reports"
+HISTORY_LIMIT = 100
 
 
-@lru_cache
-def _load_all() -> tuple[RunReport, ...]:
-    reports = tuple(
-        RunReport.model_validate_json(p.read_text(encoding="utf-8")) for p in sorted(FIXTURES_DIR.glob("*.json"))
-    )
-    run_ids = [r.run_id for r in reports]
-    if len(run_ids) != len(set(run_ids)):
-        raise ValueError(f"run_id bị trùng trong {FIXTURES_DIR}")
-    return tuple(sorted(reports, key=lambda r: r.created_at, reverse=True))
+@contextmanager
+def _database(path: str) -> Iterator[sqlite3.Connection]:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=10)
+    try:
+        with conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_reports ("
+                " run_id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL, report TEXT NOT NULL)"
+            )
+            # created_at lưu ở UTC để sắp xếp theo chuỗi đúng thứ tự thời gian.
+            conn.execute("CREATE INDEX IF NOT EXISTS run_reports_created_at ON run_reports (created_at)")
+            yield conn
+    finally:
+        conn.close()
 
 
-def list_run_reports(status: RunStatus | None = None) -> list[RunReport]:
+def save_run_report(path: str, report: RunReport) -> None:
+    """Ghi mới hoặc ghi đè RunReport của `run_id` (version mới, duyệt… đều là cập nhật cùng run)."""
+    with _database(path) as conn:
+        conn.execute(
+            "INSERT INTO run_reports VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(run_id) DO UPDATE SET status = excluded.status, report = excluded.report",
+            (report.run_id, report.status, report.created_at.astimezone(UTC).isoformat(), report.model_dump_json()),
+        )
+
+
+def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HISTORY_LIMIT) -> list[RunReport]:
     """Lịch sử run, mới nhất trước, lọc theo status nếu có."""
-    return [r for r in _load_all() if status is None or r.status == status]
+    query, params = "SELECT report FROM run_reports", []
+    if status is not None:
+        query, params = query + " WHERE status = ?", [status]
+    with _database(path) as conn:
+        rows = conn.execute(query + " ORDER BY created_at DESC, rowid DESC LIMIT ?", [*params, limit]).fetchall()
+    return [RunReport.model_validate_json(row[0]) for row in rows]
 
 
-def get_run_report(run_id: str) -> RunReport | None:
-    return next((r for r in _load_all() if r.run_id == run_id), None)
+def get_run_report(path: str, run_id: str) -> RunReport | None:
+    with _database(path) as conn:
+        row = conn.execute("SELECT report FROM run_reports WHERE run_id = ?", (run_id,)).fetchone()
+    return RunReport.model_validate_json(row[0]) if row else None
+

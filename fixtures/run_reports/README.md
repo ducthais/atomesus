@@ -1,7 +1,7 @@
 # RunReport Fixtures (Mock Data cho Sprint 0 - Role D)
 
 Thư mục này chứa các `RunReport` mẫu tuân thủ hợp đồng dữ liệu chuẩn tại `SPEC_1.md §8.2`. 
-Các file này được nạp tự động bởi `src/run_report/store.py` để phục vụ API `GET /api/v1/runs` cho UI (Role A) kết nối ở Sprint 1.
+API `GET /api/v1/runs` **không** đọc trực tiếp các file này mà đọc sổ bằng chứng SQLite (`src/run_report/store.py`). Các file dùng làm dữ liệu test và có thể nạp vào SQLite để demo UI bằng `python scripts/seed_run_reports.py`.
 
 ---
 
