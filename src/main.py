@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import router
 from src.config import get_settings
+from src.pipeline.api import router as pipeline_router
+from src.run_report import router as run_reports_router
 
 
 @asynccontextmanager
@@ -32,6 +34,8 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(pipeline_router, prefix="/api/v1")
+app.include_router(run_reports_router, prefix="/api/v1")
 
 
 @app.get("/health")

@@ -37,10 +37,13 @@ data/
 logs/
 *.log
 
-# Test coverage
+# Test coverage & caches
 htmlcov/
 .coverage
 coverage.xml
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Docker
 docker-compose.override.yml
@@ -58,3 +61,6 @@ out/
 # AI logs — tracked structure, ignored content
 .ai-log/*.jsonl
 .ai-log/archive/
+
+# Worklog
+WORKLOG.md

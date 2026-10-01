@@ -1,0 +1,32 @@
+# Hàm mục tiêu và ngưỡng theo domain (SPEC §8.4).
+# Mọi domain trong domains.yml bắt buộc có khối `quality` và `regression`.
+sales:
+  hard:
+    freshness_minutes: 60
+  soft:
+    cost_usd_per_day: 1.0
+  prefer: cheapest_feasible
+  degrade_order: [freshness, completeness]
+  quality:
+    max_reject_pct: 1.0           # staging: tỷ lệ dòng bị tách sang rejected tối đa, theo từng nguồn
+  regression:                     # Day 2 — ngưỡng phát hiện suy giảm
+    window_runs: 7                # so trung vị 7 lần chạy gần nhất
+    runtime_increase_pct: 50      # chậm hơn đường cơ sở 50% thì báo
+    cost_increase_pct: 40
+    test_fail_rate_pct: 5
+    cooldown_hours: 24            # không tạo run sửa trùng cho cùng pipeline trong 24h
+marketing:
+  hard:
+    freshness_minutes: 1440
+  soft:
+    cost_usd_per_day: 0.5
+  prefer: cheapest_feasible
+  degrade_order: [freshness, completeness]
+  quality:
+    max_reject_pct: 2.0
+  regression:
+    window_runs: 7
+    runtime_increase_pct: 50
+    cost_increase_pct: 40
+    test_fail_rate_pct: 5
+    cooldown_hours: 24

@@ -1,0 +1,17 @@
+# Trần chi phí và số lần thử (SPEC §8.4). Mọi trần trong code đọc từ đây, không hardcode (NFR-04).
+pricing:
+  usd_per_tb: 6.25          # đơn giá BigQuery on-demand; DuckDB quy đổi ước tính theo số này
+per_run:
+  max_bytes_scanned: 5_000_000_000
+  max_usd: 0.05
+  max_llm_calls: 6          # trần toàn cục 1 run; router VÀ UI đều đọc từ đây
+  max_chat_calls: 20        # trần câu hỏi `ask` trong chat cho 1 run, tách khỏi max_llm_calls
+  max_spec_attempts: 2      # vòng spec
+  max_sql_attempts: 2       # vòng SQL
+  phase_timeout_sec: 300    # một phase chạy quá thời gian này thì dừng (NFR-05)
+per_day:
+  max_usd: 2.00             # tổng chi phí mọi run trong ngày; cổng budget cộng dồn
+rules:
+  - require_partition_filter_on: [sales_pg.orders]
+  - forbid_select_star_in: [gold]
+  - max_tables_joined: 6
