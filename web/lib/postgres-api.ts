@@ -10,13 +10,33 @@ export type StagingObserved = {
   // Run làm sạch Postgres có output_*; run do agent tạo có mẫu gold ở gate post_run và reject_samples dạng {_reject_reason, ...giá trị thô}.
   reject_samples: (RejectedRow | Record<string, unknown>)[]; output_schema?: { name: string; type: string }[]; output_samples?: Record<string, string | null>[];
 };
+/** Spec do agent sinh (src/spec/models.py); chỉ khai báo các trường giao diện đọc. */
+export type AgentSpec = {
+  domain: string;
+  sources: { id: string; kind: string; source_ref: string; table?: string; endpoint?: string; path_pattern?: string;
+    primary_key: string[]; cursor_field: string | null; write_disposition: string; target: { table: string } }[];
+  transform: { model_name: string; grain: string[]; metrics: { name: string; expr: string }[]; filters: string[] };
+  schedule: { cron: string };
+};
+export type AgentPlan = {
+  summary?: string; model_name?: string; schedule?: string; question?: string | null;
+  sources: { id: string; source_ref: string; object: string }[]; metrics?: { name: string; definition?: string }[];
+};
+export type Approval = { decision: string; reviewer: string; files_hash: string; version: number; at: string; comment: string };
 export type RunReport = {
   run_id: string; version: number; domain: string; created_by: string; created_at: string; user_request: string;
-  status: string; stage_reached: string; spec: RunRequest | null;
+  status: string; stage_reached: string;
+  // Run làm sạch thủ công lưu body RunRequest; run do agent tạo lưu Spec đầy đủ.
+  spec: RunRequest | AgentSpec | null; plan?: AgentPlan | null;
+  // spec_history cũng là dict tự do: agent ghi {attempt, errors}, run mẫu cũ ghi {version, reason}.
+  spec_history?: { attempt?: number; errors?: string[]; version?: number; reason?: string }[];
+  files?: Record<string, string>; files_hash?: string | null;
   gates: { name: string; result: 'pass' | 'fail'; detail: string; observed: Record<string, unknown> }[];
   checks: { name: string; source_id: string | null; result: 'pass' | 'fail'; observed: Record<string, unknown> }[];
+  cost?: { usd: number }; attempts?: { spec: number; sql: number }; llm_calls?: number;
   timing: { baseline_sec: number | null; optimized_sec: number | null };
-  error_trace: { stage: string; error: string; source_id?: string }[]; approval: unknown | null;
+  // error_trace là dict tự do trong hợp đồng: agent ghi `error`, run mẫu cũ ghi `message`.
+  error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string }[]; approval: Approval | null;
 };
 export function stagingOf(report: RunReport): StagingObserved | null {
   const check = report.checks.find(item => item.name === 'staging_reconcile');
@@ -27,7 +47,8 @@ export function goldPreview(report: RunReport): Record<string, string | null>[] 
   return (gate?.observed.gold_samples as Record<string, string | null>[] | undefined) ?? [];
 }
 export function runError(report: RunReport): string | null {
-  return report.error_trace.at(-1)?.error ?? null;
+  const last = report.error_trace.at(-1);
+  return last ? last.error ?? last.message ?? null : null;
 }
 export class ApiError extends Error {
   status: number;
