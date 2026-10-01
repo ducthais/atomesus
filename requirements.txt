@@ -1,3 +1,7 @@
+# Cài một lần là chạy được backend, agent, pipeline sandbox và toàn bộ test:
+#   python -m pip install -r requirements.txt
+# Dagster (chỉ cần khi nạp/deploy code location sinh ra): requirements/dagster.txt
+
 # Core
 fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
@@ -12,10 +16,15 @@ langchain>=0.3.0
 langchain-openai>=0.3.0
 langgraph>=0.2.0
 
-# Database (uncomment as needed)
-# sqlalchemy>=2.0.0
-# alembic>=1.14.0
-# psycopg2-binary>=2.9.0
+# Nguồn Postgres và sandbox
+psycopg[binary]>=3.2,<4
+duckdb>=1.4,<2
+# Chạy thử pipeline sinh ra (P9–P12): dlt đọc Postgres qua SQLAlchemy, dbt chạy trên DuckDB
+dlt[duckdb,sql_database]>=1.5,<2
+sqlalchemy>=2.0
+# dbt-core 1.11 kéo theo dbt-core-experimental-parser phải build từ mã nguồn, treo khi cài trên Windows
+dbt-core>=1.9,<1.11
+dbt-duckdb>=1.9,<2
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0

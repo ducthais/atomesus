@@ -74,13 +74,23 @@ Chạy một lần sau khi clone. Hook ghi lại prompt khi bạn dùng Claude C
 Codex CLI, Gemini CLI, Antigravity hoặc GitHub Copilot, và cài pre-push hook để
 đẩy log lên server.
 
-### 5. Chạy server
+### 5. Chạy hệ thống
+
+Cần Docker, Python 3.11 và Node 24. Ba terminal, chạy từ thư mục gốc repo:
 
 ```bash
+# Postgres nguồn (lần đầu: python scripts/setup_pipeline.py để tạo infra/postgres/.env)
+docker compose --env-file infra/postgres/.env -p p045-b -f infra/postgres/compose.yml up -d --build --wait
+
+# Backend: http://localhost:8000 (Swagger ở /docs)
 uvicorn src.main:app --reload --port 8000
+
+# Frontend: http://localhost:3000 (Pipeline Studio)
+cd web && npm ci && npm run dev
 ```
 
-Swagger UI ở <http://localhost:8000/docs>. Hoặc dùng `make run`, `make test`,
+Chi tiết: `docs/task-b.md` (Postgres, làm sạch, đăng nhập), `docs/task-c.md` (agent,
+template, sandbox), `web/README.md` (Studio). Hoặc dùng `make run`, `make test`,
 `make lint` — xem `Makefile`.
 
 ## Cấu trúc thư mục

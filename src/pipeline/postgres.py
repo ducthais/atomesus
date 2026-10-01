@@ -16,7 +16,7 @@ def connection(settings: PipelineSettings):
     try:
         import psycopg
     except ImportError as exc:
-        raise SourceUnavailableError("Backend cần cài requirements/pipeline.txt.") from exc
+        raise SourceUnavailableError("Backend cần cài requirements.txt.") from exc
     try:
         with psycopg.connect(
             settings.database_url.get_secret_value(),

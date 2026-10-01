@@ -130,7 +130,7 @@ def create_run(
         error_trace.append({"stage": stage, "error": str(exc)})
     except ImportError:
         status, stage = "INTERNAL_ERROR", "t_run"
-        error_trace.append({"stage": stage, "error": "Backend cần cài requirements/pipeline.txt."})
+        error_trace.append({"stage": stage, "error": "Backend cần cài requirements.txt."})
     except Exception:
         status, stage = "INTERNAL_ERROR", "t_run"
         error_trace.append({"stage": stage, "error": "Chạy sandbox thất bại. Kiểm tra cấu hình và tài nguyên backend."})

@@ -50,7 +50,7 @@ Bằng chứng ghi vào RunReport: `row_reconcile` và `staging_reconcile` từn
 ## Chạy local
 
 ```bash
-python -m pip install -r requirements/pipeline.txt     # dlt, dbt-duckdb (ghim dbt-core<1.11)
+python -m pip install -r requirements.txt              # gồm cả dlt, dbt-duckdb (ghim dbt-core<1.11)
 python -m pip install -r requirements/dagster.txt      # tùy chọn: chỉ để nạp/kiểm file Dagster
 ```
 

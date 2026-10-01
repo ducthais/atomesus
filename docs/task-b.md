@@ -20,7 +20,7 @@ Yêu cầu: Python 3.11, Node 24, Docker và Docker Compose. Chạy lệnh backe
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements/pipeline.txt
+python -m pip install -r requirements.txt
 python scripts/setup_pipeline.py
 ```
 
@@ -146,7 +146,7 @@ npm test
 npm run build
 ```
 
-Workflow `.github/workflows/pipeline.yml` cài dependency riêng và dựng Postgres thật. CI cũ vẫn chỉ cài `requirements.txt`: module pipeline không import psycopg/DuckDB lúc khởi động app, nên không làm hỏng test hiện có.
+Mọi thư viện (kể cả psycopg, DuckDB, dlt, dbt) nằm trong `requirements.txt`; `requirements/pipeline.txt` chỉ còn trỏ về file này để CI `pipeline.yml` và Dockerfile cũ không vỡ. Workflow `.github/workflows/pipeline.yml` dựng thêm Postgres thật để chạy test tích hợp.
 
 Docker backend có dependency mới:
 
@@ -154,17 +154,16 @@ Docker backend có dependency mới:
 docker build -f docker/pipeline.Dockerfile -t p045-pipeline-backend .
 ```
 
-Khi chạy image, cấp `PIPELINE_DATABASE_URL` trỏ tới host Postgres mà container truy cập được, và volume ghi được ở `/app/data`. Dockerfile gốc vẫn dùng dependency gốc; muốn chạy pipeline cần dùng Dockerfile mới hoặc cài `requirements/pipeline.txt` trong image tích hợp.
+Khi chạy image, cấp `PIPELINE_DATABASE_URL` trỏ tới host Postgres mà container truy cập được, và volume ghi được ở `/app/data`. Dockerfile gốc cài `requirements.txt` nên cũng đủ thư viện chạy pipeline.
 
 ## File chung và push
 
-Hai điểm gắn vào code chung: thêm router trong `src/main.py`, thêm link `/postgres` trong `web/app/studio-page.tsx`. Dependency mới chỉ nằm ở `requirements/pipeline.txt`; không sửa `requirements.txt`, `web/package.json` hoặc lockfile.
+Hai điểm gắn vào code chung: thêm router trong `src/main.py`, thêm link `/postgres` trong `web/app/studio-page.tsx`. Dependency Python khai báo trong `requirements.txt`.
 
 Trước commit, chỉ stage file task B và kiểm tra:
 
 ```bash
 git diff --cached --name-only
-git diff --cached -- requirements.txt
 ```
 
-Lệnh thứ hai phải rỗng. Không stage `config/`, file `.env`, dữ liệu SQLite hoặc cache build. Khi merge, vẫn cần review hai điểm tích hợp trên nếu thành viên khác sửa cùng đoạn; không thể cam kết mọi file sẽ không conflict.
+Không stage `config/`, file `.env`, dữ liệu SQLite hoặc cache build. Khi merge, vẫn cần review hai điểm tích hợp trên nếu thành viên khác sửa cùng đoạn; không thể cam kết mọi file sẽ không conflict.
