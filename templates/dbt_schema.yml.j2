@@ -1,0 +1,36 @@
+[#- Khai báo bảng bronze, model staging (unique + not_null trên khóa dedupe) và test của model gold. -#]
+[%- set t = spec.transform -%]
+# Schema và test cho pipeline [[ model_name ]]. Sinh tự động từ Spec, không sửa tay.
+version: 2
+
+sources:
+  - name: bronze
+    schema: bronze
+    tables:
+[%- for source in spec.sources %]
+      - name: [[ source.target.table ]]
+[%- endfor %]
+
+models:
+[%- for source in spec.sources %]
+  - name: [[ staging_models[source.id] ]]
+[%- set keys = staging_keys[source.id] %]
+[#- Khóa đơn: unique + not_null. Khóa ghép: chỉ not_null từng cột (unique trên tổ hợp cần dbt_utils). #]
+[%- set key_tests = ["unique", "not_null"] if keys | length == 1 else ["not_null"] %]
+[%- if keys %]
+    columns:
+[%- for key in keys %]
+      - name: [[ key ]]
+        data_tests: [[ key_tests | pylist ]]
+[%- endfor %]
+[%- endif %]
+[%- endfor %]
+  - name: [[ t.model_name ]]
+    columns:
+[%- for column in gold_columns %]
+      - name: [[ column ]]
+[%- set tests = t.tests | selectattr("column", "equalto", column) | map(attribute="test") | list %]
+[%- if tests %]
+        data_tests: [[ tests | pylist ]]
+[%- endif %]
+[%- endfor %]

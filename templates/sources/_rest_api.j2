@@ -1,0 +1,32 @@
+[#- Resource dlt cho nguồn rest_api: rest_api_source với endpoint, records_path, pagination. -#]
+[%- set paginators = {
+    "page": {"type": "page_number", "base_page": 1, "total_path": None},
+    "offset": {"type": "offset", "limit": 100, "total_path": None},
+    "cursor": {"type": "cursor", "cursor_path": "next_cursor", "cursor_param": "cursor"},
+    "none": {"type": "single_page"},
+} -%]
+[% macro resource(source) -%]
+def resource_[[ source.id ]]():
+    endpoint = {
+        "path": [[ source.endpoint | pystr ]],
+        "data_selector": [[ source.records_path | pystr ]],
+        "paginator": [[ paginators[source.pagination] | pydict ]],
+[%- if source.cursor_field %]
+        "incremental": {"cursor_path": [[ source.cursor_field | pystr ]], "initial_value": "1970-01-01T00:00:00Z"},
+[%- endif %]
+    }
+    api = rest_api_source(
+        {
+            "client": {"base_url": dlt.config[[ ("sources." ~ source.source_ref ~ ".base_url") | pyindex ]]},
+            "resources": [
+                {
+                    "name": [[ source.target.table | pystr ]],
+                    "endpoint": endpoint,
+                    "primary_key": [[ source.primary_key | pylist ]],
+                    "write_disposition": [[ source.write_disposition | pystr ]],
+                }
+            ],
+        }
+    )
+    return api.resources[[ source.target.table | pyindex ]]
+[%- endmacro %]

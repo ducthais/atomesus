@@ -64,3 +64,7 @@ out/
 
 # Worklog
 WORKLOG.md
+# dbt (chạy thử tạo trong sandbox; nếu chạy tay trong repo thì bỏ qua output)
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/

@@ -1,3 +1,9 @@
 -r ../requirements.txt
 psycopg[binary]>=3.2,<4
 duckdb>=1.4,<2
+# Chạy thử pipeline sinh ra trong sandbox (P9–P12)
+dlt[duckdb,sql_database]>=1.5,<2
+sqlalchemy>=2.0
+# dbt-core 1.11 kéo theo dbt-core-experimental-parser phải build từ mã nguồn, treo khi cài trên Windows
+dbt-core>=1.9,<1.11
+dbt-duckdb>=1.9,<2

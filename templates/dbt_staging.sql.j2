@@ -1,0 +1,136 @@
+[#- Staging cho một nguồn (SPEC §8.1, §13).
+    Mọi dòng bronze đi ra đúng một trong ba đường: staging sạch, bị loại vì trùng (đếm, không lưu),
+    hoặc bảng __rejected kèm _reject_reason. Dòng rác được post-hook chép sang bảng rejected rồi xóa
+    khỏi model, nên model staging cuối cùng chỉ còn dòng sạch. Bảng rejected giữ giá trị thô trong
+    _raw_values (JSON) để người duyệt xem lại. -#]
+[%- set columns = source.staging.columns -%]
+[%- set dedupe = source.staging.dedupe -%]
+[%- set dedupe_keys = (dedupe.keys if dedupe and dedupe.keys else source.primary_key) -%]
+-- Staging của nguồn [[ source.id ]] ([[ source.kind ]] [[ source.source_ref ]]) cho pipeline [[ model_name ]].
+-- Sinh tự động từ Spec, không sửa tay.
+{{ config(
+    materialized='table',
+    post_hook=[
+        "create or replace table {{ this.incorporate(path={'identifier': '[[ rejected_name ]]'}) }} as select * from {{ this }} where _reject_reason is not null",
+        "delete from {{ this }} where _reject_reason is not null",
+        "alter table {{ this }} drop column _reject_reason",
+        "alter table {{ this }} drop column _raw_values",
+    ]
+) }}
+
+with bronze as (
+
+    select * from {{ source('bronze', '[[ source.target.table ]]') }}
+
+),
+
+typed as (
+
+    select
+[%- for column in columns %]
+[%- set raw = "bronze." ~ (column.from | dlt_name | ident) %]
+[%- if column.currency %]
+[%- set code = "upper(cast(bronze." ~ (column.currency.code_column | dlt_name | ident) ~ " as varchar))" %]
+        cast(
+            try_cast([[ raw ]] as [[ column.type ]])
+            * case [[ code ]][% for ccy, rate in rates.items() %] when [[ ccy | sql_str ]] then [[ rate ]][% endfor %] end
+            as [[ column.type ]]
+        ) as [[ column.as | ident ]],
+        [[ code ]] as _currency_[[ loop.index ]],
+[%- elif column.date_formats %]
+        cast(coalesce(
+[%- for fmt in column.date_formats %]
+            try_strptime(cast([[ raw ]] as varchar), [[ fmt | sql_str ]])[% if not loop.last %],[% endif %]
+[%- endfor %]
+        ) as [[ column.type ]]) as [[ column.as | ident ]],
+[%- else %]
+        try_cast([[ raw ]] as [[ column.type ]]) as [[ column.as | ident ]],
+[%- endif %]
+        [[ raw ]] as _raw_[[ loop.index ]],
+[%- endfor %]
+[%- for key in dedupe_keys %]
+        bronze.[[ key | dlt_name | ident ]] as _dedupe_key_[[ loop.index ]],
+[%- endfor %]
+[%- if dedupe %]
+        bronze.[[ dedupe.order_by | dlt_name | ident ]] as _dedupe_order,
+[%- endif %]
+        bronze._dlt_id as _bronze_id
+
+    from bronze
+
+),
+
+checked as (
+
+    select
+        *,
+        case
+[%- for column in columns %]
+[%- if column.currency %]
+            when _raw_[[ loop.index ]] is not null and coalesce(_currency_[[ loop.index ]], '') not in ([% for ccy in rates %][[ ccy | sql_str ]][% if not loop.last %], [% endif %][% endfor %])
+                then [[ ("unknown_currency:" ~ column.as) | sql_str ]]
+[%- endif %]
+            when _raw_[[ loop.index ]] is not null and [[ column.as | ident ]] is null
+                then [[ (("date_format:" if column.date_formats else "cast:") ~ column.as) | sql_str ]]
+[%- endfor %]
+[%- for condition in source.staging.reject_if %]
+            when ([[ condition ]])
+                then [[ ("reject_if:" ~ condition) | sql_str ]]
+[%- endfor %]
+        end as _reject_reason
+
+    from typed
+
+),
+
+[%- if dedupe_keys %]
+
+clean as (
+
+    select
+        *,
+        row_number() over (
+            partition by [% for key in dedupe_keys %]_dedupe_key_[[ loop.index ]][% if not loop.last %], [% endif %][% endfor %]
+            order by [% if dedupe %]_dedupe_order [[ "desc" if dedupe.keep == "latest" else "asc" ]] nulls last, [% endif %]_bronze_id
+        ) as _dedupe_rank
+
+    from checked
+    where _reject_reason is null
+
+)
+
+select
+[%- for column in columns %]
+    [[ column.as | ident ]],
+[%- endfor %]
+    cast(null as varchar) as _reject_reason,
+    cast(null as varchar) as _raw_values
+from clean
+where _dedupe_rank = 1
+[%- else %]
+
+clean as (
+
+    select * from checked where _reject_reason is null
+
+)
+
+select
+[%- for column in columns %]
+    [[ column.as | ident ]],
+[%- endfor %]
+    cast(null as varchar) as _reject_reason,
+    cast(null as varchar) as _raw_values
+from clean
+[%- endif %]
+
+union all
+
+select
+[%- for column in columns %]
+    [[ column.as | ident ]],
+[%- endfor %]
+    _reject_reason,
+    cast(to_json({[% for column in columns %][[ column.from | sql_str ]]: _raw_[[ loop.index ]][% if not loop.last %], [% endif %][% endfor %]}) as varchar) as _raw_values
+from checked
+where _reject_reason is not null

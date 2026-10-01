@@ -27,6 +27,12 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
             )
             # created_at lưu ở UTC để sắp xếp theo chuỗi đúng thứ tự thời gian.
             conn.execute("CREATE INDEX IF NOT EXISTS run_reports_created_at ON run_reports (created_at)")
+            # Nội dung đầy đủ file sinh ra theo (run_id, version), để xem diff sau khi sandbox đã xóa (SPEC §8.2).
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_files ("
+                " run_id TEXT NOT NULL, version INTEGER NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,"
+                " PRIMARY KEY (run_id, version, path))"
+            )
             yield conn
     finally:
         conn.close()
@@ -57,3 +63,20 @@ def get_run_report(path: str, run_id: str) -> RunReport | None:
         row = conn.execute("SELECT report FROM run_reports WHERE run_id = ?", (run_id,)).fetchone()
     return RunReport.model_validate_json(row[0]) if row else None
 
+
+def save_run_files(path: str, run_id: str, version: int, files: dict[str, str]) -> None:
+    """Ghi nội dung file sinh ra của một version; ghi lại cùng version thì thay toàn bộ bộ file."""
+    with _database(path) as conn:
+        conn.execute("DELETE FROM run_files WHERE run_id = ? AND version = ?", (run_id, version))
+        conn.executemany(
+            "INSERT INTO run_files VALUES (?, ?, ?, ?)",
+            [(run_id, version, file_path, content) for file_path, content in sorted(files.items())],
+        )
+
+
+def get_run_files(path: str, run_id: str, version: int) -> dict[str, str]:
+    with _database(path) as conn:
+        rows = conn.execute(
+            "SELECT path, content FROM run_files WHERE run_id = ? AND version = ? ORDER BY path", (run_id, version)
+        ).fetchall()
+    return dict(rows)

@@ -1,0 +1,18 @@
+[#- Resource dlt cho nguồn postgres: sql_table + incremental theo cursor_field. -#]
+[% macro resource(source, decl) -%]
+def resource_[[ source.id ]]():
+    table = sql_table(
+        credentials=dlt.secrets[[ ("sources." ~ source.source_ref ~ ".credentials") | pyindex ]],
+        schema=[[ decl.schema | pystr ]],
+        table=[[ source.table | pystr ]],
+        defer_table_reflect=True,  # đọc cấu trúc bảng lúc chạy, không phải lúc Dagster nạp code location
+[%- if source.cursor_field %]
+        incremental=dlt.sources.incremental([[ source.cursor_field | pystr ]]),
+[%- endif %]
+    )
+    return table.apply_hints(
+        table_name=[[ source.target.table | pystr ]],
+        primary_key=[[ source.primary_key | pylist ]],
+        write_disposition=[[ source.write_disposition | pystr ]],
+    )
+[%- endmacro %]

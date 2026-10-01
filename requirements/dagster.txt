@@ -1,0 +1,5 @@
+# Nạp và chạy code location Dagster sinh ra (deploy). Nặng, chỉ cài khi cần.
+-r pipeline.txt
+dagster>=1.10
+dagster-dbt>=0.26
+dagster-dlt>=0.26
