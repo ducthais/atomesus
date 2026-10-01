@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.agents.nodes.common import AgentDeps
-from src.api import chat as chat_api
 from src.api import routes
+from src.chat import api as chat_api
 from src.main import app
 from src.pipeline import auth
 from src.pipeline.settings import PipelineSettings

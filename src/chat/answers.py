@@ -1,4 +1,4 @@
-"""Trợ lý chat bản Sprint 1: trả lời tất định từ RunReport, không gọi LLM (SPEC §14.5).
+"""Câu trả lời của trợ lý chat bản Sprint 1: tất định từ RunReport, không gọi LLM (SPEC §14.5).
 
 Mỗi con số kèm tên trường nguồn trong RunReport (NFR-08). Không có dữ liệu thì nói không có, không đoán.
 Phân loại 4 ý định bằng model rẻ, `clarify_answer` và `revise` thuộc Sprint 2.
@@ -26,11 +26,12 @@ def _why(report: RunReport) -> str:
         lines.append(f"Dừng ở phase `{last.get('stage', report.stage_reached)}`: {reason} (error_trace[-1])")
         if last.get("question"):
             lines.append(f"Agent cần bạn làm rõ: {last['question']} (trả lời trong chat có ở Sprint 2)")
-    failed = [g for g in report.gates if g.result == "fail"] + [c for c in report.checks if c.result == "fail"]
-    for item in failed:
-        scope = f" · nguồn {item.source_id}" if getattr(item, "source_id", None) else ""
-        detail = getattr(item, "detail", "") or ""
-        lines.append(f"Không đạt: `{item.name}`{scope} {detail}".rstrip())
+    lines += [f"Cổng không đạt: `{g.name}` {g.detail}".rstrip() for g in report.gates if g.result == "fail"]
+    lines += [
+        f"Kiểm tra không đạt: `{c.name}`" + (f" · nguồn {c.source_id}" if c.source_id else "")
+        for c in report.checks
+        if c.result == "fail"
+    ]
     return "\n".join(lines) or f"Run không có lỗi nào được ghi; trạng thái `{report.status}`."
 
 
