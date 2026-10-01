@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { canReview, pendingRun, stageIndex, toArtifacts, toStudioRun, STAGES } from '../lib/studio.ts';
+import { canReview, chatMode, chatPayload, pendingRun, stageIndex, toArtifacts, toStudioRun, STAGES } from '../lib/studio.ts';
 import type { RunReport } from '../lib/postgres-api.ts';
 
 const FIXTURES = new URL('../../fixtures/run_reports/', import.meta.url);
@@ -98,4 +98,20 @@ test('generated files become sorted read-only artifacts with a language', () => 
   assert.deepEqual(artifacts.map(a => [a.path, a.language]), [
     ['dbt_project/models/gold/x.sql', 'sql'], ['dbt_project/models/gold/x.yml', 'yaml'], ['ingestion/x.py', 'python'],
   ]);
+});
+
+test('chat asks about the open run, or creates a run only for an Engineer', () => {
+  const run = toStudioRun(agentReport);
+  assert.equal(chatMode(run, 'Reviewer').mode, 'ask');
+  assert.equal(chatMode(undefined, 'Engineer').mode, 'new_request');
+  assert.equal(chatMode(undefined, 'Reviewer').mode, null);
+  assert.equal(chatMode(pendingRun('x', 'minh'), 'Engineer').mode, null);
+});
+
+test('chat payload trims the message and never sends identity fields', () => {
+  assert.deepEqual(chatPayload('  Vì sao dừng?  ', 'ask', 'run-1'), { message: 'Vì sao dừng?', run_id: 'run-1' });
+  assert.deepEqual(chatPayload('Doanh thu theo ngày', 'new_request'), { message: 'Doanh thu theo ngày' });
+  assert.equal(chatPayload('   ', 'ask', 'run-1'), null);
+  assert.equal(chatPayload('x', null), null);
+  assert.equal(chatPayload('x', 'ask'), null);
 });

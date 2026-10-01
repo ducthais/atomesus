@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight, CircleAlert, LogIn, Play, Settings2, Sparkles, X } from 'lucide-react';
 import { ApiError, apiRequest, pipelineRequest, type RunReport, type User } from '@/lib/postgres-api';
-import { RUNNING, pendingRun, shortId, toArtifacts, toStudioRun, type FileArtifact, type Limits, type Run } from '@/lib/studio';
+import { RUNNING, chatMode, chatPayload, pendingRun, shortId, toArtifacts, toStudioRun, type ChatMessage, type ChatResponse, type FileArtifact, type Limits, type Run } from '@/lib/studio';
 import { AssistantPanel, PolicyViewer, RunsTable, Sidebar } from './components/studio-parts';
 import { RequestWizard, deployPath, type ReviewDecision } from './components/studio-workflows';
 import { IdeWorkspace } from './components/studio-ide';
@@ -26,8 +26,11 @@ export default function StudioPage() {
   const [collapsed, setCollapsed] = useState(false);
   const [assistant, setAssistant] = useState('');
   const [notice, setNotice] = useState('');
+  const [chats, setChats] = useState<Record<string, ChatMessage[]>>({});
+  const [chatBusy, setChatBusy] = useState(false);
   const allRuns = [...pending, ...runs];
   const run = allRuns.find(item => item.id === selectedId);
+  const panelRun = view === 'detail' ? run : undefined;
 
   const fail = useCallback((err: unknown) => {
     if (err instanceof ApiError && err.status === 401) { setUser(null); setRuns([]); setView('runs'); }
@@ -62,6 +65,12 @@ export default function StudioPage() {
       .then(body => setFiles(prev => ({ ...prev, [run.id]: toArtifacts(body.files) })))
       .catch(fail);
   }, [view, run, files, fail]);
+  useEffect(() => {
+    if (!assistant || !panelRun || panelRun.pending || chats[panelRun.id]) return;
+    apiRequest<ChatMessage[]>(`/runs/${encodeURIComponent(panelRun.id)}/messages`)
+      .then(items => setChats(prev => ({ ...prev, [panelRun.id]: items })))
+      .catch(fail);
+  }, [assistant, panelRun, chats, fail]);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(''), 6000); return () => clearTimeout(timer); } }, [notice]);
 
   const openRun = (id: string) => { setSelectedId(id); setView('detail'); setAssistant(''); };
@@ -92,6 +101,25 @@ export default function StudioPage() {
     }
   };
   const editRequest = (request: string) => { setDraft(request); setView('create'); };
+  /** Gửi tin nhắn chat: hỏi về run đang mở, hoặc tạo run mới. Trả true khi gửi thành công. */
+  const sendChat = async (text: string): Promise<boolean> => {
+    const chat = chatMode(panelRun, user?.role ?? '');
+    const body = chatPayload(text, chat.mode, panelRun?.id);
+    if (!body) return false;
+    setChatBusy(true);
+    try {
+      const result = await apiRequest<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify(body) });
+      const items = await apiRequest<ChatMessage[]>(`/runs/${encodeURIComponent(result.run_id)}/messages`);
+      setChats(prev => ({ ...prev, [result.run_id]: items }));
+      if (result.intent === 'new_request') {
+        const created = toStudioRun(result.report);
+        setRuns(prev => [created, ...prev.filter(item => item.id !== created.id)]);
+        setSelectedId(created.id); setView('detail'); setAssistant('run');
+      }
+      return true;
+    } catch (err) { fail(err); return false; }
+    finally { setChatBusy(false); }
+  };
   const reviewRun = async (target: Run, decision: ReviewDecision, comment: string) => {
     try {
       const report = await apiRequest<RunReport>(`/runs/${encodeURIComponent(target.id)}/${decision}`, { method: 'POST', body: JSON.stringify({ files_hash: target.filesHash || null, comment }) });
@@ -119,7 +147,7 @@ export default function StudioPage() {
         {view === 'create' && <RequestWizard key={draft} initial={draft} enabled={user.role === 'Engineer'} onCancel={() => setView('runs')} onSubmit={createRun} />}
         {view === 'policy' && <PolicyViewer files={policy?.files ?? null} />}
         {view === 'detail' && (run ? <IdeWorkspace key={run.id} run={run} files={run.fileCount ? files[run.id] ?? null : []} role={user.role} user={user.id} onBack={() => { setView('runs'); setAssistant(''); }} onRetry={() => createRun(run.request)} onEdit={() => editRequest(run.request)} onExplain={setAssistant} onReview={(decision, comment) => reviewRun(run, decision, comment)} /> : <div className="studio-empty">Không tìm thấy run. <button className="studio-button" onClick={() => setView('runs')}>Về danh sách</button></div>)}
-      </main>{assistant && <AssistantPanel context={assistant} run={view === 'detail' ? run : undefined} onClose={() => setAssistant('')} />}</div>
+      </main>{assistant && <AssistantPanel context={assistant} run={panelRun} onClose={() => setAssistant('')} messages={panelRun ? chats[panelRun.id] ?? [] : []} chat={chatMode(panelRun, user.role)} busy={chatBusy} onSend={sendChat} />}</div>
     </div>
     {notice && <div className="studio-toast" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Đóng thông báo"><X size={15} /></button></div>}
   </div>;

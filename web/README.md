@@ -25,15 +25,14 @@ npm run build
 | Chi tiết run | Cây file và code sinh ra (chỉ đọc), bảng bronze/staging/gold với số dòng đo thật, cổng + phép đối soát, log từ `spec_history`/`error_trace`, kế hoạch và Spec | `GET /runs/{id}`, `GET /runs/{id}/files` |
 | Run dừng sớm | Lý do, bằng chứng, luật áp dụng đọc từ RunReport; sửa yêu cầu hoặc chạy lại (tạo run mới) | `POST /agent/runs` |
 | Chính sách | Nội dung thật của `policy/*.yml`, chỉ đọc | `GET /policy` |
+| Trợ lý (chat) | Chưa mở run: Engineer gửi yêu cầu, agent tạo run mới. Đang mở run: hỏi về run đó, trả lời tất định từ RunReport (trần `max_chat_calls`); lịch sử chat lưu cùng run | `POST /chat`, `GET /runs/{id}/messages` |
 
 `lib/studio.ts` chuyển `RunReport` thành mô hình hiển thị (`toStudioRun`), không thêm số liệu nào không có trong report. `next.config.ts` nâng `experimental.proxyTimeout` lên 300 giây vì `POST /agent/runs` chạy lâu hơn mặc định 30 giây của proxy.
 
 ## Chưa có ở backend (nút khóa, ghi rõ trên giao diện)
 
-- Duyệt / từ chối / yêu cầu sửa, deploy, hủy run.
+- Yêu cầu sửa, hủy run (duyệt / từ chối và ghi Dagster local đã có: `POST /runs/{id}/approve`, `/reject`).
 - Theo dõi tiến độ trực tiếp (SSE): trong lúc chờ chỉ hiện trạng thái "Agent đang chạy", không giả lập phase.
-- Hỏi đáp trong chat (ý định `ask`) và bước Engineer xác nhận kế hoạch (P2).
+- Chat phân loại ý định bằng LLM, trả lời câu hỏi làm rõ (`clarify_answer`), sửa qua chat (`revise`) và bước Engineer xác nhận kế hoạch (P2) — Sprint 2.
 
 Monaco tải mã từ CDN; trong lúc tải (hoặc khi mạng chặn CDN) code vẫn hiện dạng văn bản có số dòng.
-
-Các component cũ không còn được trang nào dùng (`create-prompt`, `evidence-strip`, `phase-timeline`, `pipeline-canvas`, `validation-details`, `lib/demo.ts`, `lib/workflow.ts`) chưa bị xóa.

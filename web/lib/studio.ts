@@ -162,3 +162,24 @@ export function toArtifacts(files: Record<string, string>): FileArtifact[] {
 export function canReview(run: Run, role: string, user: string): boolean {
   return role === 'Reviewer' && run.owner !== user && run.status === 'READY_FOR_REVIEW' && run.checks.every(c => c.state === 'pass');
 }
+
+/** Một dòng của GET /runs/{id}/messages (bảng run_messages). */
+export type ChatMessage = { id: number; run_id: string; role: 'user' | 'assistant'; author: string; intent: string; content: string; at: string };
+export type ChatResponse = { intent: 'new_request' | 'ask'; reply: string; run_id: string; report: RunReport };
+export type ChatMode = { mode: 'ask' | 'new_request' | null; hint: string };
+
+/** Ô chat hỏi về run đang mở, hoặc tạo run mới khi chưa mở run nào (chỉ Engineer). */
+export function chatMode(run: Run | undefined, role: string): ChatMode {
+  if (run?.pending) return { mode: null, hint: 'Agent đang chạy; hỏi sau khi có RunReport.' };
+  if (run) return { mode: 'ask', hint: 'Câu trả lời lấy từ RunReport của run này, không đổi trạng thái run.' };
+  if (role === 'Engineer') return { mode: 'new_request', hint: 'Mô tả nhu cầu dữ liệu; agent lập kế hoạch, viết Spec và chạy thử.' };
+  return { mode: null, hint: 'Chỉ Engineer tạo pipeline. Mở một run để hỏi về nó.' };
+}
+
+/** Body cho POST /chat; null khi không gửi được. */
+export function chatPayload(message: string, mode: ChatMode['mode'], runId?: string): { message: string; run_id?: string } | null {
+  const text = message.trim();
+  if (!text || !mode) return null;
+  if (mode === 'ask') return runId ? { message: text, run_id: runId } : null;
+  return { message: text };
+}
