@@ -14,16 +14,7 @@ bash scripts/_pyrun.sh scripts/submit_log.py || true
 exit 0
 '@
 
-# Must be written WITHOUT a BOM: Git Bash reads the first line as the shebang,
-# and a leading EF BB BF breaks it ("cannot spawn .git/hooks/pre-push").
-# Windows PowerShell 5.1's `-Encoding UTF8` emits a BOM, so write the bytes directly.
-$Utf8NoBom = New-Object System.Text.UTF8Encoding $false
-$HookPath = Join-Path (Get-Location) $HookFile
-[System.IO.File]::WriteAllText($HookPath, ($HookBody -replace "`r`n", "`n") + "`n", $Utf8NoBom)
-
-# Git for Windows still honours the exec bit when running hooks via MSYS bash.
-try { & bash -c "chmod +x '$HookFile' scripts/_pyrun.sh" | Out-Null } catch {}
-
+Set-Content -Path $HookFile -Value $HookBody -Encoding UTF8 -NoNewline
 Write-Host "[ai-log] Git pre-push hook installed."
 
 if (-not (Test-Path .ai-log)) { New-Item -ItemType Directory -Path .ai-log | Out-Null }
