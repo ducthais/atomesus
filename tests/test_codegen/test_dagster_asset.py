@@ -20,7 +20,7 @@ from src.spec import SPEC_FIXTURES_DIR, Spec  # noqa: E402
 
 def test_generated_code_location_loads(tmp_path, monkeypatch):
     spec = Spec.model_validate_json((SPEC_FIXTURES_DIR / "spec_01_pg_daily_orders.json").read_text(encoding="utf-8"))
-    sandbox._prepare(tmp_path, render(spec, load_policy()))
+    sandbox.prepare_project(tmp_path, render(spec, load_policy()))
     monkeypatch.setenv("WAREHOUSE_PATH", str(tmp_path / "warehouse.duckdb"))
     monkeypatch.setenv("DLT_DATA_DIR", str(tmp_path / ".dlt"))
     monkeypatch.setenv("SOURCES__SALES_PG__CREDENTIALS", "postgresql+psycopg://reader:x@127.0.0.1:1/none")

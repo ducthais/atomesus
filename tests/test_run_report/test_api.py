@@ -84,6 +84,75 @@ async def test_get_run_unknown_id_returns_404(logged_in):
     assert response.status_code == 404
 
 
+@pytest.fixture
+def generated_run(store_path, tmp_path):
+    """Run chờ duyệt có bộ file sinh thật từ spec mẫu, như run do agent tạo."""
+    from src.codegen.render import file_hashes, render
+    from src.policy.loader import load_policy
+    from src.run_report.store import get_run_report, save_run_files
+    from src.spec import SPEC_FIXTURES_DIR, Spec
+
+    spec = Spec.model_validate_json((SPEC_FIXTURES_DIR / "spec_01_pg_daily_orders.json").read_text(encoding="utf-8"))
+    files = render(spec, load_policy())
+    hashes, files_hash = file_hashes(files)
+    ready = get_run_report(store_path, READY_RUN_ID)
+    report = ready.model_copy(
+        update={"spec": spec.model_dump(by_alias=True, mode="json"), "files": hashes, "files_hash": files_hash}
+    )
+    save_run_report(store_path, report)
+    save_run_files(store_path, READY_RUN_ID, report.version, files)
+    app.dependency_overrides[auth.settings]().deploy_dir = str(tmp_path / "dagster_local")
+    return report
+
+
+@pytest.mark.asyncio
+async def test_approve_deploys_approved_files_to_local_dagster(logged_in, generated_run, tmp_path):
+    response = await logged_in.post(
+        f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": generated_run.files_hash, "comment": "ok"}
+    )
+
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["status"] == "DEPLOYED"
+    assert report["approval"]["reviewer"] == "an"
+    assert report["approval"]["files_hash"] == generated_run.files_hash
+    project = tmp_path / "dagster_local" / "fct_daily_orders"
+    assert (project / "infra/dagster/generated/fct_daily_orders_asset.py").is_file()
+    assert (project / "dbt_project/models/gold/fct_daily_orders.sql").is_file()
+    assert (project / "dbt_project/dbt_project.yml").is_file()
+
+
+@pytest.mark.asyncio
+async def test_engineer_cannot_approve(client, store_path, generated_run):
+    await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+    response = await client.post(f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": generated_run.files_hash})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_approve_rejects_stale_files_hash(logged_in, generated_run, tmp_path):
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": "sha256:old"})
+
+    assert response.status_code == 409
+    assert (await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")).json()["status"] == "READY_FOR_REVIEW"
+    assert not (tmp_path / "dagster_local").exists()
+
+
+@pytest.mark.asyncio
+async def test_reject_records_decision_without_deploy(logged_in, generated_run, tmp_path):
+    response = await logged_in.post(
+        f"/api/v1/runs/{READY_RUN_ID}/reject", json={"files_hash": generated_run.files_hash, "comment": "sai metric"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert response.json()["approval"]["decision"] == "rejected"
+    assert not (tmp_path / "dagster_local").exists()
+    second = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": generated_run.files_hash})
+    assert second.status_code == 409
+
+
 def test_save_overwrites_same_run_and_survives_reopen(store_path):
     ready = next(r for r in list_run_reports(store_path) if r.run_id == READY_RUN_ID)
     save_run_report(store_path, ready.model_copy(update={"status": "NEEDS_HUMAN"}))

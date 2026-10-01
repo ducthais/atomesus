@@ -83,7 +83,7 @@ def warehouse(tmp_path_factory):
     policy = load_policy()
     spec = Spec.model_validate(SPEC)
     root = tmp_path_factory.mktemp("sandbox")
-    sandbox._prepare(root, render(spec, policy))
+    sandbox.prepare_project(root, render(spec, policy))
     path = root / "warehouse.duckdb"
     with duckdb.connect(str(path)) as db:
         db.execute("create schema bronze")
