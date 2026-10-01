@@ -6,7 +6,7 @@ Mỗi run một dòng, khóa theo `run_id`; bản ghi được kiểm tra bằng
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.run_report.models import RunReport, RunStatus
@@ -33,6 +33,13 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
                 " run_id TEXT NOT NULL, version INTEGER NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,"
                 " PRIMARY KEY (run_id, version, path))"
             )
+            # Lịch sử chat của run, để truy vết ai yêu cầu gì (SPEC §14.5, FR-20).
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_messages ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, role TEXT NOT NULL,"
+                " author TEXT NOT NULL, intent TEXT NOT NULL, content TEXT NOT NULL, at TEXT NOT NULL)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS run_messages_run ON run_messages (run_id, id)")
             yield conn
     finally:
         conn.close()
@@ -80,3 +87,41 @@ def get_run_files(path: str, run_id: str, version: int) -> dict[str, str]:
             "SELECT path, content FROM run_files WHERE run_id = ? AND version = ? ORDER BY path", (run_id, version)
         ).fetchall()
     return dict(rows)
+
+
+def save_message(path: str, run_id: str, role: str, author: str, intent: str, content: str) -> dict:
+    """Ghi một tin nhắn chat của run; trả bản ghi vừa ghi."""
+    at = datetime.now(UTC).isoformat()
+    with _database(path) as conn:
+        cursor = conn.execute(
+            "INSERT INTO run_messages (run_id, role, author, intent, content, at) VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, role, author, intent, content, at),
+        )
+    return {
+        "id": cursor.lastrowid,
+        "run_id": run_id,
+        "role": role,
+        "author": author,
+        "intent": intent,
+        "content": content,
+        "at": at,
+    }
+
+
+def list_messages(path: str, run_id: str) -> list[dict]:
+    """Lịch sử chat của run, cũ nhất trước."""
+    with _database(path) as conn:
+        rows = conn.execute(
+            "SELECT id, run_id, role, author, intent, content, at FROM run_messages WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+    keys = ("id", "run_id", "role", "author", "intent", "content", "at")
+    return [dict(zip(keys, row, strict=True)) for row in rows]
+
+
+def count_messages(path: str, run_id: str, role: str, intent: str) -> int:
+    with _database(path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM run_messages WHERE run_id = ? AND role = ? AND intent = ?", (run_id, role, intent)
+        ).fetchone()
+    return row[0]

@@ -1,7 +1,7 @@
 'use client';
 
 import { Activity, Check, ChevronRight, CircleAlert, Clock3, FileCode2, GitBranch, Layers3, LockKeyhole, LogOut, Plus, Search, ShieldCheck, Sparkles, X } from 'lucide-react';
-import { RUNNING, STAGES, STATUS_LABEL, shortId, type Limits, type Run, type Status } from '@/lib/studio';
+import { RUNNING, STAGES, STATUS_LABEL, shortId, type ChatMessage, type ChatMode, type Limits, type Run, type Status } from '@/lib/studio';
 import type { User } from '@/lib/postgres-api';
 import { useState } from 'react';
 
@@ -64,7 +64,11 @@ function stepsDone(run: Run): number {
   return run.stage >= 1 && run.summary ? 1 : 0;
 }
 
-export function AssistantPanel({ context, run, onClose }: { context: string; run?: Run; onClose: () => void }) {
+type AssistantProps = { context: string; run?: Run; onClose: () => void; messages: ChatMessage[]; chat: ChatMode; busy: boolean; onSend: (text: string) => Promise<boolean> };
+
+export function AssistantPanel({ context, run, onClose, messages, chat, busy, onSend }: AssistantProps) {
+  const [draft, setDraft] = useState('');
+  const send = async () => { if (await onSend(draft)) setDraft(''); };
   const done = run ? stepsDone(run) : 0;
   const message = !run ? 'Chọn một run để xem kế hoạch, lý do dừng và các file agent đã sinh.'
     : run.pending ? 'Agent đang chạy. Kết quả, kể cả khi dừng giữa chừng, sẽ hiện ở đây khi backend trả về RunReport.'
@@ -74,6 +78,11 @@ export function AssistantPanel({ context, run, onClose }: { context: string; run
     <div className="studio-assistant-scroll">{run && <><div className="ide-agent-request"><span>YÊU CẦU</span><p>{run.request}</p></div>{run.summary && <div className="ide-agent-request"><span>KẾ HOẠCH</span><p>{run.summary}</p></div>}<div className="ide-agent-plan"><div><strong>Các bước của agent</strong><span>{done}/{AGENT_STEPS.length}</span></div><ol>{AGENT_STEPS.map((step, index) => <li key={step} className={index < done ? 'done' : ''}><span>{index < done ? <Check size={11} /> : index + 1}</span>{step}</li>)}</ol></div></>}
       <div className="studio-assistant-message"><span className="studio-ai-label"><Sparkles size={14} /> Từ RunReport</span><p>{message}</p><div className="studio-assistant-ref"><FileCode2 size={13} /> {context.includes('/') ? context : run ? `RunReport · ${shortId(run.id)}` : 'Workspace'}</div></div>
       {run && run.fileCount > 0 && <div className="ide-agent-files"><div><strong>File sinh ra</strong><span>{run.fileCount} file</span></div><p>Reviewer duyệt cả bộ file theo files_hash <code>{run.filesHash.replace('sha256:', '').slice(0, 12)}</code>.</p></div>}
-    </div><div className="ide-agent-compose"><label>Hỏi về pipeline này</label><small>Hỏi đáp trong chat (ý định <code>ask</code>) chưa có API, dự kiến Sprint 2.</small></div>
+      {messages.map(item => <div key={item.id} className={`studio-assistant-message chat-${item.role}`}><span className="studio-ai-label">{item.role === 'user' ? item.author : <><Sparkles size={14} /> Agent</>}</span><p style={{ whiteSpace: 'pre-wrap' }}>{item.content}</p></div>)}
+      {busy && <div className="studio-assistant-message" role="status"><span className="studio-ai-label"><Clock3 size={14} /> Agent</span><p>{chat.mode === 'new_request' ? 'Đang lập kế hoạch, viết Spec và chạy thử (khoảng 30 giây)…' : 'Đang đọc RunReport…'}</p></div>}
+    </div><form className="ide-agent-compose" onSubmit={e => { e.preventDefault(); send(); }}><label htmlFor="assistant-input">{chat.mode === 'new_request' ? 'Yêu cầu pipeline mới' : 'Hỏi về pipeline này'}</label>
+      <textarea id="assistant-input" rows={3} maxLength={2000} value={draft} disabled={!chat.mode || busy} onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder={chat.mode === 'new_request' ? 'Ví dụ: Tính doanh thu theo ngày từ bảng đơn hàng' : 'Ví dụ: Vì sao run này dừng?'} />
+      <small>{chat.hint}</small><button type="submit" className="studio-button primary" disabled={!chat.mode || busy || !draft.trim()}>Gửi</button></form>
     <div className="studio-assistant-foot"><LockKeyhole size={14} /> Trợ lý không tự chạy hoặc phê duyệt</div></aside>;
 }

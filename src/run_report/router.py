@@ -7,7 +7,7 @@ from src.codegen.render import file_hashes
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.run_report.models import Approval, Decision, RunReport, RunStatus
-from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report
+from src.run_report.store import get_run_files, get_run_report, list_messages, list_run_reports, save_run_report
 from src.spec.models import Spec
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
@@ -42,6 +42,14 @@ async def get_files(run_id: str, version: int | None = None, config: PipelineSet
         raise HTTPException(status_code=404, detail=f"Không tìm thấy run {run_id}")
     version = version or report.version
     return {"run_id": run_id, "version": version, "files": get_run_files(config.store_path, run_id, version)}
+
+
+@router.get("/{run_id}/messages")
+async def get_messages(run_id: str, config: PipelineSettings = Depends(settings)) -> list[dict]:
+    """Lịch sử chat của run, cũ nhất trước (SPEC §15)."""
+    if get_run_report(config.store_path, run_id) is None:
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy run {run_id}")
+    return list_messages(config.store_path, run_id)
 
 
 def _reviewable(run_id: str, body: ReviewRequest, user: dict, store_path: str) -> RunReport:
