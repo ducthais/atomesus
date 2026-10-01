@@ -90,7 +90,8 @@ def _run(command: list[str], sandbox: Path, env: dict[str, str], timeout: int, s
     return done.stdout
 
 
-def _prepare(sandbox: Path, files: dict[str, str]) -> None:
+def prepare_project(sandbox: Path, files: dict[str, str]) -> None:
+    """Dựng một project chạy được: scaffold dbt + bộ file sinh ra. Dùng chung cho sandbox và deploy local."""
     shutil.copytree(DBT_SCAFFOLD, sandbox / "dbt_project", ignore=shutil.ignore_patterns("target", "logs", "*.duckdb"))
     for path, content in files.items():
         target = sandbox / path
@@ -267,7 +268,7 @@ def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: 
     with TemporaryDirectory(prefix="pipeline-sandbox-", ignore_cleanup_errors=True) as directory:
         sandbox = Path(directory)
         try:
-            _prepare(sandbox, files)
+            prepare_project(sandbox, files)
             env = _env(sandbox, spec, policy, settings)
             _el_run(sandbox, spec, env, timeout, settings)
             import duckdb

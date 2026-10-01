@@ -5,7 +5,7 @@ import { ChevronRight, CircleAlert, LogIn, Play, Settings2, Sparkles, X } from '
 import { ApiError, apiRequest, pipelineRequest, type RunReport, type User } from '@/lib/postgres-api';
 import { RUNNING, pendingRun, shortId, toArtifacts, toStudioRun, type FileArtifact, type Limits, type Run } from '@/lib/studio';
 import { AssistantPanel, PolicyViewer, RunsTable, Sidebar } from './components/studio-parts';
-import { RequestWizard } from './components/studio-workflows';
+import { RequestWizard, deployPath, type ReviewDecision } from './components/studio-workflows';
 import { IdeWorkspace } from './components/studio-ide';
 
 type View = 'runs' | 'create' | 'detail' | 'policy';
@@ -92,6 +92,18 @@ export default function StudioPage() {
     }
   };
   const editRequest = (request: string) => { setDraft(request); setView('create'); };
+  const reviewRun = async (target: Run, decision: ReviewDecision, comment: string) => {
+    try {
+      const report = await apiRequest<RunReport>(`/runs/${encodeURIComponent(target.id)}/${decision}`, { method: 'POST', body: JSON.stringify({ files_hash: target.filesHash || null, comment }) });
+      const updated = toStudioRun(report);
+      setRuns(prev => prev.map(item => item.id === updated.id ? updated : item));
+      setNotice(updated.status === 'DEPLOYED' ? `Đã duyệt. Project Dagster ghi tại ${deployPath(updated)}.`
+        : updated.status === 'DEPLOY_FAILED' ? 'Đã duyệt nhưng ghi project Dagster thất bại, xem log.' : `Run ${shortId(updated.id)}: ${updated.status === 'REJECTED' ? 'đã từ chối' : updated.status}.`);
+    } catch (err) {
+      fail(err);
+      refreshRuns().catch(fail); // 409 thường do run đã đổi: tải lại để thấy trạng thái mới
+    }
+  };
 
   const crumb = view === 'runs' ? 'Runs' : view === 'create' ? 'Tạo yêu cầu' : view === 'policy' ? 'Chính sách' : run ? <><span>{run.title}</span><ChevronRight size={13} /><span className="studio-mono">{shortId(run.id)}</span></> : 'Run';
   if (loading) return <div className="studio-app"><div className="studio-loading">Đang kết nối backend…</div></div>;
@@ -106,7 +118,7 @@ export default function StudioPage() {
         {view === 'runs' && <RunsTable runs={allRuns} user={user} limits={policy?.limits ?? null} onOpen={openRun} onNew={() => editRequest('')} />}
         {view === 'create' && <RequestWizard key={draft} initial={draft} enabled={user.role === 'Engineer'} onCancel={() => setView('runs')} onSubmit={createRun} />}
         {view === 'policy' && <PolicyViewer files={policy?.files ?? null} />}
-        {view === 'detail' && (run ? <IdeWorkspace key={run.id} run={run} files={run.fileCount ? files[run.id] ?? null : []} role={user.role} user={user.id} onBack={() => { setView('runs'); setAssistant(''); }} onRetry={() => createRun(run.request)} onEdit={() => editRequest(run.request)} onExplain={setAssistant} /> : <div className="studio-empty">Không tìm thấy run. <button className="studio-button" onClick={() => setView('runs')}>Về danh sách</button></div>)}
+        {view === 'detail' && (run ? <IdeWorkspace key={run.id} run={run} files={run.fileCount ? files[run.id] ?? null : []} role={user.role} user={user.id} onBack={() => { setView('runs'); setAssistant(''); }} onRetry={() => createRun(run.request)} onEdit={() => editRequest(run.request)} onExplain={setAssistant} onReview={(decision, comment) => reviewRun(run, decision, comment)} /> : <div className="studio-empty">Không tìm thấy run. <button className="studio-button" onClick={() => setView('runs')}>Về danh sách</button></div>)}
       </main>{assistant && <AssistantPanel context={assistant} run={view === 'detail' ? run : undefined} onClose={() => setAssistant('')} />}</div>
     </div>
     {notice && <div className="studio-toast" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Đóng thông báo"><X size={15} /></button></div>}

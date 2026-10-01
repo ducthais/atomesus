@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Activity, ArrowLeft, Check, ChevronDown, ChevronRight, CircleAlert, Clock3, Code2, Database, FileCode2, Folder, FolderOpen, GitBranch, Layers3, LoaderCircle, LockKeyhole, RotateCcw, Search, ShieldCheck, Sparkles, Table2 } from 'lucide-react';
 import { RUNNING, STAGES, canReview, shortId, type FileArtifact, type Run } from '@/lib/studio';
 import { StatusBadge } from './studio-parts';
-import { BlockedRunView, ReviewBar, RunLogs } from './studio-workflows';
+import { BlockedRunView, ReviewBar, RunLogs, type ReviewDecision } from './studio-workflows';
 
 const Editor = dynamic(() => import('@monaco-editor/react').then(m => m.Editor), { ssr: false });
 /** Hiện ngay nội dung file trong lúc Monaco tải (Monaco lấy mã từ CDN; mạng chặn CDN thì vẫn đọc được code). */
@@ -14,9 +14,10 @@ type BottomTab = 'assets' | 'checks' | 'logs' | 'plan';
 const dirname = (path: string) => path.split('/').slice(0, -1).join('/');
 const basename = (path: string) => path.split('/').at(-1) ?? path;
 
-export function IdeWorkspace({ run, files, role, user, onBack, onRetry, onEdit, onExplain }: {
+export function IdeWorkspace({ run, files, role, user, onBack, onRetry, onEdit, onExplain, onReview }: {
   run: Run; files: FileArtifact[] | null; role: string; user: string;
   onBack: () => void; onRetry: () => void; onEdit: () => void; onExplain: (context: string) => void;
+  onReview: (decision: ReviewDecision, comment: string) => Promise<void>;
 }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [bottomTab, setBottomTab] = useState<BottomTab>('checks');
@@ -69,7 +70,7 @@ export function IdeWorkspace({ run, files, role, user, onBack, onRetry, onEdit, 
         </div>
       </section>
       {!running && list.length > 0 && run.status !== 'READY_FOR_REVIEW' && run.error && <div className="ide-inline-alert"><CircleAlert size={15} /> {run.error.split('\n')[0].slice(0, 220)} <button onClick={() => showLog(null, null)}>Xem log</button>{isEngineer && <button onClick={onEdit}>Sửa yêu cầu</button>}</div>}
-      <ReviewBar run={run} role={role} user={user} />
+      <ReviewBar run={run} role={role} user={user} onReview={onReview} />
       <div className="ide-statusbar"><span><span className="ide-run-dot good" /> Backend thật</span><span>{shortId(run.id)} · v{run.version} · phase {run.stage + 1}/{STAGES.length}</span><span>{canReview(run, role, user) ? 'Đủ điều kiện duyệt' : 'Mọi thay đổi production cần review'}</span></div>
     </section>
   </div>;

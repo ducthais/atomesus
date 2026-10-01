@@ -1,0 +1,2 @@
+# Shell script chạy trong Docker/Git Bash phải giữ LF, kể cả khi máy Windows bật core.autocrlf.
+*.sh text eol=lf

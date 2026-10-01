@@ -6,7 +6,8 @@ import { STAGES, STATUS_LABEL, canReview, type Run } from '@/lib/studio';
 
 /** Yêu cầu chạy được với nguồn hiện có (Postgres sales_raw: orders, customers). */
 const EXAMPLES = [
-  { label: 'Doanh thu ngày', request: 'Tính doanh thu và số đơn hàng theo từng ngày đặt hàng, bỏ các đơn bị hủy' },
+  // Dữ liệu mẫu chỉ có đơn 'paid': yêu cầu "bỏ đơn bị hủy" khiến LLM đoán bộ lọc sai và gold rỗng.
+  { label: 'Doanh thu ngày', request: 'Tính doanh thu và số đơn hàng theo từng ngày đặt hàng' },
   { label: 'Doanh thu khách hàng', request: 'Tổng doanh thu và số đơn hàng của từng khách hàng, kèm tên khách hàng' },
   { label: 'Nguồn chưa hỗ trợ', request: 'Ghép đơn hàng Postgres với thanh toán từ REST API, tính doanh thu theo ngày' },
 ];
@@ -45,9 +46,20 @@ export function RunLogs({ run, selectedStage, selectedCheck }: { run: Run; selec
   return <div className="studio-logs"><div className="studio-log-toolbar"><div><strong>Nhật ký & RunReport</strong><small>{selectedStage !== null ? `Phase ${selectedStage + 1}: ${STAGES[selectedStage]}` : 'Tất cả phase'}</small></div><label>Mức độ<select value={level} onChange={e => setLevel(e.target.value)}><option value="all">Tất cả</option><option value="info">Thông tin</option><option value="success">Đạt</option><option value="warning">Cảnh báo</option><option value="error">Lỗi</option></select></label></div><div className="studio-check-list"><h3>Cổng kiểm tra và phép đối soát</h3>{run.checks.length ? run.checks.map(check => <div key={check.id} className={selectedCheck === check.id ? 'highlight' : ''}><span className={`studio-check-${check.state}`}>{check.state === 'pass' ? <Check size={14} /> : check.state === 'fail' ? <CircleAlert size={14} /> : <Clock3 size={14} />}</span><strong>{check.name}</strong><code>{check.id}</code><span>{check.value}</span><small>{check.detail}</small></div>) : <div className="studio-empty">Chưa có kết quả kiểm tra.</div>}</div><div className="studio-log-list">{logs.length ? logs.map(log => <details key={log.id}><summary><time>{new Date(log.at).toLocaleTimeString('vi-VN')}</time><span className={`studio-log-level ${log.level}`}>{log.level}</span><span className="studio-mono">{String(log.stage + 1).padStart(2, '0')}</span><strong>{log.message}</strong></summary>{log.detail && <pre>{log.detail}</pre>}</details>) : <div className="studio-empty">Chưa có log ở bộ lọc này.</div>}</div></div>;
 }
 
-export function ReviewBar({ run, role, user }: { run: Run; role: string; user: string }) {
-  if (run.approval) return <div className="studio-review-bar"><div><strong>{run.approval.decision === 'approved' ? 'Đã duyệt' : run.approval.decision} v{run.approval.version} bởi {run.approval.reviewer}</strong><p>files_hash <code>{run.approval.files_hash.replace('sha256:', '').slice(0, 12)}</code> · {new Date(run.approval.at).toLocaleString('vi-VN')}{run.approval.comment && ` · “${run.approval.comment}”`}</p></div></div>;
+export type ReviewDecision = 'approve' | 'reject';
+
+/** Thư mục project Dagster local mà backend ghi ra khi duyệt (PIPELINE_DEPLOY_DIR, mặc định data/dagster_local). */
+export const deployPath = (run: Run) => `data/dagster_local/${run.plan.model}`;
+
+export function ReviewBar({ run, role, user, onReview }: { run: Run; role: string; user: string; onReview: (decision: ReviewDecision, comment: string) => Promise<void> }) {
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (run.approval) {
+    const deployed = run.status === 'DEPLOYED' ? ` · Đã ghi project Dagster vào ${deployPath(run)}` : run.status === 'DEPLOY_FAILED' ? ' · Ghi project Dagster thất bại, xem log' : '';
+    return <div className="studio-review-bar"><div><strong>{run.approval.decision === 'approved' ? 'Đã duyệt' : run.approval.decision === 'rejected' ? 'Đã từ chối' : run.approval.decision} v{run.approval.version} bởi {run.approval.reviewer}</strong><p>files_hash <code>{run.approval.files_hash.replace('sha256:', '').slice(0, 12)}</code> · {new Date(run.approval.at).toLocaleString('vi-VN')}{run.approval.comment && ` · “${run.approval.comment}”`}{deployed}</p></div></div>;
+  }
   if (run.status !== 'READY_FOR_REVIEW') return null;
   const eligible = canReview(run, role, user);
-  return <div className="studio-review-bar"><div><strong>Review v{run.version}</strong><p>{eligible ? 'Bạn đủ điều kiện duyệt run này. ' : 'Chỉ Reviewer khác người tạo mới được duyệt; mọi check phải đạt. '}API duyệt / từ chối / yêu cầu sửa chưa có ở backend (Sprint 1 · A), nên các nút đang khóa.</p></div><div className="studio-review-actions"><button className="studio-button" disabled>Yêu cầu sửa</button><button className="studio-button danger" disabled>Từ chối</button><button className="studio-button primary" disabled><Check size={15} /> Phê duyệt</button></div></div>;
+  const decide = async (decision: ReviewDecision) => { setBusy(true); try { await onReview(decision, comment.trim()); } finally { setBusy(false); } };
+  return <div className="studio-review-bar"><div><strong>Review v{run.version}</strong><p>{eligible ? `Duyệt sẽ ghi đúng bộ file này thành project Dagster local (${deployPath(run)}).` : 'Chỉ Reviewer khác người tạo mới được duyệt; mọi check phải đạt.'}</p>{eligible && <textarea value={comment} maxLength={500} onChange={e => setComment(e.target.value)} placeholder="Ghi chú (không bắt buộc)" aria-label="Ghi chú review" />}</div><div className="studio-review-actions"><button className="studio-button" disabled title="Có ở Sprint 2">Yêu cầu sửa</button><button className="studio-button danger" disabled={!eligible || busy} onClick={() => decide('reject')}>Từ chối</button><button className="studio-button primary" disabled={!eligible || busy} onClick={() => decide('approve')}><Check size={15} /> {busy ? 'Đang ghi…' : 'Phê duyệt'}</button></div></div>;
 }
