@@ -41,3 +41,87 @@ async def test_policy_requires_session_and_returns_files_and_limits(client, tmp_
         }
     finally:
         app.dependency_overrides.pop(auth.settings, None)
+
+
+FK = {
+    "name": "orders_customer_id_fkey",
+    "table": "orders",
+    "columns": ["customer_id"],
+    "ref_schema": "sales_raw",
+    "ref_table": "customers",
+    "ref_columns": ["customer_id"],
+}
+
+
+@pytest.fixture
+def catalog_api(tmp_path, monkeypatch):
+    """Đăng nhập được, Postgres giả ở biên connector (không cần DB thật)."""
+    from types import SimpleNamespace
+
+    from src.main import app
+    from src.pipeline import auth, connectors
+    from src.pipeline.settings import PipelineSettings
+
+    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+    app.dependency_overrides[auth.settings] = lambda: config
+    monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
+    monkeypatch.setattr(
+        connectors, "postgres_columns", lambda _c, schema: {"orders": [{"name": "order_id", "type": "integer"}]}
+    )
+    monkeypatch.setattr(connectors, "postgres_keys", lambda _c, schema: ({"orders": ["order_id"]}, [FK]))
+    monkeypatch.setattr(connectors, "postgres_row_estimates", lambda _c, schema: {"orders": 30})
+    yield connectors
+    app.dependency_overrides.pop(auth.settings, None)
+
+
+def _down(_config, schema):
+    from src.pipeline import postgres
+
+    raise postgres.SourceUnavailableError("Không đọc được Postgres.")
+
+
+@pytest.mark.asyncio
+async def test_catalog_lists_declared_sources_with_real_columns_and_entities(client, catalog_api, monkeypatch):
+    assert (await client.get("/api/v1/catalog")).status_code == 401
+    await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+    sales = (await client.get("/api/v1/catalog")).json()["domains"]["sales"]
+    assert sales["steward"] == "an@company.vn"
+    assert sales["sources"]["sales_pg"]["available"] is True
+    assert sales["sources"]["sales_pg"]["tables"]["orders"] == [{"name": "order_id", "type": "integer"}]
+    assert sales["sources"]["sales_pg"]["primary_keys"] == {"orders": ["order_id"]}
+    assert sales["sources"]["sales_pg"]["foreign_keys"] == [FK]
+    assert sales["sources"]["sales_api"]["available"] is False and sales["sources"]["sales_api"]["foreign_keys"] == []
+    assert sales["entities"]["order"]["tables"] == ["sales_pg.orders"]
+
+    monkeypatch.setattr(catalog_api, "postgres_columns", _down)
+    pg = (await client.get("/api/v1/catalog")).json()["domains"]["sales"]["sources"]["sales_pg"]
+    assert pg["available"] is False and pg["reason"] == "Không đọc được Postgres."
+
+
+@pytest.mark.asyncio
+async def test_source_discovery_connects_on_request(client, catalog_api, monkeypatch):
+    assert (await client.get("/api/v1/catalog/sources")).status_code == 401
+    await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+    sources = {s["ref"]: s for s in (await client.get("/api/v1/catalog/sources")).json()}
+    assert sources["sales_pg"]["supported"] is True
+    assert sources["sales_pg"]["kind"] == "postgres" and sources["sales_pg"]["location"] == "sales_raw"
+    assert sources["sales_api"]["supported"] is False
+
+    found = (await client.get("/api/v1/catalog/sources/sales_pg/objects")).json()
+    assert found["domain"] == "sales" and found["foreign_keys"] == [FK] and found["discovered_at"]
+    assert found["objects"] == [
+        {
+            "name": "orders",
+            "kind": "table",
+            "columns": [{"name": "order_id", "type": "integer"}],
+            "primary_key": ["order_id"],
+            "row_estimate": 30,
+        }
+    ]
+    missing = await client.get("/api/v1/catalog/sources/khong_co/objects")
+    assert missing.status_code == 404
+    unsupported = await client.get("/api/v1/catalog/sources/sales_api/objects")
+    assert unsupported.status_code == 422 and "Chưa có connector" in unsupported.json()["detail"]
+    monkeypatch.setattr(catalog_api, "postgres_columns", _down)
+    down = await client.get("/api/v1/catalog/sources/sales_pg/objects")
+    assert down.status_code == 503 and down.json()["detail"] == "Không đọc được Postgres."

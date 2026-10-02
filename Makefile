@@ -1,7 +1,11 @@
-.PHONY: run test lint format typecheck check clean
+.PHONY: run dagster test lint format typecheck check clean
 
 run:
 	uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+
+# Dagster UI + daemon cho các pipeline đã duyệt (cần requirements/dagster.txt)
+dagster:
+	python scripts/dagster_local.py
 
 test:
 	pytest tests/ -v

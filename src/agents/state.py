@@ -13,6 +13,7 @@ class AgentState(TypedDict, total=False):
     trigger: str  # user_request | manual_optimize | regression
     user_request: str
     catalog: dict  # đối tượng nguồn đọc được của từng domain, đưa cho planner
+    source_scope: list[dict] | None  # nguồn/bảng người dùng chọn [{source_ref, tables}]; None = mọi nguồn
     plan: dict | None
     schema_snapshot: dict  # từ resolve, theo sources[].id của plan; KHÔNG do LLM sinh
     spec: dict | None

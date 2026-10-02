@@ -4,7 +4,7 @@ Tất định, không gọi LLM. Prompt luôn kèm dữ liệu từ đây để 
 Sprint 1 chỉ đọc được nguồn postgres; nguồn khác hiện trong catalog với `available: false`.
 """
 
-from src.pipeline import postgres
+from src.pipeline import connectors, postgres
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 
@@ -16,16 +16,8 @@ class ResolveError(Exception):
 
 
 def _tables(settings: PipelineSettings, schema: str) -> dict[str, list[str]]:
-    with postgres.connection(settings) as conn:
-        rows = conn.execute(
-            "SELECT table_name, column_name FROM information_schema.columns "
-            "WHERE table_schema = %s ORDER BY table_name, ordinal_position",
-            (schema,),
-        ).fetchall()
-    tables: dict[str, list[str]] = {}
-    for table, column in rows:
-        tables.setdefault(table, []).append(column)
-    return tables
+    """Bảng → tên cột, cùng nguồn với GET /catalog (connectors): bỏ view và partition con."""
+    return {table: [c["name"] for c in cols] for table, cols in connectors.postgres_columns(settings, schema).items()}
 
 
 def catalog(policy: Policy, settings: PipelineSettings) -> dict:

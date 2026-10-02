@@ -38,8 +38,13 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
     )
 
 
-def run_agent(user_request: str, created_by: str, deps: AgentDeps, store_path: str) -> RunReport:
-    """Chạy planner → codegen → render → test_run đồng bộ, lưu và trả RunReport."""
+def run_agent(
+    user_request: str, created_by: str, deps: AgentDeps, store_path: str, sources: list[dict] | None = None
+) -> RunReport:
+    """Chạy planner → codegen → render → test_run đồng bộ, lưu và trả RunReport.
+
+    `sources` giới hạn nguồn/bảng planner được dùng ([{source_ref, tables}]); None = mọi nguồn trong danh mục.
+    """
     created_at = datetime.now(UTC)
     initial: AgentState = {
         "run_id": str(uuid4()),
@@ -47,6 +52,7 @@ def run_agent(user_request: str, created_by: str, deps: AgentDeps, store_path: s
         "created_by": created_by,
         "trigger": "user_request",
         "user_request": user_request,
+        "source_scope": sources,
         "attempts": {"spec": 0, "sql": 0},
         "llm_calls": 0,
         "error_trace": [],

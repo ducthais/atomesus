@@ -95,9 +95,16 @@ def deps(llm, policy=None, sandbox=passing_sandbox):
     )
 
 
-def run(llm, **kwargs) -> dict:
+def run(llm, scope=None, **kwargs) -> dict:
     return build_graph(deps(llm, **kwargs)).invoke(
-        {"run_id": "r1", "version": 1, "user_request": "Doanh thu theo ngày", "llm_calls": 0, "error_trace": []}
+        {
+            "run_id": "r1",
+            "version": 1,
+            "user_request": "Doanh thu theo ngày",
+            "llm_calls": 0,
+            "error_trace": [],
+            "source_scope": scope,
+        }
     )
 
 
@@ -171,6 +178,22 @@ def test_plan_must_point_at_readable_sources(source, message):
     assert state["status"] == "NEEDS_HUMAN" and message in state["error_trace"][-1]["error"]
 
 
+def test_selected_sources_narrow_what_planner_sees():
+    llm = FakeLLM(PLAN, SPEC)
+    state = run(llm, scope=[{"source_ref": "sales_pg", "tables": ["orders"]}])
+    assert state["status"] == "READY_FOR_REVIEW"
+    seen = llm.calls[0]["user"]["danh_mục"]
+    assert list(seen) == ["sales"] and list(seen["sales"]["sources"]) == ["sales_pg"]
+    assert list(seen["sales"]["sources"]["sales_pg"]["objects"]) == ["orders"]
+
+
+def test_plan_outside_selected_sources_stops():
+    plan = {**PLAN, "sources": [{"id": "orders", "source_ref": "sales_pg", "object": "orders"}]}
+    state = run(FakeLLM(plan), scope=[{"source_ref": "sales_pg", "tables": ["customers"]}])
+    assert state["status"] == "NEEDS_HUMAN" and "sales_pg.customers" in state["error_trace"][-1]["error"]
+    assert state["llm_calls"] == 0  # bảng đã chọn không tồn tại: dừng trước khi gọi LLM
+
+
 def test_llm_failure_is_infra_error():
     def broken(tier, system, user):
         raise TimeoutError("timed out")
@@ -226,6 +249,17 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
         assert (await client.post("/api/v1/agent/runs", json={"request": "x"})).status_code == 403
         await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
         assert (await client.post("/api/v1/agent/runs", json={"request": ""})).status_code == 422
+        for sources, message in [
+            ([{"source_ref": "nope"}], "không có trong domains.yml"),
+            ([{"source_ref": "sales_api"}], "chưa hỗ trợ"),
+        ]:
+            bad = await client.post("/api/v1/agent/runs", json={"request": "x", "sources": sources})
+            assert bad.status_code == 422 and message in bad.json()["detail"]
+        scoped = await client.post(
+            "/api/v1/agent/runs",
+            json={"request": "Doanh thu", "sources": [{"source_ref": "sales_pg", "tables": ["orders"]}]},
+        )
+        assert scoped.status_code == 201 and scoped.json()["plan"]["sources"][0]["source_ref"] == "sales_pg"
         response = await client.post("/api/v1/agent/runs", json={"request": "Doanh thu theo ngày"})
         assert response.status_code == 201
         report = response.json()

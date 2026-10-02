@@ -70,11 +70,39 @@ def _check_against_catalog(plan: Plan, catalog: dict) -> list[str]:
     return errors
 
 
+def _narrow(catalog: dict, scope: list[dict] | None) -> tuple[dict, list[str]]:
+    """Chỉ giữ nguồn và bảng người dùng đã chọn (`tables` rỗng = mọi bảng của nguồn).
+
+    LLM chỉ thấy danh mục đã thu hẹp, và `_check_against_catalog` chạy trên chính danh mục này,
+    nên kế hoạch trỏ ra ngoài lựa chọn của người dùng sẽ dừng ở NEEDS_HUMAN. Trả kèm các bảng đã chọn
+    nhưng không có ở nguồn.
+    """
+    if not scope:
+        return catalog, []
+    wanted = {choice["source_ref"]: set(choice.get("tables") or []) for choice in scope}
+    narrowed: dict = {}
+    missing: list[str] = []
+    for name, domain in catalog.items():
+        sources = {}
+        for ref, entry in domain["sources"].items():
+            if ref not in wanted:
+                continue
+            tables, objects = wanted[ref], entry.get("objects", {})
+            missing += [f"{ref}.{table}" for table in sorted(tables - set(objects))]
+            sources[ref] = {**entry, "objects": {t: cols for t, cols in objects.items() if not tables or t in tables}}
+        if sources:
+            narrowed[name] = {**domain, "sources": sources}
+    missing += [ref for ref in wanted if not any(ref in d["sources"] for d in narrowed.values())]
+    return narrowed, missing
+
+
 def planner(deps: AgentDeps):
     def node(state: AgentState) -> dict:
         calls = state.get("llm_calls", 0)
         try:
-            catalog = deps.catalog(deps.policy, deps.settings)
+            catalog, missing = _narrow(deps.catalog(deps.policy, deps.settings), state.get("source_scope"))
+            if missing:
+                raise StopError("NEEDS_HUMAN", "plan", "Nguồn hoặc bảng đã chọn không có: " + ", ".join(missing))
             user = json.dumps({"yêu_cầu": state["user_request"], "danh_mục": catalog}, ensure_ascii=False)
             text = call_llm(state, deps, "plan", "cheap", prompt("planner"), user)
             calls += 1

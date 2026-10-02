@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.catalog import router as catalog_router
+from src.api.orchestration import router as orchestration_router
 from src.api.policy import router as policy_router
 from src.api.routes import router
 from src.chat import router as chat_router
@@ -39,6 +41,8 @@ app.include_router(router, prefix="/api/v1")
 app.include_router(pipeline_router, prefix="/api/v1")
 app.include_router(run_reports_router, prefix="/api/v1")
 app.include_router(policy_router, prefix="/api/v1")
+app.include_router(catalog_router, prefix="/api/v1")
+app.include_router(orchestration_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 
 
