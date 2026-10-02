@@ -181,3 +181,23 @@ test('diễn giải run: các bước, chỉ số bằng lời, cảnh báo khi 
   const notAggregated = { ...byTimestamp, grain: ['payment_id'], sources: [{ ...byTimestamp.sources[0], columns: [{ from: 'payment_id', as: 'payment_id', type: 'integer' }] }] };
   assert.match(resultWarnings(notAggregated)[0], /gần như không được gộp/);
 });
+
+test('sửa mapping: đổi tên lan sang transform, kiểm tra nhập liệu, gợi ý cột mới', async () => {
+  const { applyMapping, mappingErrors, suggestColumn } = await import('../lib/catalog/mapping.ts');
+  const run = agentRun('eeee0000-0000-4000-8000-000000000005', 'DRAFT', '2026-10-01T12:00:00Z');
+  const spec = run.spec as import('../lib/postgres-api.ts').AgentSpec;
+  const columns = spec.sources[0].staging!.columns.map(c => ({ ...c, keep: true }));
+  const edited = applyMapping(spec, [{ id: 'orders', rejectIf: ['amount < 0'], columns: columns.map(c => c.as === 'ordered_at' ? { ...c, as: 'order_date' } : c) }]);
+  assert.deepEqual(edited.transform.grain, ['orders.order_date'], 'grain có alias được đổi theo');
+  const keyed = applyMapping({ ...spec, transform: { ...spec.transform, unique_key: ['ordered_at'], partition_by: 'ordered_at', tests: [{ column: 'ordered_at', test: 'not_null' }] } },
+    [{ id: 'orders', rejectIf: [], columns: columns.map(c => c.as === 'ordered_at' ? { ...c, as: 'order_date' } : c) }]);
+  assert.deepEqual([keyed.transform.unique_key, keyed.transform.partition_by, keyed.transform.tests?.[0].column], [['order_date'], 'order_date', 'order_date'], 'khóa / phân vùng / test trên gold đổi theo');
+  assert.deepEqual(edited.sources[0].staging!.reject_if, ['amount < 0']);
+  assert.equal(spec.transform.grain[0], 'orders.ordered_at', 'không sửa Spec gốc');
+  const dropped = applyMapping(spec, [{ id: 'orders', rejectIf: [], columns: columns.map(c => c.as === 'order_id' ? { ...c, keep: false } : c) }]);
+  assert.deepEqual(dropped.sources[0].staging!.columns.map(c => c.as), ['amount_vnd', 'ordered_at']);
+  assert.deepEqual(mappingErrors([{ id: 'orders', rejectIf: [], columns: [{ from: 'a', as: 'Bad Name', type: 'text', keep: true }, { from: 'b', as: 'x', type: 'integer', date_formats: ['%Y'], keep: true }] }]).length, 3);
+  assert.deepEqual(mappingErrors([{ id: 'orders', rejectIf: [], columns: [{ from: 'a', as: 'a', type: 'integer', keep: false }] }]), ['Nguồn orders: phải giữ ít nhất một cột.']);
+  assert.deepEqual(suggestColumn('Payment Date', 'timestamp with time zone'), { from: 'Payment Date', as: 'payment_date', type: 'timestamp', keep: true });
+  assert.equal(suggestColumn('amount', 'numeric(5,2)').type, 'decimal(18,2)');
+});

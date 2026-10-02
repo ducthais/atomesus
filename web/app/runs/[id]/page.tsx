@@ -1,10 +1,13 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CircleAlert, GitBranch, RotateCcw } from 'lucide-react';
-import { currentUser, getCatalog, runFiles } from '@/lib/catalog/source';
+import { currentUser, getCatalog, getComparison, runFiles } from '@/lib/catalog/source';
 import { STAGES, canReview, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
 import { RunResultView } from '../../_components/run-result';
+import { MappingEditor } from '../../_components/mapping-editor';
+import type { AgentSpec } from '@/lib/postgres-api';
+import { RunCompareView, impactNotes } from '../../_components/run-compare';
 import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, StatusBadge, Tabs, fmtDate, statusTone } from '../../_components/ui';
 
 /** Luật áp dụng khi run dừng, để người đọc biết sửa ở đâu. */
@@ -18,8 +21,8 @@ const RULES: Partial<Record<string, string>> = {
 };
 const LEVEL_LABEL = { info: 'Thông tin', success: 'Đạt', warning: 'Cảnh báo', error: 'Lỗi' } as const;
 
-export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
-  const [{ id }, { tab: rawTab }] = await Promise.all([params, searchParams]);
+export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; base?: string }> }) {
+  const [{ id }, { tab: rawTab, base: compareBase }] = await Promise.all([params, searchParams]);
   const [cat, user] = await Promise.all([getCatalog(), currentUser()]);
   const run = cat.run(id);
   if (!run || !user) notFound();
@@ -28,14 +31,24 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const files = run.fileCount;
   const passed = run.checks.filter(c => c.state === 'pass').length;
   const result = run.result ?? null;
+  // Các phiên bản khác của cùng pipeline (cùng domain + model) để so sánh.
+  const versions = result ? cat.runs.filter(r => r.domain === run.domain && r.result?.model === result.model && r.fileCount > 0)
+    .map(r => ({ id: r.id, label: `${shortId(r.id)} · ${fmtDate(r.updatedAt)}${r.status === 'DEPLOYED' ? ' (đang chạy)' : ''}` })) : [];
+  const comparable = versions.some(v => v.id !== run.id);
+  const draftSpec = run.status === 'DRAFT' && run.spec && typeof run.spec === 'object' && 'sources' in run.spec ? run.spec as AgentSpec : null;
   const tabs = [
-    ...(result ? [{ id: 'result', label: 'Kết quả' }] : []),
+    ...(draftSpec ? [{ id: 'mapping', label: 'Mapping' }] : []),
+    ...(result && !draftSpec ? [{ id: 'result', label: 'Kết quả' }] : []),
     { id: 'overview', label: 'Tổng quan' },
     { id: 'evidence', label: 'Bằng chứng', count: run.checks.length },
     ...(files ? [{ id: 'code', label: 'Code', count: files }] : []),
     { id: 'logs', label: 'Log', count: run.logs.length },
+    ...(comparable ? [{ id: 'compare', label: 'So sánh' }] : []),
   ];
   const tab = tabs.some(t => t.id === rawTab) ? rawTab! : tabs[0].id;
+  // So sánh dùng cho tab So sánh, và cho tóm tắt ảnh hưởng trong khung duyệt của run đang chờ duyệt.
+  const comparison = comparable && (tab === 'compare' || (tab === 'overview' && run.status === 'READY_FOR_REVIEW')) ? await getComparison(run.id, tab === 'compare' ? compareBase : undefined) : null;
+  const notes = comparison?.available ? impactNotes(comparison) : [];
   const base = `/runs/${shortId(run.id)}`;
   const eligible = canReview(run, user.role, user.id);
   const reviewReason = eligible ? 'Duyệt sẽ ghi đúng bộ file này thành project Dagster local.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
@@ -45,7 +58,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   return <>
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/runs">Hoạt động</Link><span>/</span><span className="mono">{shortId(run.id)}</span></nav>
     <PageHeader icon={<GitBranch size={22} />} kicker={<><StatusBadge status={run.status} /><span className="meta-tag">v{run.version}</span><span className="meta-tag">Phase {run.stage + 1}/{STAGES.length} · {STAGES[run.stage]}</span></>} title={run.title}
-      actions={<Link href={`/runs/new?request=${encodeURIComponent(run.request)}`} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link>}>
+      actions={<Link href={`/runs/new?request=${encodeURIComponent(run.request)}&parent=${run.id}`} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link>}>
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
 
@@ -56,6 +69,15 @@ export default async function RunPage({ params, searchParams }: { params: Promis
     {tab === 'result' && result && <RunResultView result={result} summary={run.summary} request={run.request}
       goldId={cat.datasets.find(d => d.name === result.goldTable && d.domain === run.domain)?.id ?? null} deployed={run.status === 'DEPLOYED'} />}
 
+    {tab === 'mapping' && draftSpec && <MappingEditor runId={run.id} spec={draftSpec} canEdit={user.role === 'Engineer' && user.id === run.owner}
+      sourceColumns={Object.fromEntries(draftSpec.sources.map(s => {
+        const table = s.table ?? s.id;
+        const dataset = cat.datasetByName(`${s.source_ref}.${table}`);
+        return [s.id, { table, sourceRef: s.source_ref, columns: (dataset?.columns ?? []).map(c => ({ name: c.name, type: c.type })) }];
+      }))} />}
+
+    {tab === 'compare' && comparison && <RunCompareView comparison={comparison} runId={run.id} versions={versions.filter(v => v.id !== run.id)} />}
+
     {tab === 'overview' && <div className="detail-grid">
       <div className="stack">
         <Panel title="Yêu cầu"><blockquote>{run.request}</blockquote>{run.summary && <><h3>Kế hoạch của agent</h3><p>{run.summary}</p></>}</Panel>
@@ -65,7 +87,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         </Panel>
       </div>
       <div className="stack">
-        {(run.status === 'READY_FOR_REVIEW' || run.approval) && <ReviewPanel runId={run.id} approval={run.approval ? { ...run.approval, reviewer: cat.personName(run.approval.reviewer) } : null} eligible={eligible} reason={reviewReason} filesHash={run.filesHash} version={run.version} />}
+        {(run.status === 'READY_FOR_REVIEW' || run.approval) && <ReviewPanel runId={run.id} approval={run.approval ? { ...run.approval, reviewer: cat.personName(run.approval.reviewer) } : null} eligible={eligible} reason={reviewReason} filesHash={run.filesHash} version={run.version}
+          impact={notes} compareHref={comparable ? `/runs/${shortId(run.id)}?tab=compare` : undefined} />}
         <Panel title="Dataset liên quan">{datasets.length ? <ul className="plain">{datasets.map(d => <li key={d.id}><Link href={`/datasets/${d.id}`} className="dataset-link"><LayerBadge layer={d.layer} /><span className="mono">{d.name}</span></Link></li>)}</ul> : <p className="muted">Run dừng trước khi tạo dataset.</p>}</Panel>
         <Panel title="Tài nguyên đã dùng">
           <div className="counters">

@@ -35,7 +35,7 @@ export function CodeViewer({ files }: { files: Record<string, string> }) {
 }
 
 /** Duyệt / từ chối đúng bộ file đã xem (files_hash). Duyệt xong backend ghi project Dagster local. */
-export function ReviewPanel({ runId, approval, eligible, reason, filesHash, version }: { runId: string; approval: Approval | null; eligible: boolean; reason: string; filesHash: string; version: number }) {
+export function ReviewPanel({ runId, approval, eligible, reason, filesHash, version, impact = [], compareHref }: { runId: string; approval: Approval | null; eligible: boolean; reason: string; filesHash: string; version: number; impact?: string[]; compareHref?: string }) {
   const [comment, setComment] = useState('');
   const [state, setState] = useState<ActionState>(null);
   const [pending, start] = useTransition();
@@ -47,6 +47,8 @@ export function ReviewPanel({ runId, approval, eligible, reason, filesHash, vers
   return <section className="panel review">
     <div className="panel-head"><h2>Review v{version}</h2><code className="muted">{hash}</code></div>
     <p className="muted">{reason}</p>
+    {impact.length > 0 && <div className="callout warn small review-impact"><Info size={15} aria-hidden /><div><strong>Ảnh hưởng nếu duyệt</strong><ul>{impact.map(n => <li key={n}>{n}</li>)}</ul>{compareHref && <a href={compareHref}>Xem so sánh chi tiết →</a>}</div></div>}
+    {!impact.length && compareHref && <p className="small"><a href={compareHref}>So sánh với phiên bản khác →</a></p>}
     {eligible && <textarea rows={3} maxLength={500} value={comment} onChange={e => setComment(e.target.value)} placeholder="Ghi chú (không bắt buộc)" aria-label="Ghi chú review" />}
     <div className="form-actions">
       <button className="button" disabled title="Có ở Sprint 2">Yêu cầu sửa</button>
@@ -124,14 +126,16 @@ function SourcePicker({ sources, selected, onChange, disabled, autoConnect }: { 
 }
 
 /** Engineer chọn nguồn và gửi yêu cầu bằng lời; agent chạy đồng bộ (~30 giây) rồi chuyển tới trang run mới. */
-export function RequestForm({ initial, canRun, examples, sources, initialTables, connected }: { initial: string; canRun: boolean; examples: { label: string; request: string }[]; sources: DeclaredSource[]; initialTables: string[]; connected: string[] }) {
+export function RequestForm({ initial, canRun, examples, sources, initialTables, connected, parent }: { initial: string; canRun: boolean; examples: { label: string; request: string }[]; sources: DeclaredSource[]; initialTables: string[]; connected: string[]; parent?: string }) {
   const [request, setRequest] = useState(initial);
   const [tables, setTables] = useState(initialTables);
   const [state, action, pending] = useActionState(submitRequest, null);
   const valid = request.trim().length > 0 && request.length <= 2000 && tables.length > 0;
   return <form className="panel request-form" action={action}>
+    {parent && <input type="hidden" name="parent" value={parent} />}
     <SourcePicker sources={sources} selected={tables} onChange={setTables} disabled={pending} autoConnect={[...new Set([...connected, ...initialTables.map(t => t.split('.')[0])])].filter(ref => sources.some(s => s.ref === ref && s.supported))} />
     <label className="field">Mô tả nhu cầu dữ liệu<textarea name="request" rows={6} maxLength={2000} value={request} readOnly={pending} onChange={e => setRequest(e.target.value)} placeholder="Ví dụ: Tính doanh thu theo ngày từ bảng đơn hàng…" /></label>
+    <label className="review-toggle"><input type="checkbox" name="review" defaultChecked disabled={pending} /><span><strong>Xem & chỉnh mapping trước khi chạy thử</strong><small className="muted">Agent dừng sau khi viết Spec để bạn kiểm tra cột nguồn → cột đầu ra, kiểu dữ liệu, luật loại dòng</small></span></label>
     <div className="examples"><span className="muted">Thử nhanh</span>{examples.map(x => <button type="button" key={x.label} className="chip" disabled={pending} onClick={() => setRequest(x.request)}>{x.label}</button>)}</div>
     <div className="form-actions">
       {!canRun ? <span className="muted">Chỉ Engineer gửi yêu cầu. Đổi người dùng ở góc trên bên phải.</span>

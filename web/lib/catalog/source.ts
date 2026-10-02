@@ -10,7 +10,7 @@ import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live
 import { DATASETS, DOMAINS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE } from './mock.ts';
 import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
 import { Catalog } from './query.ts';
-import type { AssetRunStatus, CatalogRun, DeclaredSource, Discovery, Orchestration, Person, Platform } from './types.ts';
+import type { AssetRunStatus, CatalogRun, Comparison, DeclaredSource, Discovery, Drift, Orchestration, Person, Platform } from './types.ts';
 
 export const MOCK = process.env.CATALOG_MOCK === '1';
 export const BACKEND = (process.env.PIPELINE_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -152,3 +152,64 @@ export const getOrchestration = cache(async (): Promise<Orchestration> => {
 
 /** Khóa asset Dagster của một dataset: `gold.fct_daily_sales` → `gold/fct_daily_sales`. */
 export const assetKey = (datasetName: string) => datasetName.replace('.', '/');
+
+type CompareResponse = { available: false; reason: string } | {
+  available: true;
+  base: { run_id: string; status: string; created_at: string; user_request: string; reason: string };
+  spec: { field: string; before: string[]; after: string[] }[];
+  results: {
+    rows: { before: number | null; after: number | null };
+    columns: { added: string[]; removed: string[]; type_changed: { name: string; before: string; after: string }[] };
+    metrics: { name: string; before: string | null; after: string | null; delta_pct: number | null }[];
+    checks: { id: string; before: string | null; after: string | null }[];
+    profiled: boolean;
+  };
+  files: { path: string; status: 'added' | 'removed' | 'changed' | 'same'; added_lines?: number; removed_lines?: number; before?: string | null; after?: string | null }[];
+  impact: { replaces: { run_id: string; model: string; approved_at: string } | null; shared_bronze: { model: string; run_id: string; bronze: string[] }[] };
+};
+
+/** So sánh run với phiên bản khác của cùng pipeline (mặc định: run gốc → bản đang chạy → bản trước). */
+export async function getComparison(runId: string, base?: string): Promise<Comparison> {
+  if (MOCK) return { available: false, reason: 'Chế độ mock chưa có dữ liệu so sánh phiên bản.' };
+  let c: CompareResponse;
+  try { c = await backend<CompareResponse>(`/runs/${encodeURIComponent(runId)}/compare${base ? `?base=${encodeURIComponent(base)}` : ''}`); }
+  catch (err) { return { available: false, reason: err instanceof Error ? err.message : 'Không so sánh được.' }; }
+  if (!c.available) return c;
+  return {
+    available: true,
+    base: { runId: c.base.run_id, status: c.base.status, createdAt: c.base.created_at, userRequest: c.base.user_request, reason: c.base.reason },
+    spec: c.spec,
+    results: {
+      rows: c.results.rows,
+      columns: { added: c.results.columns.added, removed: c.results.columns.removed, typeChanged: c.results.columns.type_changed },
+      metrics: c.results.metrics.map(m => ({ name: m.name, before: m.before, after: m.after, deltaPct: m.delta_pct })),
+      checks: c.results.checks, profiled: c.results.profiled,
+    },
+    files: c.files.map(f => ({ path: f.path, status: f.status, addedLines: f.added_lines, removedLines: f.removed_lines, before: f.before, after: f.after })),
+    impact: {
+      replaces: c.impact.replaces && { runId: c.impact.replaces.run_id, model: c.impact.replaces.model, approvedAt: c.impact.replaces.approved_at },
+      sharedBronze: c.impact.shared_bronze.map(s => ({ model: s.model, runId: s.run_id, bronze: s.bronze })),
+    },
+  };
+}
+
+type DriftResponse = {
+  checked_at: string;
+  pipelines: { run_id: string; model: string; domain: string; approved_at: string | null; has_type_baseline: boolean; status: 'ok' | 'warning' | 'breaking' | 'unknown';
+    sources: { source_id: string; source_ref: string; table: string; status: 'ok' | 'warning' | 'breaking' | 'unknown'; reason?: string; missing_table?: boolean; missing_columns?: string[]; type_changes?: { column: string; before: string; after: string }[] }[] }[];
+};
+
+/** Kết nối nguồn ngay lúc gọi và so với các cột pipeline đang chạy dùng (cache theo request). */
+export const getDrift = cache(async (): Promise<Drift> => {
+  if (MOCK) return { available: true, checkedAt: new Date().toISOString(), pipelines: [] };
+  try {
+    const d = await backend<DriftResponse>('/catalog/drift');
+    return {
+      available: true, checkedAt: d.checked_at,
+      pipelines: d.pipelines.map(p => ({
+        runId: p.run_id, model: p.model, domain: p.domain, approvedAt: p.approved_at, hasTypeBaseline: p.has_type_baseline, status: p.status,
+        sources: p.sources.map(s => ({ sourceId: s.source_id, sourceRef: s.source_ref, table: s.table, status: s.status, reason: s.reason, missingTable: s.missing_table, missingColumns: s.missing_columns ?? [], typeChanges: s.type_changes ?? [] })),
+      })),
+    };
+  } catch (err) { return { available: false, reason: err instanceof Error ? err.message : 'Không kiểm tra được.' }; }
+});

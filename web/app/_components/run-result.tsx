@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { ArrowDown, Database, Filter, Sparkles, Table2, TriangleAlert } from 'lucide-react';
-import { describeExpr, resultWarnings, typeLabel, type RunResult } from '@/lib/catalog/explain';
+import { describeExpr, PERIOD_LABEL, resultWarnings, typeLabel, type RunResult } from '@/lib/catalog/explain';
 import { fmtNum } from './ui';
 
 /** Tab "Kết quả" của run: pipeline làm gì (bằng lời), cảnh báo dễ hiểu, và dữ liệu kết quả mẫu. */
@@ -8,7 +8,8 @@ export function RunResultView({ result, summary, request, goldId, deployed }: { 
   const warnings = resultWarnings(result);
   const metricNames = new Set(result.metrics.map(m => m.name));
   const columns = result.sample.length ? Object.keys(result.sample[0]) : [...result.grain, ...metricNames];
-  const rowMeaning = result.grain.length ? <>mỗi dòng là một giá trị của <strong>{result.grain.join(' + ')}</strong></> : <>chỉ <strong>một dòng tổng</strong></>;
+  const grainLabel = (g: string) => result.timeGrain?.column === g ? `một ${PERIOD_LABEL[result.timeGrain.unit]} của ${g}` : g;
+  const rowMeaning = result.grain.length ? <>mỗi dòng là <strong>{result.grain.map(grainLabel).join(' + ')}</strong></> : <>chỉ <strong>một dòng tổng</strong></>;
 
   return <div className="stack">
     <section className="panel explain">

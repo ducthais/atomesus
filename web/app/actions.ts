@@ -49,6 +49,8 @@ async function remember(ref: string, on: boolean) {
 /** Engineer gửi yêu cầu bằng lời; agent chạy đồng bộ (~30 giây) rồi mở trang run vừa tạo. */
 export async function submitRequest(_: ActionState, form: FormData): Promise<ActionState> {
   const request = String(form.get('request') ?? '').trim();
+  const parent = String(form.get('parent') ?? '') || undefined;
+  const review = form.get('review') === 'on';
   if (!request) return { error: 'Nhập yêu cầu.' };
   // Mỗi ô chọn bảng gửi "<source_ref>.<bảng>"; gom theo nguồn thành [{source_ref, tables}].
   const bySource = new Map<string, string[]>();
@@ -60,7 +62,8 @@ export async function submitRequest(_: ActionState, form: FormData): Promise<Act
   const sources = [...bySource].map(([source_ref, tables]) => ({ source_ref, tables }));
   if (MOCK) return { message: `Mock: chưa gọi backend. Bản thật gửi POST /agent/runs với nguồn ${sources.map(s => `${s.source_ref} (${s.tables.join(', ')})`).join('; ')}.` };
   let report: RunReport;
-  try { report = await backend<RunReport>('/agent/runs', { method: 'POST', body: JSON.stringify({ request, sources }) }); }
+  // Xem & sửa mapping: agent chỉ lập nháp (DRAFT), Engineer duyệt mapping rồi mới chạy thử.
+  try { report = await backend<RunReport>(review ? '/agent/drafts' : '/agent/runs', { method: 'POST', body: JSON.stringify({ request, sources, parent_run_id: parent }) }); }
   catch (err) { return failure(err); }
   redirect(`/runs/${report.run_id.slice(0, 8)}`);
 }
@@ -71,7 +74,7 @@ export async function reviewRun(runId: string, decision: 'approve' | 'reject', f
   try {
     const report = await backend<RunReport>(`/runs/${encodeURIComponent(runId)}/${decision}`, { method: 'POST', body: JSON.stringify({ files_hash: filesHash || null, comment }) });
     refresh();
-    return { message: report.status === 'DEPLOYED' ? 'Đã duyệt và ghi project Dagster local.' : report.status === 'DEPLOY_FAILED' ? 'Đã duyệt nhưng ghi project Dagster thất bại, xem log.' : 'Đã ghi quyết định.' };
+    return { message: report.status === 'DEPLOYED' ? 'Đã duyệt và ghi project Dagster local. Dagster khởi động lại để nạp pipeline mới, mất khoảng 20 giây cho mỗi pipeline đang chạy (UI Dagster tạm không vào được trong lúc này), rồi xem ở mục Jobs.' : report.status === 'DEPLOY_FAILED' ? 'Đã duyệt nhưng ghi project Dagster thất bại, xem log.' : 'Đã ghi quyết định.' };
   } catch (err) {
     if (err instanceof BackendError && err.status === 409) refresh(); // run đã đổi: tải lại để thấy trạng thái mới
     return failure(err);
@@ -108,4 +111,13 @@ export async function connectForRelationships(ref: string): Promise<void> {
 export async function disconnectForRelationships(ref: string): Promise<void> {
   await remember(ref, false);
   redirect('/relationships');
+}
+
+/** Chạy tiếp bản nháp với mapping đã duyệt / sửa: backend kiểm tra lại Spec, sinh code và chạy thử. */
+export async function continueRun(runId: string, spec: unknown): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: chưa gọi backend.' };
+  let report: RunReport;
+  try { report = await backend<RunReport>(`/agent/runs/${encodeURIComponent(runId)}/continue`, { method: 'POST', body: JSON.stringify({ spec }) }); }
+  catch (err) { return failure(err); }
+  redirect(`/runs/${report.run_id.slice(0, 8)}`);
 }

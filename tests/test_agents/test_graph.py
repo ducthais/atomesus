@@ -117,7 +117,7 @@ def test_happy_path_runs_four_steps():
     assert state["llm_calls"] == 2 and state["domain"] == "sales"
     assert len(state["generated_files"]) == 5 and set(state["files"]) == set(state["generated_files"])
     assert state["files_hash"].startswith("sha256:")
-    assert [g["name"] for g in state["gates"]] == ["spec_schema", "schema_real", "ast_guard", "post_run"]
+    assert [g["name"] for g in state["gates"]] == ["spec_schema", "schema_real", "time_grain", "ast_guard", "post_run"]
 
 
 def test_invalid_spec_goes_back_to_codegen_with_specific_error():
@@ -260,6 +260,12 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
             json={"request": "Doanh thu", "sources": [{"source_ref": "sales_pg", "tables": ["orders"]}]},
         )
         assert scoped.status_code == 201 and scoped.json()["plan"]["sources"][0]["source_ref"] == "sales_pg"
+        child = await client.post(
+            "/api/v1/agent/runs", json={"request": "Doanh thu", "parent_run_id": scoped.json()["run_id"]}
+        )
+        assert child.status_code == 201 and child.json()["parent_run_id"] == scoped.json()["run_id"]
+        compared = (await client.get(f"/api/v1/runs/{child.json()['run_id']}/compare")).json()
+        assert compared["available"] is True and compared["base"]["run_id"] == scoped.json()["run_id"]
         response = await client.post("/api/v1/agent/runs", json={"request": "Doanh thu theo ngày"})
         assert response.status_code == 201
         report = response.json()

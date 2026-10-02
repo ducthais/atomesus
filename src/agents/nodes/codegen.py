@@ -64,7 +64,7 @@ def codegen(deps: AgentDeps):
 
         try:
             raw = parse_json(text)
-            result = validate_spec(raw, snapshot, deps.policy)
+            result = validate_spec(raw, snapshot, deps.policy, state["user_request"])
             errors, gates = result.errors, [gate.model_dump() for gate in result.gates]
         except LLMOutputError as exc:
             raw, result, errors, gates = None, None, [str(exc)], []

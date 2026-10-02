@@ -547,6 +547,34 @@
       "title": "Target",
       "type": "object"
     },
+    "TimeGrain": {
+      "additionalProperties": false,
+      "description": "Gộp một cột thời gian của grain theo kỳ (date_trunc), thay vì theo từng thời điểm chính xác.",
+      "properties": {
+        "column": {
+          "minLength": 1,
+          "title": "Column",
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year"
+          ],
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "column",
+        "unit"
+      ],
+      "title": "TimeGrain",
+      "type": "object"
+    },
     "Transform": {
       "additionalProperties": false,
       "properties": {
@@ -590,6 +618,17 @@
           "minItems": 1,
           "title": "Grain",
           "type": "array"
+        },
+        "time_grain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeGrain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "metrics": {
           "items": {

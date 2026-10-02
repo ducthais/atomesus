@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.codegen.render import file_hashes
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
+from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, RunReport, RunStatus
 from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report
 from src.spec.models import Spec
@@ -32,6 +33,36 @@ async def get_run(run_id: str, config: PipelineSettings = Depends(settings)) -> 
     if report is None:
         raise HTTPException(status_code=404, detail=f"Không tìm thấy run {run_id}")
     return report
+
+
+@router.get("/{run_id}/compare")
+async def compare_run(run_id: str, base: str | None = None, config: PipelineSettings = Depends(settings)) -> dict:
+    """So sánh run với một phiên bản khác của cùng pipeline và đánh giá ảnh hưởng nếu duyệt.
+
+    Không truyền `base` thì tự chọn: run cha → bản đang chạy trên Dagster → bản trước của cùng model.
+    """
+    report = get_run_report(config.store_path, run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy run {run_id}")
+    if not (report.spec or {}).get("sources"):
+        return {"available": False, "reason": "Run chưa có Spec nên chưa có gì để so sánh."}
+    reports = list_run_reports(config.store_path)
+    if base:
+        chosen, reason = get_run_report(config.store_path, base), "bản được chọn để so"
+        if chosen is None:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy run {base}")
+    else:
+        chosen, reason = pick_base(report, reports)
+    if chosen is None:
+        return {"available": False, "reason": "Chưa có phiên bản nào khác của pipeline này để so sánh."}
+    return compare(
+        report,
+        chosen,
+        reason,
+        get_run_files(config.store_path, report.run_id, report.version),
+        get_run_files(config.store_path, chosen.run_id, chosen.version),
+        reports,
+    )
 
 
 @router.get("/{run_id}/files")

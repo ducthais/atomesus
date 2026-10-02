@@ -3,6 +3,7 @@ import { ArrowRight, KeyRound, Link2 } from 'lucide-react';
 import type { Catalog } from '@/lib/catalog/query';
 import type { Dataset, Relationship } from '@/lib/catalog/types';
 import { LayerBadge } from './ui';
+import { ZoomPan } from './zoom-pan';
 
 /** Bảng vẽ trên sơ đồ: dataset trong catalog, hoặc bảng vừa đọc được khi kết nối nguồn. */
 export type ErTable = Pick<Dataset, 'id' | 'name' | 'layer' | 'columns'>;
@@ -43,7 +44,7 @@ export function ErDiagram({ tables, relationships, focus }: { tables: ErTable[];
   const byId = new Map(tables.map(t => [t.id, t]));
   const fkColumns = new Set(fks.flatMap(r => r.fromColumns.map(c => `${r.from}:${c}`)));
 
-  return <div className="er-scroll" role="figure" aria-label="Sơ đồ quan hệ giữa các bảng">
+  return <ZoomPan width={width} height={total} label="Sơ đồ quan hệ giữa các bảng">
     <div className="er" style={{ width, height: total }}>
       <svg width={width} height={total} aria-hidden>
         <defs>
@@ -88,7 +89,7 @@ export function ErDiagram({ tables, relationships, focus }: { tables: ErTable[];
         </div>;
       })}
     </div>
-  </div>;
+  </ZoomPan>;
 }
 
 export function ErLegend() {

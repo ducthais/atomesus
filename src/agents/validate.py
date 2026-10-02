@@ -3,11 +3,14 @@
 - `spec_schema`: đúng hợp đồng `Spec` và chính sách `policy/*.yml`.
 - `schema_real`: mọi cột Spec dùng có thật trong schema đã đọc ở P3; cột chuỗi ép sang ngày phải có
   `date_formats`; khóa join cùng kiểu sau staging.
+- `time_grain`: yêu cầu nói "theo ngày / tuần / tháng / quý / năm" thì cột thời gian của grain phải gộp đúng kỳ đó,
+  không gộp theo từng thời điểm chính xác (mỗi giao dịch một dòng). Chỉ chạy khi yêu cầu có nói kỳ.
 - `ast_guard` (tạm): biểu thức không chứa lệnh/hàm nguy hiểm, xem `src/codegen/guard.py`.
 
 Lỗi `spec_schema`/`schema_real` quay lại codegen kèm thông báo cụ thể (vòng spec); lỗi `ast_guard` dừng hẳn.
 """
 
+import re
 from dataclasses import dataclass, field
 
 from pydantic import ValidationError
@@ -19,6 +22,52 @@ from src.spec.models import Spec
 from src.spec.policy_check import policy_violations
 
 TEXT_TYPES = {"text", "character varying", "varchar", "character", "char"}
+
+PERIODS = {"ngày": "day", "tuần": "week", "tháng": "month", "quý": "quarter", "năm": "year"}
+PERIOD_LABEL = {unit: word for word, unit in PERIODS.items()}
+# "theo tháng", "theo từng ngày", "mỗi tuần", "từng quý"… ("hằng ngày" thường nói về lịch chạy nên không tính).
+_PERIOD = re.compile(r"(?<!\w)(?:theo|mỗi|từng)\s+(?:từng\s+|mỗi\s+)?(ngày|tuần|tháng|quý|năm)(?!\w)", re.IGNORECASE)
+_PERIOD_EN = re.compile(
+    r"(?<![a-z])(?:daily|weekly|monthly|quarterly|yearly|per (day|week|month|quarter|year))(?![a-z])", re.IGNORECASE
+)
+_PERIOD_EN_WORDS = {"daily": "day", "weekly": "week", "monthly": "month", "quarterly": "quarter", "yearly": "year"}
+
+
+def requested_period(request: str | None) -> str | None:
+    """Kỳ thời gian người dùng muốn xem kết quả (day/week/month/quarter/year), hoặc None nếu không nói."""
+    if not request:
+        return None
+    if match := _PERIOD.search(request):
+        return PERIODS[match.group(1).lower()]
+    if match := _PERIOD_EN.search(request):
+        return match.group(1).lower() if match.group(1) else _PERIOD_EN_WORDS[match.group(0).lower()]
+    return None
+
+
+def _time_grain(spec: Spec, unit: str) -> list[str]:
+    """Grain có gộp cột thời gian đúng kỳ người dùng yêu cầu không."""
+    t = spec.transform
+    outputs = {s.id: s.outputs for s in spec.sources}
+    kinds = {g: outputs[g.rpartition(".")[0] or t.from_].get(g.rpartition(".")[2]) for g in t.grain}
+    times = [g for g, kind in kinds.items() if kind in ("date", "timestamp")]
+    label = PERIOD_LABEL[unit]
+    if not times:
+        return [
+            f"Yêu cầu muốn xem theo {label} nhưng grain {t.grain} không có cột thời gian (date/timestamp); "
+            f'thêm cột thời gian vào grain và đặt transform.time_grain = {{"column": "<cột đó>", "unit": "{unit}"}}'
+        ]
+    if t.time_grain:
+        if t.time_grain.unit == unit:
+            return []
+        return [
+            f"Yêu cầu muốn xem theo {label} nhưng transform.time_grain.unit là '{t.time_grain.unit}'; đổi thành '{unit}'"
+        ]
+    if unit == "day" and all(kinds[g] == "date" for g in times):
+        return []
+    return [
+        f"Yêu cầu muốn xem theo {label} nhưng grain {times} đang gộp theo từng thời điểm chính xác "
+        f'(mỗi giao dịch một dòng); đặt transform.time_grain = {{"column": "{times[0]}", "unit": "{unit}"}}'
+    ]
 
 
 @dataclass
@@ -84,7 +133,23 @@ def _schema_real(spec: Spec, snapshot: dict) -> list[str]:
     return errors
 
 
-def validate_spec(raw: dict, snapshot: dict, policy: Policy) -> Validation:
+def _used_columns(spec: Spec, snapshot: dict) -> dict[str, dict[str, str]]:
+    """Mốc schema của pipeline: với mỗi nguồn, các cột Spec đọc và kiểu của chúng lúc kiểm tra.
+
+    Dùng để phát hiện schema nguồn đổi về sau (cột bị xóa / đổi tên / đổi kiểu), xem src/run_report/drift.py.
+    """
+    by_table = {(item["source_ref"], item["table"]): item["columns"] for item in snapshot.values()}
+    result = {}
+    for source in spec.sources:
+        columns = by_table.get((source.source_ref, getattr(source, "table", None)), {})
+        used = {c.from_ for c in source.staging.columns} | set(source.primary_key)
+        if source.cursor_field:
+            used.add(source.cursor_field)
+        result[source.id] = {name: columns[name] for name in sorted(used) if name in columns}
+    return result
+
+
+def validate_spec(raw: dict, snapshot: dict, policy: Policy, request: str | None = None) -> Validation:
     try:
         spec = Spec.model_validate(raw)
     except ValidationError as exc:
@@ -102,11 +167,26 @@ def validate_spec(raw: dict, snapshot: dict, policy: Policy) -> Validation:
             name="schema_real",
             result="fail" if errors else "pass",
             detail="; ".join(errors) or "Mọi cột Spec dùng có ở nguồn",
-            observed={"sources": len(spec.sources)},
+            observed={"sources": len(spec.sources), "columns": _used_columns(spec, snapshot)},
         )
     )
     if errors:
         return Validation(spec, gates, errors)
+    if unit := requested_period(request):
+        errors = _time_grain(spec, unit)
+        gates.append(
+            GateResult(
+                name="time_grain",
+                result="fail" if errors else "pass",
+                detail="; ".join(errors) or f"Kết quả gộp theo {PERIOD_LABEL[unit]} đúng như yêu cầu",
+                observed={
+                    "requested": unit,
+                    "time_grain": spec.transform.time_grain and spec.transform.time_grain.unit,
+                },
+            )
+        )
+        if errors:
+            return Validation(spec, gates, errors)
     violations = expression_violations(spec)
     gates.append(
         GateResult(

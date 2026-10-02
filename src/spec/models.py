@@ -148,6 +148,16 @@ class ColumnTest(_Spec):
     test: Literal["not_null", "unique", "not_negative"]
 
 
+TIME_UNITS = ("day", "week", "month", "quarter", "year")
+
+
+class TimeGrain(_Spec):
+    """Gộp một cột thời gian của grain theo kỳ (date_trunc), thay vì theo từng thời điểm chính xác."""
+
+    column: str = Field(min_length=1)  # đúng một phần tử của grain
+    unit: Literal["day", "week", "month", "quarter", "year"]
+
+
 class Transform(_Spec):
     model_name: str = Field(pattern=IDENTIFIER)
     from_: str = Field(alias="from", pattern=IDENTIFIER)
@@ -155,6 +165,7 @@ class Transform(_Spec):
     materialization: Literal["view", "table", "incremental"]
     unique_key: list[str] = Field(default_factory=list)
     grain: list[str] = Field(min_length=1)
+    time_grain: TimeGrain | None = None
     metrics: list[Metric] = Field(min_length=1)
     filters: list[str] = Field(default_factory=list)
     partition_by: str | None = None
@@ -252,6 +263,16 @@ def _check_column_refs(transform: Transform, outputs: dict[str, dict[str, str]])
         elif grain not in outputs[transform.from_]:
             raise ValueError(
                 f"grain '{grain}' không phải cột đầu ra staging (đang có: {sorted(outputs[transform.from_])})"
+            )
+    if transform.time_grain:
+        column = transform.time_grain.column
+        if column not in transform.grain:
+            raise ValueError(f"time_grain.column '{column}' phải là một phần tử của grain {transform.grain}")
+        source_id, _, name = column.rpartition(".")
+        kind = outputs[source_id or transform.from_].get(name)
+        if kind not in ("date", "timestamp"):
+            raise ValueError(
+                f"time_grain.column '{column}' phải là cột staging kiểu date hoặc timestamp (đang là {kind})"
             )
     for expression in [m.expr for m in transform.metrics] + transform.filters:
         for source_id, column in _refs(expression):

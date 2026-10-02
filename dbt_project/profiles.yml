@@ -7,3 +7,6 @@ p045:
       path: "{{ env_var('WAREHOUSE_PATH') }}"
       schema: main
       threads: 1
+      # Ép timestamptz → timestamp theo UTC (giống Postgres), không theo múi giờ của máy chạy.
+      settings:
+        TimeZone: UTC

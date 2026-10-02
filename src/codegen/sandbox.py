@@ -229,6 +229,33 @@ def _dbt_test_check(results: list[dict]) -> Check:
     )
 
 
+NUMERIC_TYPES = ("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "DECIMAL", "DOUBLE", "FLOAT", "REAL")
+
+
+def _gold_profile(db, table: str) -> list[dict]:
+    """Hồ sơ từng cột của bảng gold: số giá trị khác rỗng; cột số thêm tổng, min, max.
+
+    Đủ để so hai phiên bản của cùng một pipeline (tổng chỉ số trước → sau) mà không giữ cả bảng.
+    """
+    columns = db.execute(f"describe {table}").fetchall()
+    parts, numeric = [], []
+    for name, kind, *_ in columns:
+        quoted = '"' + name.replace('"', '""') + '"'
+        parts.append(f"count({quoted})")
+        if kind.upper().startswith(NUMERIC_TYPES):
+            numeric.append(name)
+            parts += [f"sum({quoted})", f"min({quoted})", f"max({quoted})"]
+    values = iter(db.execute(f"select {', '.join(parts)} from {table}").fetchone())
+    text = lambda value: None if value is None else str(value)  # noqa: E731
+    profile = []
+    for name, kind, *_ in columns:
+        entry = {"name": name, "type": kind, "non_null": next(values)}
+        if name in numeric:
+            entry |= {"sum": text(next(values)), "min": text(next(values)), "max": text(next(values))}
+        profile.append(entry)
+    return profile
+
+
 def _gold_preview(db, spec: Spec) -> dict:
     table = f'gold."{spec.transform.model_name}"'
     cursor = db.execute(f"select * from {table} order by 1 limit {SAMPLE_ROWS}")
@@ -237,7 +264,11 @@ def _gold_preview(db, spec: Spec) -> dict:
         {key: None if value is None else str(value) for key, value in zip(columns, row, strict=True)}
         for row in cursor.fetchall()
     ]
-    return {"gold_rows": db.execute(f"select count(*) from {table}").fetchone()[0], "gold_samples": rows}
+    return {
+        "gold_rows": db.execute(f"select count(*) from {table}").fetchone()[0],
+        "gold_samples": rows,
+        "gold_profile": _gold_profile(db, table),
+    }
 
 
 def _post_run(checks: list[Check], preview: dict) -> tuple[GateResult, list[str]]:

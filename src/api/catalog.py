@@ -7,6 +7,8 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.policy.models import Policy
+from src.run_report.drift import detect, live_pipelines
+from src.run_report.store import list_run_reports
 
 router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(current_user)])
 
@@ -105,3 +107,29 @@ def source_objects(ref: str, config: PipelineSettings = Depends(settings)) -> di
         "discovered_at": datetime.now(UTC).isoformat(),
         **found,
     }
+
+
+@router.get("/drift")
+def schema_drift(config: PipelineSettings = Depends(settings)) -> dict:
+    """Pipeline đang chạy nào bị ảnh hưởng vì schema nguồn đổi (bảng / cột bị xóa, đổi tên, đổi kiểu).
+
+    Kết nối từng nguồn một lần lúc gọi; nguồn không đọc được thì pipeline dùng nó có trạng thái `unknown`.
+    """
+    declared = {r: decl for domain in _policy().domains.domains.values() for r, decl in domain.sources.items()}
+    cache: dict[str, dict | Exception] = {}
+
+    def tables_of(ref: str) -> dict[str, dict[str, str]]:
+        if ref not in cache:
+            try:
+                if ref not in declared:
+                    raise connectors.UnsupportedSourceError(f"Nguồn '{ref}' không còn trong domains.yml.")
+                found = connectors.discover(declared[ref], config)
+                cache[ref] = {o["name"]: {c["name"]: c["type"] for c in o["columns"]} for o in found["objects"]}
+            except (connectors.UnsupportedSourceError, postgres.SourceUnavailableError) as exc:
+                cache[ref] = exc
+        if isinstance(cache[ref], Exception):
+            raise cache[ref]
+        return cache[ref]
+
+    pipelines = [detect(report, tables_of) for report in live_pipelines(list_run_reports(config.store_path))]
+    return {"checked_at": datetime.now(UTC).isoformat(), "pipelines": pipelines}

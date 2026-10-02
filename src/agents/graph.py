@@ -28,13 +28,19 @@ def _then(next_node: str):
     return route
 
 
-def _after_codegen(state: AgentState) -> str:
-    if state.get("status") not in RUNNING:
-        return END
-    return "codegen" if state.get("feedback") else "render"  # còn lỗi → vòng spec
+def _after_codegen(stop_after_spec: bool):
+    def route(state: AgentState) -> str:
+        if state.get("status") not in RUNNING:
+            return END
+        if state.get("feedback"):
+            return "codegen"  # còn lỗi → vòng spec
+        return END if stop_after_spec else "render"
+
+    return route
 
 
-def build_graph(deps: AgentDeps):
+def build_graph(deps: AgentDeps, stop_after_spec: bool = False):
+    """`stop_after_spec`: dừng khi Spec đã hợp lệ (bản nháp để Engineer xem và sửa mapping trước khi chạy)."""
     graph = StateGraph(AgentState)
     graph.add_node("planner", planner(deps))
     graph.add_node("codegen", codegen(deps))
@@ -42,7 +48,7 @@ def build_graph(deps: AgentDeps):
     graph.add_node("test_run", sandbox_run_node(deps))
     graph.set_entry_point("planner")
     graph.add_conditional_edges("planner", _then("codegen"), ["codegen", END])
-    graph.add_conditional_edges("codegen", _after_codegen, ["codegen", "render", END])
+    graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "render", END])
     graph.add_conditional_edges("render", _then("test_run"), ["test_run", END])
     graph.add_edge("test_run", END)
     return graph.compile()

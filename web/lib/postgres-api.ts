@@ -17,9 +17,12 @@ export type AgentSpec = {
     primary_key: string[]; cursor_field: string | null; write_disposition: string; target: { table: string };
     staging?: { columns: { from: string; as: string; type: string }[]; reject_if?: string[] } }[];
   transform: { model_name: string; grain: string[]; metrics: { name: string; expr: string }[]; filters: string[];
-    joins?: { source: string; type: string; on: [string, string][] }[] };
+    joins?: { source: string; type: string; on: [string, string][] }[];
+    unique_key?: string[]; partition_by?: string | null; tests?: { column: string; test: string }[];
+    time_grain?: { column: string; unit: TimeUnit } | null };
   schedule: { cron: string };
 };
+export type TimeUnit = 'day' | 'week' | 'month' | 'quarter' | 'year';
 export type AgentPlan = {
   summary?: string; model_name?: string; schedule?: string; question?: string | null;
   sources: { id: string; source_ref: string; object: string }[]; metrics?: { name: string; definition?: string }[];

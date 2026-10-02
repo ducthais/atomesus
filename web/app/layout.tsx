@@ -9,7 +9,7 @@ import './globals.css';
 import { BACKEND, currentUser, getCatalog, listUsers } from '@/lib/catalog/source';
 import { LoginScreen, Sidebar, UserSwitch } from './_components/shell';
 
-export const metadata: Metadata = { title: 'Data Catalog · VSF', description: 'Khám phá dataset, lineage, chất lượng và pipeline sinh ra chúng.' };
+export const metadata: Metadata = { title: 'Atomesus · VSF', description: 'Khám phá dataset, lineage, chất lượng và pipeline sinh ra chúng.' };
 
 export default async function Layout({ children }: { children: React.ReactNode }) {
   const user = await currentUser();

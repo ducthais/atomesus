@@ -66,7 +66,7 @@ export type Activity = { id: string; at: string; actor: string; action: string; 
 export type PolicyFile = { name: string; description: string; content: string };
 
 /** `files`: đường dẫn → nội dung. Mock có sẵn; backend để trống, đọc nội dung qua `runFiles()` (GET /runs/{id}/files). */
-export type CatalogRun = Run & { files: Record<string, string>; result?: RunResult | null };
+export type CatalogRun = Run & { files: Record<string, string>; result?: RunResult | null; spec?: unknown };
 
 export type LineageGraph = { nodes: Dataset[]; edges: { from: string; to: string }[]; focus?: string };
 
@@ -116,3 +116,29 @@ export type AssetRunStatus = {
   schedule: { name: string; cron: string; timezone: string; running: boolean; nextTickAt: string | null } | null;
 };
 export type Orchestration = { available: boolean; url: string; reason?: string; assets: Record<string, AssetRunStatus> };
+
+/** Một file sinh ra so giữa hai phiên bản (GET /runs/{id}/compare). */
+export type FileChange = { path: string; status: 'added' | 'removed' | 'changed' | 'same'; addedLines?: number; removedLines?: number; before?: string | null; after?: string | null };
+/** So sánh run với một phiên bản khác của cùng pipeline, kèm ảnh hưởng nếu duyệt. */
+export type Comparison = { available: false; reason: string } | {
+  available: true;
+  base: { runId: string; status: string; createdAt: string; userRequest: string; reason: string };
+  spec: { field: string; before: string[]; after: string[] }[];
+  results: {
+    rows: { before: number | null; after: number | null };
+    columns: { added: string[]; removed: string[]; typeChanged: { name: string; before: string; after: string }[] };
+    metrics: { name: string; before: string | null; after: string | null; deltaPct: number | null }[];
+    checks: { id: string; before: string | null; after: string | null }[];
+    profiled: boolean;
+  };
+  files: FileChange[];
+  impact: { replaces: { runId: string; model: string; approvedAt: string } | null; sharedBronze: { model: string; runId: string; bronze: string[] }[] };
+};
+
+/** Schema nguồn của một pipeline đang chạy so với lúc duyệt (GET /catalog/drift). */
+export type PipelineDrift = {
+  runId: string; model: string; domain: string; approvedAt: string | null; hasTypeBaseline: boolean;
+  status: 'ok' | 'warning' | 'breaking' | 'unknown';
+  sources: { sourceId: string; sourceRef: string; table: string; status: PipelineDrift['status']; reason?: string; missingTable?: boolean; missingColumns: string[]; typeChanges: { column: string; before: string; after: string }[] }[];
+};
+export type Drift = { available: true; checkedAt: string; pipelines: PipelineDrift[] } | { available: false; reason: string };

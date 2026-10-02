@@ -20,7 +20,7 @@ const NAV = [
 export function Sidebar({ reviewCount, live, backend }: { reviewCount: number; live: boolean; backend: string }) {
   const path = usePathname();
   return <aside className="sidebar">
-    <Link href="/" className="brand"><span className="brand-mark"><Layers3 size={18} aria-hidden /></span><span><strong>Data Catalog</strong><small>VSF · Pipeline Studio</small></span></Link>
+    <Link href="/" className="brand"><span className="brand-mark"><Layers3 size={18} aria-hidden /></span><span><strong>Atomesus</strong><small>VSF · Pipeline Studio</small></span></Link>
     <nav aria-label="Điều hướng chính">{NAV.map(({ href, label, icon: Icon, match }) => <Link key={href} href={href} aria-current={match(path) ? 'page' : undefined}><Icon size={17} aria-hidden />{label}{href === '/runs' && reviewCount > 0 && <span className="nav-count" title="Run chờ duyệt">{reviewCount}</span>}</Link>)}</nav>
     <Link href="/runs/new" className="button primary sidebar-new" aria-current={path === '/runs/new' ? 'page' : undefined}><Plus size={16} aria-hidden /> Yêu cầu pipeline</Link>
     <div className="sidebar-foot">{live
@@ -50,7 +50,7 @@ export function LoginScreen({ users, error }: { users: Person[]; error?: string 
   return <main className="login">
     <div className="login-card">
       <span className="brand-mark"><Layers3 size={20} aria-hidden /></span>
-      <h1>Data Catalog</h1>
+      <h1>Atomesus</h1>
       <p className="muted">Chọn người dùng demo (bị khóa khi backend chạy APP_ENV=production). Engineer tạo pipeline; Reviewer duyệt.</p>
       <div className="login-users">{users.map(u => <button key={u.id} className="button" disabled={pending} onClick={() => start(async () => setMessage((await signIn(u.id))?.error ?? ''))}>
         <LogIn size={15} aria-hidden /><strong>{u.name}</strong><span className="muted">{u.role}</span></button>)}</div>

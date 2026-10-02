@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Activity, Plus } from 'lucide-react';
-import { getCatalog } from '@/lib/catalog/source';
+import { getCatalog, getDrift } from '@/lib/catalog/source';
+import { DriftPanel } from '../_components/drift';
 import { RUNNING, STAGES, shortId } from '@/lib/studio';
 import type { CatalogRun } from '@/lib/catalog/types';
 import { Empty, LayerBadge, PageHeader, Person, StatusBadge, fmtDate, statusTone } from '../_components/ui';
@@ -15,7 +16,8 @@ const FILTERS: { id: string; label: string; test: (r: CatalogRun) => boolean }[]
 
 export default async function RunsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const { status } = await searchParams;
-  const cat = await getCatalog();
+  const [cat, drift] = await Promise.all([getCatalog(), getDrift()]);
+  const goldIds = Object.fromEntries(cat.datasets.filter(d => d.layer === 'gold').map(d => [`${d.domain}:${d.name.split('.').at(-1)}`, d.id]));
   const [runs, policy] = [cat.runs, cat.policy];
   const filter = FILTERS.find(f => f.id === status) ?? FILTERS[0];
   const shown = runs.filter(filter.test);
@@ -30,6 +32,7 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
     </PageHeader>
     <div className="budget"><span>Chi phí warehouse hôm nay</span><strong className="mono">${spent.toFixed(4)} / ${policy.limits.max_usd_per_day.toFixed(2)}</strong>
       <div className="meter" role="meter" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label="Đã dùng so với trần ngày"><span style={{ width: `${Math.max(pct, 1)}%` }} /></div><small className="muted">Trần per_day.max_usd trong budgets.yml</small></div>
+    <DriftPanel drift={drift} goldIds={goldIds} />
     <nav className="segmented" aria-label="Lọc theo trạng thái">{FILTERS.map(f => <Link key={f.id} href={f.id === 'all' ? '/runs' : `/runs?status=${f.id}`} aria-current={f === filter ? 'page' : undefined} scroll={false}>{f.label}<span className="count">{runs.filter(f.test).length}</span></Link>)}</nav>
     {shown.length ? <section className="panel flush"><div className="table-scroll"><table>
       <thead><tr><th>Yêu cầu</th><th>Dataset liên quan</th><th>Trạng thái</th><th>Phase dừng</th><th>Chi phí</th><th>Cập nhật</th></tr></thead>

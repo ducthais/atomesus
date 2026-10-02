@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowRight, CircleAlert, KeyRound, Table2, Workflow } from 'lucide-react';
 import { LAYER_LABEL, PLATFORM_LABEL } from '@/lib/catalog/query';
-import { assetKey, currentUser, getCatalog, getOrchestration } from '@/lib/catalog/source';
+import { assetKey, currentUser, getCatalog, getDrift, getOrchestration } from '@/lib/catalog/source';
+import { DriftBadge, driftLines } from '../../_components/drift';
 import type { Dataset } from '@/lib/catalog/types';
 import { shortId } from '@/lib/studio';
 import { Lineage } from '../../_components/lineage';
@@ -23,13 +24,18 @@ function SampleTable({ rows }: { rows: Record<string, string | null>[] }) {
 
 export default async function DatasetPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
   const [{ id }, { tab: rawTab }] = await Promise.all([params, searchParams]);
-  const [cat, user, orchestration] = await Promise.all([getCatalog(), currentUser(), getOrchestration()]);
+  const [cat, user, orchestration, drift] = await Promise.all([getCatalog(), currentUser(), getOrchestration(), getDrift()]);
   const dataset = cat.dataset(decodeURIComponent(id));
   if (!dataset || !user) notFound();
   const lineage = cat.lineage(dataset.id);
   const managed = dataset.layer !== 'source';
   const key = assetKey(dataset.name);
   const runStatus = orchestration.assets[key];
+  // Pipeline đang chạy bị ảnh hưởng vì schema nguồn đổi: bảng gold của pipeline đó, hoặc bảng nguồn nó đọc.
+  const table = dataset.name.split('.').at(-1);
+  const drifted = drift.available ? drift.pipelines.filter(p => p.status !== 'ok' && p.domain === dataset.domain && (
+    (dataset.layer === 'gold' && p.model === table) || (dataset.layer === 'staging' && table?.startsWith(`stg_${p.model}__`))
+    || (dataset.layer === 'source' && p.sources.some(s => s.sourceRef === dataset.sourceRef && s.table === table)))) : [];
   const relations = cat.relationsOf(dataset.id);
   const runs = cat.runsForDataset(dataset);
   const upstream = dataset.upstream.map(u => cat.dataset(u)).filter(d => d !== null);
@@ -60,6 +66,9 @@ export default async function DatasetPage({ params, searchParams }: { params: Pr
     </PageHeader>
     {dataset.unavailable && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>{dataset.unavailable} Dataset vẫn có trong catalog vì được khai báo trong <Link href="/policy">domains.yml</Link>.</span></div>}
 
+    {drifted.map(p => <div key={p.runId} className={`callout ${p.status === 'breaking' ? 'bad' : 'warn'}`} role="alert"><CircleAlert size={16} aria-hidden />
+      <div><strong>Schema nguồn đổi · pipeline gold.{p.model}</strong> <DriftBadge status={p.status} /><ul className="drift-lines">{driftLines(p).map(l => <li key={l}>{l}</li>)}</ul>
+        <Link href="/runs" className="small">Xem tất cả ở trang Hoạt động →</Link></div></div>)}
     <Tabs base={base} active={tab} tabs={tabs} />
 
     {tab === 'overview' && <div className="detail-grid">

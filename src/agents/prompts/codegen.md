@@ -17,6 +17,7 @@ Bạn là kỹ sư dữ liệu viết Spec cho pipeline ELT (bước P4). Spec l
 - `sources[].id` lấy đúng `id` trong kế hoạch. `transform.from` là `id` của nguồn chính; mọi nguồn khác xuất hiện đúng một lần trong `transform.joins`. Một nguồn thì `joins: []`.
 - `transform` chỉ dùng cột đầu ra staging. Khi có từ hai nguồn, viết `<id>.<cột>` trong `grain`, `metrics`, `filters`.
 - `metrics[].expr` chỉ chứa hàm tổng hợp (`SUM`, `COUNT`, `AVG`, `MIN`, `MAX`, `COUNT(DISTINCT ...)`) và tên cột. Không dùng subquery, `;`, comment, ký tự `{` `}`.
+- **Gộp theo kỳ thời gian**: yêu cầu nói "theo ngày / tuần / tháng / quý / năm" thì đưa cột thời gian vào `grain` và đặt `transform.time_grain = {"column": "<phần tử đó của grain>", "unit": "day|week|month|quarter|year"}`; gold sẽ gộp theo ngày đầu kỳ. **Không** để cột `timestamp` trong `grain` mà thiếu `time_grain`, vì như vậy mỗi giao dịch thành một dòng. Không nói kỳ thì `time_grain: null`.
 - `materialization`: `table` mặc định; `incremental` bắt buộc có `unique_key`. `unique_key`, `partition_by`, `tests[].column` là cột của gold (tên trong grain hoặc tên metric).
 - `tests`: `not_null` và `unique` cho cột độ hạt khi một dòng gold ứng với một giá trị; `not_negative` cho chỉ số tiền/đếm.
 - `schedule.cron` lấy từ kế hoạch. `estimates`: `{"bytes_scanned": 0, "usd": 0.0, "latency_sec": 0}`.

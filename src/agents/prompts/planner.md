@@ -20,7 +20,7 @@ Quy tắc:
   "joins": [
     {"left": "<id>.<cột>", "right": "<id>.<cột>", "type": "left|inner"}
   ],
-  "grain": ["<cột thể hiện độ hạt, ví dụ ngày đặt hàng>"],
+  "grain": ["<cột thể hiện độ hạt, ví dụ ngày đặt hàng; nếu gộp theo kỳ thì ghi rõ, ví dụ: payment_date theo tháng>"],
   "metrics": [{"name": "<snake_case>", "definition": "<cách tính bằng lời>"}],
   "filters": ["<điều kiện lọc bằng lời, nếu có>"],
   "schedule": "0 2 * * *",

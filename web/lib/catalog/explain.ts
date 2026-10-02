@@ -2,7 +2,7 @@
  * Diễn giải một run cho người không đọc code: pipeline đọc gì, làm sạch thế nào, bảng kết quả mỗi dòng là gì,
  * và các dấu hiệu kết quả khó dùng. Chỉ dựa trên Spec và số đo trong RunReport (hàm thuần, có test).
  */
-import type { AgentSpec, RunReport } from '../postgres-api.ts';
+import type { AgentSpec, RunReport, TimeUnit } from '../postgres-api.ts';
 
 export type ResultSource = {
   id: string; table: string; sourceRef: string;
@@ -11,7 +11,7 @@ export type ResultSource = {
 };
 export type RunResult = {
   model: string; goldTable: string; goldRows: number | null; sample: Record<string, string | null>[];
-  grain: string[]; metrics: { name: string; expr: string }[]; filters: string[];
+  grain: string[]; timeGrain: { column: string; unit: TimeUnit } | null; metrics: { name: string; expr: string }[]; filters: string[];
   joins: { source: string; type: string; on: [string, string][] }[];
   sources: ResultSource[]; tests: { passed: number; failed: number } | null;
 };
@@ -29,7 +29,7 @@ export function runResult(report: RunReport): RunResult | null {
   return {
     model: s.transform.model_name, goldTable: `gold.${s.transform.model_name}`,
     goldRows: num(post?.observed.gold_rows), sample: (post?.observed.gold_samples as Record<string, string | null>[] | undefined) ?? [],
-    grain: s.transform.grain.map(bare), metrics: s.transform.metrics, filters: s.transform.filters, joins: s.transform.joins ?? [],
+    grain: s.transform.grain.map(bare), timeGrain: s.transform.time_grain ? { column: bare(s.transform.time_grain.column), unit: s.transform.time_grain.unit } : null, metrics: s.transform.metrics, filters: s.transform.filters, joins: s.transform.joins ?? [],
     tests: dbt ? { passed: Number(dbt.observed.passed ?? 0), failed: Number(dbt.observed.failed ?? 0) } : null,
     sources: s.sources.map(src => {
       const rows = report.checks.find(c => c.name === 'row_reconcile' && c.source_id === src.id)?.observed ?? {};
@@ -46,6 +46,8 @@ export function runResult(report: RunReport): RunResult | null {
 const TYPE_LABEL: Record<string, string> = {
   integer: 'số nguyên', bigint: 'số nguyên', double: 'số thực', varchar: 'chuỗi', boolean: 'đúng / sai', date: 'ngày', timestamp: 'thời điểm (ngày giờ)',
 };
+export const PERIOD_LABEL: Record<TimeUnit, string> = { day: 'ngày', week: 'tuần', month: 'tháng', quarter: 'quý', year: 'năm' };
+
 export const typeLabel = (type: string) => type.startsWith('decimal') ? 'số thập phân' : TYPE_LABEL[type] ?? type;
 
 /** Biểu thức chỉ số → tiếng Việt. Không nhận ra thì trả null để giao diện hiện nguyên biểu thức. */
@@ -67,7 +69,7 @@ export function describeExpr(expr: string): string | null {
 export function resultWarnings(result: RunResult): string[] {
   const warnings: string[] = [];
   const types = new Map(result.sources.flatMap(s => s.columns.map(c => [c.as, c.type] as const)));
-  const timestamps = result.grain.filter(g => types.get(g) === 'timestamp');
+  const timestamps = result.grain.filter(g => types.get(g) === 'timestamp' && result.timeGrain?.column !== g);
   if (timestamps.length) {
     warnings.push(`Bảng kết quả đang gộp theo ${timestamps.join(', ')} là thời điểm chính xác đến từng giây, nên gần như mỗi giao dịch thành một dòng riêng. Muốn xem theo ngày hoặc tháng, hãy ghi rõ trong yêu cầu, ví dụ "doanh thu theo tháng".`);
   }
