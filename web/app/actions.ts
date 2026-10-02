@@ -7,6 +7,7 @@ import type { ColumnRule, RunReport } from '@/lib/postgres-api';
 import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, discoverObjects } from '@/lib/catalog/source';
 import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections';
 import type { Discovery } from '@/lib/catalog/types';
+import { toReconcile, type Reconcile } from '@/lib/catalog/explain';
 
 export type ActionState = { error?: string; message?: string } | null;
 const failure = (err: unknown): ActionState => ({ error: err instanceof Error ? err.message : 'Thao tác thất bại. Vui lòng thử lại.' });
@@ -46,7 +47,7 @@ async function remember(ref: string, on: boolean) {
   else jar.delete(CONNECTIONS_COOKIE);
 }
 
-/** Engineer gửi yêu cầu bằng lời; agent chạy đồng bộ (~30 giây) rồi mở trang run vừa tạo. */
+/** Engineer gửi yêu cầu bằng lời; backend ghi run và trả ngay, agent chạy nền, trang run hiện tiến độ. */
 export async function submitRequest(_: ActionState, form: FormData): Promise<ActionState> {
   const request = String(form.get('request') ?? '').trim();
   const parent = String(form.get('parent') ?? '') || undefined;
@@ -111,6 +112,19 @@ export async function connectForRelationships(ref: string): Promise<void> {
 export async function disconnectForRelationships(ref: string): Promise<void> {
   await remember(ref, false);
   redirect('/relationships');
+}
+
+export type ReconcileState = { available: true; checkedAt: string; runId: string; reconcile: Reconcile } | { available: false; reason: string };
+
+/** Đối chiếu lại bảng gold Dagster đang giữ với nguồn, ngay lúc bấm (chỉ đọc). */
+export async function reconcileDataset(domain: string, model: string): Promise<ReconcileState> {
+  if (MOCK) return { available: false, reason: 'Mock: chưa gọi backend.' };
+  try {
+    const r = await backend<{ available: boolean; reason?: string; checked_at: string; run_id: string; matched?: boolean; observed?: Record<string, unknown> }>(
+      `/catalog/datasets/${encodeURIComponent(domain)}/${encodeURIComponent(model)}/reconcile`, { method: 'POST' });
+    if (!r.available || !r.observed) return { available: false, reason: r.reason ?? 'Không đối chiếu được.' };
+    return { available: true, checkedAt: r.checked_at, runId: r.run_id, reconcile: toReconcile(r.observed, !!r.matched) };
+  } catch (err) { return { available: false, reason: err instanceof Error ? err.message : 'Không đối chiếu được.' }; }
 }
 
 /** Chạy tiếp bản nháp với mapping đã duyệt / sửa: backend kiểm tra lại Spec, sinh code và chạy thử. */

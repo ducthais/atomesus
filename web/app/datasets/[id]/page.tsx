@@ -4,6 +4,7 @@ import { ArrowRight, CircleAlert, KeyRound, Table2, Workflow } from 'lucide-reac
 import { LAYER_LABEL, PLATFORM_LABEL } from '@/lib/catalog/query';
 import { assetKey, currentUser, getCatalog, getDrift, getOrchestration } from '@/lib/catalog/source';
 import { DriftBadge, driftLines } from '../../_components/drift';
+import { ReconcileButton } from '../../_components/reconcile-button';
 import type { Dataset } from '@/lib/catalog/types';
 import { shortId } from '@/lib/studio';
 import { Lineage } from '../../_components/lineage';
@@ -71,7 +72,7 @@ export default async function DatasetPage({ params, searchParams }: { params: Pr
         <Link href="/runs" className="small">Xem tất cả ở trang Hoạt động →</Link></div></div>)}
     <Tabs base={base} active={tab} tabs={tabs} />
 
-    {tab === 'overview' && <div className="detail-grid">
+    {tab === 'overview' && <><div className="detail-grid">
       <div className="stack">
         <Panel title="Thông tin">
           <Facts items={[
@@ -103,7 +104,9 @@ export default async function DatasetPage({ params, searchParams }: { params: Pr
           {latest ? <Link href={`/runs/${shortId(latest.id)}`} className="run-card"><StatusBadge status={latest.status} /><strong>{latest.title}</strong><small>{shortId(latest.id)} · v{latest.version} · <Person name={cat.personName(latest.owner)} /> · {fmtAgo(latest.updatedAt)}</small></Link> : <p className="muted">Chưa có run nào chạm tới dataset này.</p>}
         </Panel>
       </div>
-    </div>}
+    </div>
+    {managed && dataset.layer === 'gold' && table && <Panel title="Đối chiếu với nguồn"><ReconcileButton domain={dataset.domain} model={table} /></Panel>}
+    </>}
 
     {tab === 'schema' && (dataset.columns.length ? <Panel flush><div className="table-scroll"><table>
       <thead><tr><th>#</th><th>Cột</th><th>Kiểu</th><th>Mô tả</th><th>Thuật ngữ</th><th>Tag</th></tr></thead>

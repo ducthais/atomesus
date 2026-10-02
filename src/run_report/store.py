@@ -58,6 +58,26 @@ def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HI
     return [RunReport.model_validate_json(row[0]) for row in rows]
 
 
+def abandon_unfinished(path: str) -> list[str]:
+    """Run đang chạy nền lúc backend tắt sẽ không bao giờ xong: đánh dấu lỗi để giao diện không chờ mãi.
+
+    Chỉ gọi lúc backend khởi động (chưa có việc nền nào). DRAFT là nháp chờ người sửa, không phải đang chạy.
+    """
+    abandoned = []
+    for status in ("GENERATING", "VALIDATING"):
+        for report in list_run_reports(path, status, limit=1000):
+            error = {
+                "stage": report.stage_reached,
+                "error": "Backend khởi động lại khi run đang chạy; hãy gửi lại yêu cầu.",
+            }
+            save_run_report(
+                path,
+                report.model_copy(update={"status": "INTERNAL_ERROR", "error_trace": [*report.error_trace, error]}),
+            )
+            abandoned.append(report.run_id)
+    return abandoned
+
+
 def get_run_report(path: str, run_id: str) -> RunReport | None:
     with _database(path) as conn:
         row = conn.execute("SELECT report FROM run_reports WHERE run_id = ?", (run_id,)).fetchone()

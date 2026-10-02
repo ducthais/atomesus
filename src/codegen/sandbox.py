@@ -4,6 +4,7 @@ Mỗi lần chạy có thư mục và file DuckDB riêng, xóa khi xong dù thà
 - P9 `el_run`: chạy đúng file ingestion dlt đã sinh, đổ từng nguồn vào bronze.
 - P10 `el_validate`: `row_reconcile` từng nguồn (đếm ở nguồn và ở bronze).
 - P11/P12 `t_run`/`t_validate`: `dbt build` (model + test), rồi `staging_reconcile` từng nguồn và `dbt_test`.
+- `metric_reconcile`: tính lại gold thẳng trên Postgres nguồn bằng đường độc lập và so từng dòng (`reference.py`).
 Tiến trình con chỉ nhận các biến môi trường cần thiết, không nhận khóa LLM hay bí mật khác của backend.
 """
 
@@ -17,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from src.codegen import reference
 from src.codegen.render import rejected_table, staging_model
 from src.pipeline import postgres
 from src.pipeline.settings import PipelineSettings
@@ -275,10 +277,17 @@ def _post_run(checks: list[Check], preview: dict) -> tuple[GateResult, list[str]
     """Cổng post_run: mọi kiểm tra đạt, và gold không rỗng khi staging có dữ liệu.
 
     dbt test trên bảng rỗng luôn đạt, nên một `filters` sai nghĩa (ví dụ loại hết đơn) sẽ lọt nếu không chặn ở đây.
-    Đối soát tổng chỉ số giữa gold và staging (`metric_reconcile`) bổ sung ở Sprint 3.
+    `metric_reconcile` lệch nghĩa là đường pipeline và đường tính lại thẳng trên nguồn ra số khác nhau.
     """
     failed = [f"{c.name}{f'[{c.source_id}]' if c.source_id else ''}" for c in checks if c.result == "fail"]
     errors = [f"Kiểm tra không đạt: {', '.join(failed)}"] if failed else []
+    for check in checks:
+        if check.name == "metric_reconcile" and check.result == "fail":
+            o = check.observed
+            errors.append(
+                f"Đối chiếu độc lập với nguồn lệch: {o['mismatch_count']} giá trị khác, {o['missing_count']} dòng thiếu, "
+                f"{o['extra_count']} dòng thừa so với tính lại thẳng trên Postgres."
+            )
     staging_rows = sum(c.observed["staging"] for c in checks if c.name == "staging_reconcile")
     empty_gold = bool(staging_rows) and not preview["gold_rows"]
     if empty_gold:
@@ -323,6 +332,14 @@ def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: 
                 result.checks += _staging_reconcile(db, spec, max_reject_pct)
                 result.checks.append(_dbt_test_check(results))
                 preview = _gold_preview(db, spec)
+                gold = reference.read_gold(db, spec.transform.model_name)
+            try:
+                matched, observed = reference.reconcile(spec, gold, policy, settings)
+                result.checks.append(
+                    Check(name="metric_reconcile", result="pass" if matched else "fail", observed=observed)
+                )
+            except reference.UnsupportedError as exc:
+                preview["reconcile_skipped"] = f"Chưa đối chiếu độc lập được: {exc}."
             if test_error and not any(c.name == "dbt_test" and c.result == "fail" for c in result.checks):
                 result.error_trace.append({"stage": "t_validate", "error": test_error[-1000:]})
             gate, errors = _post_run(result.checks, preview)

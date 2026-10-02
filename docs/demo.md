@@ -24,6 +24,7 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
    - http://127.0.0.1:3070 (Dagster), bấm **Skip** ở popup "Join the Dagster community"
 4. **Tập trước bước 4** (tạo pipeline) một lần để chắc LLM trả lời ổn định hôm đó.
 5. Phóng to trình duyệt 110–125% để mentor nhìn rõ; tắt thông báo hệ thống.
+6. **Giữ nguyên** pipeline `gold.fct_total_revenue` đang chạy trên Dagster (bản cũ, trước khi sửa lỗi múi giờ). Đừng duyệt bản mới của nó trước buổi demo: đây là ca lệch thật cho phần điểm nhấn.
 
 ---
 
@@ -63,12 +64,27 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
 |---|---|
 | Bấm **Yêu cầu pipeline** | |
 | Ở `sales_pg`: bấm **Kết nối** (nếu chưa hiện bảng), rồi tích **customers** và **orders**. `pagila_pg` tự hiện bảng vì đã kết nối ở bước 3 | Agent chỉ được dùng đúng các bảng mình chọn; nguồn đã kết nối được nhớ trong phiên. |
-| Nhập: **"Tổng doanh thu và số đơn hàng của từng khách hàng, kèm tên khách hàng"**, để nguyên ô **Xem & chỉnh mapping trước khi chạy thử** đã tích → **Gửi cho agent** | Trong lúc chờ (khoảng 15 giây): agent lập kế hoạch, đọc schema + 20 dòng mẫu thật, viết Spec, rồi **dừng lại ở bản nháp**. |
+| Nhập: **"Tổng doanh thu và số đơn hàng của từng khách hàng, kèm tên khách hàng"**, để nguyên ô **Xem & chỉnh mapping trước khi chạy thử** đã tích → **Gửi cho agent** | Trang run mở ngay, khung **Agent đang chạy** hiện từng bước (khoảng 15 giây): agent lập kế hoạch, đọc schema + 20 dòng mẫu thật, viết Spec, rồi **dừng lại ở bản nháp**. Agent chạy nền, rời trang cũng không sao. |
 | Trang run mở ở tab **Mapping** | Engineer thấy agent định lấy cột nào, đặt tên gì, ép kiểu gì, loại dòng nào. Phần "Bảng kết quả sẽ tính" bên dưới cho biết gộp theo gì, tính chỉ số gì. Chưa có code nào chạy. |
-| Bấm **Chạy thử với mapping này** | Bây giờ mới sinh code dlt/dbt/Dagster **từ template** (không phải LLM viết tự do) rồi chạy thật trong sandbox, mất 15–40 giây. |
+| Bấm **Chạy thử với mapping này** | Bây giờ mới sinh code dlt/dbt/Dagster **từ template** (không phải LLM viết tự do) rồi chạy thật trong sandbox: dlt tải dữ liệu thật, dbt build, khoảng 15–20 giây; trang hiện tiến độ và tự chuyển khi xong. |
 | Trang tự chuyển sang tab **Kết quả** | Diễn giải bằng lời: đọc bảng nào, làm sạch gì, mỗi dòng kết quả là gì; bên dưới là **dữ liệu kết quả thật**. |
 
 **Nếu bước này lỗi hoặc quá lâu:** nói "LLM bên ngoài đôi khi chậm" rồi mở run có sẵn **`ce884a4f`** (cùng yêu cầu, đã chạy xong) từ trang **Hoạt động**.
+
+---
+
+## ★ Điểm nhấn: con số có bằng chứng (2 phút)
+
+Đây là phần làm Atomesus khác các công cụ "AI viết SQL": hệ thống **tự chứng minh con số đúng** bằng một đường tính độc lập, và **bắt được lỗi mà mọi test đều cho qua**.
+
+| Thao tác | Nói / chỉ vào |
+|---|---|
+| Ở run vừa tạo (hoặc **`98506251`**, doanh thu theo tháng), tab **Kết quả**: khung xanh trên cùng | "Mentor hỏi AI có bịa số không? Đây: sau khi chạy thử, hệ thống dịch Spec thành **một câu SQL chạy thẳng trên Postgres nguồn**, không đi qua dlt, DuckDB, dbt hay template, rồi so **từng dòng**. 6/6 dòng khớp tới từng xu." |
+| Mở **Truy vấn đối chiếu trên Postgres** | "Câu SQL này ai cũng tự chạy lại được trên nguồn để kiểm tra." |
+| Khám phá → **`gold.fct_total_revenue`** (pipeline đang chạy trên Dagster) → **Đối chiếu lại** | Khung đỏ: **tổng vẫn khớp 227.768,87**, nhưng 16.871 dòng lệch. Hệ thống **tự chẩn đoán: mọi thời điểm lệch đúng +7 giờ**, tức lỗi múi giờ. Hai cột cạnh nhau: nguồn 18:21 ngày 24/01, pipeline 01:21 ngày 25/01. |
+| Câu chốt | "Lỗi này có thật, nằm trong pipeline của chính chúng tôi. Mọi dbt test đều đạt, tổng doanh thu cũng khớp. Chỉ có phép đối chiếu từng dòng bắt được nó. Bây giờ mỗi lần chạy thử đều đối chiếu như vậy, và lệch thì run bị chặn, không tới được tay Reviewer." |
+
+**Nói thật nếu được hỏi:** đối chiếu chứng minh pipeline **tính đúng như Spec**. Spec có hiểu đúng ý người dùng không thì do cổng "Gộp đúng kỳ yêu cầu" và người duyệt lo (bước 5).
 
 ---
 
@@ -130,7 +146,8 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 
 **Nói:**
 - Đã có: catalog trên dữ liệu thật, kết nối nguồn theo yêu cầu, agent sinh pipeline có bằng chứng, người duyệt, Dagster chạy định kỳ và theo dõi.
-- Tiếp theo: backfill theo partition, connector MongoDB, đối chiếu chỉ số tự động trong mỗi lần chạy thử, deploy production qua pull request.
+- Điểm khác biệt: mỗi con số được tính lại bằng một đường độc lập trên nguồn và so từng dòng; hệ thống đã bắt được lỗi thật mà test không thấy.
+- Tiếp theo: backfill theo partition, connector MongoDB, đối chiếu định kỳ sau mỗi lần Dagster chạy, deploy production qua pull request.
 
 ---
 
@@ -138,7 +155,8 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 
 | Câu hỏi | Trả lời ngắn |
 |---|---|
-| AI có bịa số không? | Không: LLM chỉ viết kế hoạch và Spec; code sinh từ template; số liệu là phép đo khi chạy thật. Đã tự tính lại từ Postgres: Sales khớp từng ngày (tổng 465.000), Pagila khớp tổng 227.768,87 và từng dòng. |
+| AI có bịa số không? | Không, và có bằng chứng: mỗi lần chạy thử, kết quả được tính lại bằng SQL chạy thẳng trên Postgres nguồn (không qua dlt / DuckDB / dbt) và so từng dòng; lệch thì run bị chặn. LLM chỉ viết kế hoạch và Spec, code sinh từ template. |
+| Đối chiếu có bắt được lỗi thật không? | Có: nó bắt lỗi múi giờ +7 giờ trong pipeline của chính chúng tôi, khi tổng vẫn khớp và mọi dbt test đều đạt (mở `gold.fct_total_revenue` → Đối chiếu lại). |
 | AI hiểu sai thì sao? | Cảnh báo dễ hiểu ở tab Kết quả, Reviewer bắt lỗi trước khi duyệt; sửa và chạy lại tạo run mới, lịch sử giữ nguyên. |
 | Bảo mật? | Tài khoản Postgres chỉ đọc, mọi giao dịch read-only; credential ở server; agent không chạm production. |
 | Vì sao dlt, dbt, Dagster? | Công cụ mã nguồn mở phổ biến; code sinh ra đọc được và chạy được ngoài hệ thống. |

@@ -4,8 +4,14 @@ Hai cách chạy:
 - `run_agent`: một mạch planner → codegen → render → test_run.
 - `draft_agent` rồi `continue_agent`: dừng sau khi có Spec (trạng thái DRAFT) để Engineer xem và sửa mapping,
   sau đó kiểm tra lại Spec đã sửa bằng đúng các cổng của agent rồi mới render và chạy thử.
+
+Một run mất khoảng 15–30 giây (2 lần gọi LLM, dlt tải dữ liệu thật, dbt build). API dùng `start_agent` /
+`start_continue`: ghi run vào sổ bằng chứng ngay và trả về, phần còn lại chạy nền và ghi lại tiến độ sau mỗi
+bước để giao diện theo dõi.
 """
 
+import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -17,6 +23,9 @@ from src.agents.state import AgentState
 from src.agents.validate import validate_spec
 from src.run_report import Attempts, Check, Cost, GateResult, RunReport, Timing, save_run_report
 from src.run_report.store import save_run_files
+
+log = logging.getLogger(__name__)
+Job = Callable[[], RunReport]
 
 
 class SpecRejectedError(Exception):
@@ -68,14 +77,20 @@ def _initial(user_request: str, created_by: str, sources: list[dict] | None, par
         "attempts": {"spec": 0, "sql": 0},
         "llm_calls": 0,
         "error_trace": [],
-        "status": "DRAFT",
+        "status": "GENERATING",
         "stage_reached": "intake",
     }
 
 
-def _invoke(deps: AgentDeps, initial: AgentState, stop_after_spec: bool) -> AgentState:
+def _invoke(
+    deps: AgentDeps, initial: AgentState, stop_after_spec: bool, progress: Callable[[AgentState], None] | None = None
+) -> AgentState:
     try:
-        return build_graph(deps, stop_after_spec=stop_after_spec).invoke(initial)
+        state = initial
+        for state in build_graph(deps, stop_after_spec=stop_after_spec).stream(initial, stream_mode="values"):
+            if progress and state.get("status") in RUNNING:
+                progress(state)
+        return state
     except Exception as exc:  # lỗi ngoài dự kiến vẫn phải để lại dấu vết trong sổ bằng chứng
         return {
             **initial,
@@ -92,6 +107,32 @@ def _save(state: AgentState, created_at: datetime, store_path: str) -> RunReport
     return report
 
 
+def _progress(created_at: datetime, store_path: str) -> Callable[[AgentState], None]:
+    """Ghi trạng thái đang chạy vào sổ bằng chứng sau mỗi bước (giao diện đọc lại để hiện tiến độ)."""
+    return lambda state: save_run_report(store_path, _report(state, created_at))
+
+
+def _run(initial: AgentState, created_at: datetime, deps: AgentDeps, store_path: str, draft: bool) -> RunReport:
+    state = _invoke(deps, initial, stop_after_spec=draft, progress=_progress(created_at, store_path))
+    if draft and state.get("status") == "VALIDATING":  # Spec hợp lệ, dừng chờ Engineer
+        state = {**state, "status": "DRAFT"}
+    return _save(state, created_at, store_path)
+
+
+def _guarded(job: Job, state: AgentState, created_at: datetime, store_path: str) -> Job:
+    """Việc chạy nền không có ai nhận ngoại lệ: lỗi bất ngờ vẫn phải kết thúc run trong sổ bằng chứng."""
+
+    def run() -> RunReport:
+        try:
+            return job()
+        except Exception as exc:
+            log.exception("Run %s lỗi khi chạy nền", state["run_id"])
+            error = {"stage": state.get("stage_reached", "intake"), "error": f"{type(exc).__name__}: {exc}"[:500]}
+            return _save({**state, "status": "INTERNAL_ERROR", "error_trace": [error]}, created_at, store_path)
+
+    return run
+
+
 def run_agent(
     user_request: str,
     created_by: str,
@@ -104,9 +145,8 @@ def run_agent(
 
     `sources` giới hạn nguồn/bảng planner được dùng ([{source_ref, tables}]); None = mọi nguồn trong danh mục.
     """
-    created_at = datetime.now(UTC)
-    state = _invoke(deps, _initial(user_request, created_by, sources, parent_run_id), stop_after_spec=False)
-    return _save(state, created_at, store_path)
+    initial = _initial(user_request, created_by, sources, parent_run_id)
+    return _run(initial, datetime.now(UTC), deps, store_path, draft=False)
 
 
 def draft_agent(
@@ -118,11 +158,24 @@ def draft_agent(
     parent_run_id: str | None = None,
 ) -> RunReport:
     """Chỉ lập kế hoạch và viết Spec (đã qua các cổng), lưu ở trạng thái DRAFT để Engineer xem và sửa mapping."""
-    created_at = datetime.now(UTC)
-    state = _invoke(deps, _initial(user_request, created_by, sources, parent_run_id), stop_after_spec=True)
-    if state.get("status") == "VALIDATING":  # Spec hợp lệ, dừng chờ Engineer
-        state = {**state, "status": "DRAFT"}
-    return _save(state, created_at, store_path)
+    initial = _initial(user_request, created_by, sources, parent_run_id)
+    return _run(initial, datetime.now(UTC), deps, store_path, draft=True)
+
+
+def start_agent(
+    user_request: str,
+    created_by: str,
+    deps: AgentDeps,
+    store_path: str,
+    sources: list[dict] | None = None,
+    parent_run_id: str | None = None,
+    draft: bool = False,
+) -> tuple[RunReport, Job]:
+    """Ghi run mới (GENERATING) vào sổ bằng chứng ngay; trả kèm việc cần chạy nền để đi hết các bước."""
+    initial, created_at = _initial(user_request, created_by, sources, parent_run_id), datetime.now(UTC)
+    started = _save(initial, created_at, store_path)
+    job = _guarded(lambda: _run(initial, created_at, deps, store_path, draft), initial, created_at, store_path)
+    return started, job
 
 
 def continue_agent(draft: RunReport, spec: dict, edited_by: str, deps: AgentDeps, store_path: str) -> RunReport:
@@ -130,6 +183,14 @@ def continue_agent(draft: RunReport, spec: dict, edited_by: str, deps: AgentDeps
 
     Spec không hợp lệ → `SpecRejectedError` (run nháp giữ nguyên để sửa tiếp).
     """
+    _started, job = start_continue(draft, spec, edited_by, deps, store_path)
+    return job()
+
+
+def start_continue(
+    draft: RunReport, spec: dict, edited_by: str, deps: AgentDeps, store_path: str
+) -> tuple[RunReport, Job]:
+    """Kiểm tra Spec ngay (lỗi trả về tức thì), ghi run sang VALIDATING; render + chạy thử là việc chạy nền."""
     snapshot = deps.snapshot(draft.plan, deps.policy, deps.settings)
     result = validate_spec(spec, snapshot, deps.policy, draft.user_request)
     if result.errors:
@@ -164,8 +225,16 @@ def continue_agent(draft: RunReport, spec: dict, edited_by: str, deps: AgentDeps
         "status": "VALIDATING",
         "stage_reached": "static",
     }
-    for node in (render_node(deps), sandbox_run_node(deps)):
-        if state["status"] not in RUNNING:
-            break
-        state = {**state, **node(state)}
-    return _save(state, draft.created_at, store_path)
+    started = _save(state, draft.created_at, store_path)
+
+    def job() -> RunReport:
+        current = state
+        for node in (render_node(deps), sandbox_run_node(deps)):
+            if current["status"] not in RUNNING:
+                break
+            current = {**current, **node(current)}
+            if current["status"] in RUNNING:
+                _progress(draft.created_at, store_path)(current)
+        return _save(current, draft.created_at, store_path)
+
+    return started, _guarded(job, state, draft.created_at, store_path)

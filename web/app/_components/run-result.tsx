@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowDown, Database, Filter, Sparkles, Table2, TriangleAlert } from 'lucide-react';
 import { describeExpr, PERIOD_LABEL, resultWarnings, typeLabel, type RunResult } from '@/lib/catalog/explain';
 import { fmtNum } from './ui';
+import { ReconcileCard } from './reconcile';
 
 /** Tab "Kết quả" của run: pipeline làm gì (bằng lời), cảnh báo dễ hiểu, và dữ liệu kết quả mẫu. */
 export function RunResultView({ result, summary, request, goldId, deployed }: { result: RunResult; summary: string; request: string; goldId: string | null; deployed: boolean }) {
@@ -12,6 +13,8 @@ export function RunResultView({ result, summary, request, goldId, deployed }: { 
   const rowMeaning = result.grain.length ? <>mỗi dòng là <strong>{result.grain.map(grainLabel).join(' + ')}</strong></> : <>chỉ <strong>một dòng tổng</strong></>;
 
   return <div className="stack">
+    {result.reconcile && <ReconcileCard r={result.reconcile} />}
+    {!result.reconcile && result.reconcileSkipped && <div className="callout warn"><TriangleAlert size={16} aria-hidden /><span>{result.reconcileSkipped}</span></div>}
     <section className="panel explain">
       <div className="panel-head"><h2><Sparkles size={16} aria-hidden /> Pipeline này làm gì</h2></div>
       <p className="explain-ask">Bạn hỏi: <q>{request}</q>{summary && <><br /><span className="muted">Agent hiểu là: {summary}</span></>}</p>

@@ -125,7 +125,7 @@ function SourcePicker({ sources, selected, onChange, disabled, autoConnect }: { 
   </fieldset>;
 }
 
-/** Engineer chọn nguồn và gửi yêu cầu bằng lời; agent chạy đồng bộ (~30 giây) rồi chuyển tới trang run mới. */
+/** Engineer chọn nguồn và gửi yêu cầu bằng lời; backend ghi run ngay và chạy agent ở nền, trang run hiện tiến độ. */
 export function RequestForm({ initial, canRun, examples, sources, initialTables, connected, parent }: { initial: string; canRun: boolean; examples: { label: string; request: string }[]; sources: DeclaredSource[]; initialTables: string[]; connected: string[]; parent?: string }) {
   const [request, setRequest] = useState(initial);
   const [tables, setTables] = useState(initialTables);
@@ -141,9 +141,9 @@ export function RequestForm({ initial, canRun, examples, sources, initialTables,
       {!canRun ? <span className="muted">Chỉ Engineer gửi yêu cầu. Đổi người dùng ở góc trên bên phải.</span>
         : !tables.length && <span className="muted">Kết nối một nguồn và chọn ít nhất một bảng.</span>}
       <span className="muted small">{request.length}/2000</span>
-      <button type="submit" className="button primary" disabled={!canRun || !valid || pending}>{pending ? <><LoaderCircle size={15} className="spin" aria-hidden /> Agent đang chạy…</> : 'Gửi cho agent'}</button>
+      <button type="submit" className="button primary" disabled={!canRun || !valid || pending}>{pending ? <><LoaderCircle size={15} className="spin" aria-hidden /> Đang gửi…</> : 'Gửi cho agent'}</button>
     </div>
-    {pending && <div className="callout info" role="status"><LoaderCircle size={16} className="spin" aria-hidden /><span>Agent đang lập kế hoạch trên {tables.length} bảng đã chọn → viết Spec → sinh code → chạy thử trong sandbox (thường khoảng 30 giây). Trang run sẽ mở khi có RunReport.</span></div>}
+    {pending && <div className="callout info" role="status"><LoaderCircle size={16} className="spin" aria-hidden /><span>Đang gửi yêu cầu trên {tables.length} bảng đã chọn. Trang run sẽ mở ngay và hiện tiến độ từng bước của agent.</span></div>}
     {state && !pending && <div className={`callout ${state.error ? 'bad' : 'info'}`} role="alert"><Info size={16} aria-hidden /><span>{state.error ?? state.message}</span></div>}
   </form>;
 }

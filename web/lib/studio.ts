@@ -46,7 +46,7 @@ const GATE_LABEL: Record<string, string> = {
 };
 const CHECK_LABEL: Record<string, string> = {
   row_reconcile: 'Đối soát dòng', hash_reconcile: 'Đối soát nội dung', idempotent: 'Idempotent',
-  staging_reconcile: 'Làm sạch staging', dbt_test: 'dbt tests', metric_reconcile: 'Đúng chỉ số',
+  staging_reconcile: 'Làm sạch staging', dbt_test: 'dbt tests', metric_reconcile: 'Đối chiếu độc lập với nguồn',
 };
 
 export const shortId = (id: string) => id.startsWith('pending-') ? 'đang tạo' : id.slice(0, 8);
@@ -65,6 +65,11 @@ function toCheck(check: RunReport['checks'][number]): Check {
   if (check.name === 'row_reconcile') return { ...base, value: `${num(o.source)} → ${num(o.bronze)}`, detail: 'Số dòng nguồn → bronze' };
   if (check.name === 'staging_reconcile') return { ...base, value: `${num(o.staging)} sạch · ${num(o.rejected)} rác`,
     detail: `${o.reject_pct ?? 0}% rác${o.max_reject_pct !== undefined ? ` (ngưỡng ${o.max_reject_pct}%)` : ''}${o.duplicates ? ` · ${o.duplicates} trùng` : ''}` };
+  if (check.name === 'metric_reconcile') {
+    const rows = (o.rows ?? {}) as { source?: number };
+    return { ...base, value: check.result === 'pass' ? `${num(o.matched)} / ${num(rows.source)} dòng khớp` : `${num(o.mismatch_count)} khác · ${num(o.missing_count)} thiếu · ${num(o.extra_count)} thừa`,
+      detail: 'Tính lại gold thẳng trên Postgres nguồn (không qua dlt / DuckDB / dbt), so từng dòng' };
+  }
   if (check.name === 'dbt_test') return { ...base, value: `${num(o.passed)} / ${num(Number(o.passed ?? 0) + Number(o.failed ?? 0))} đạt`, detail: 'dbt build trong sandbox' };
   return { ...base, value: check.result === 'pass' ? 'Đạt' : 'Không đạt', detail: JSON.stringify(o).slice(0, 120) };
 }

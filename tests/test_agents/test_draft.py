@@ -68,7 +68,9 @@ async def test_draft_api_flow(client, tmp_path, monkeypatch):
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
-        draft = (await client.post("/api/v1/agent/drafts", json={"request": "Doanh thu theo ngày"})).json()
+        started = (await client.post("/api/v1/agent/drafts", json={"request": "Doanh thu theo ngày"})).json()
+        assert started["status"] == "GENERATING" and started["spec"] is None  # trả ngay, agent chạy nền
+        draft = (await client.get(f"/api/v1/runs/{started['run_id']}")).json()
         assert draft["status"] == "DRAFT"
         bad = copy.deepcopy(draft["spec"])
         bad["sources"][0]["staging"]["columns"][0]["from"] = "khong_co"
@@ -79,7 +81,9 @@ async def test_draft_api_flow(client, tmp_path, monkeypatch):
         assert other.status_code == 403
         await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
         done = await client.post(f"/api/v1/agent/runs/{draft['run_id']}/continue", json={"spec": draft["spec"]})
-        assert done.status_code == 200 and done.json()["status"] == "READY_FOR_REVIEW"
+        assert done.status_code == 200 and done.json()["status"] == "VALIDATING"  # Spec đã qua cổng, chạy thử ở nền
+        finished = (await client.get(f"/api/v1/runs/{draft['run_id']}")).json()
+        assert finished["status"] == "READY_FOR_REVIEW"
         again = await client.post(f"/api/v1/agent/runs/{draft['run_id']}/continue", json={"spec": draft["spec"]})
         assert again.status_code == 409
     finally:

@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.agents.llm import openai_llm
 from src.agents.nodes.common import AgentDeps
 from src.agents.resolve import ResolveError
-from src.agents.service import SpecRejectedError, continue_agent, draft_agent, run_agent
+from src.agents.service import SpecRejectedError, start_agent, start_continue
 from src.pipeline.auth import current_user, settings
 from src.pipeline.postgres import SourceUnavailableError
 from src.pipeline.settings import PipelineSettings
@@ -62,25 +62,39 @@ def _checked_sources(body: AgentRunRequest, user: dict, deps: AgentDeps) -> list
 @router.post("/runs", status_code=201, response_model=RunReport)
 def create_agent_run(
     body: AgentRunRequest,
+    background: BackgroundTasks,
     user: dict = Depends(current_user),
     deps: AgentDeps = Depends(agent_deps),
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
-    """Yêu cầu → kế hoạch → Spec → sinh code → chạy thử trong sandbox. Chạy đồng bộ; SSE ở sprint sau."""
+    """Yêu cầu → kế hoạch → Spec → sinh code → chạy thử trong sandbox.
+
+    Trả ngay run ở trạng thái GENERATING; các bước chạy nền, tiến độ đọc lại qua GET /runs/{run_id}.
+    """
     sources = _checked_sources(body, user, deps)
-    return run_agent(body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id)
+    started, job = start_agent(body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id)
+    background.add_task(job)
+    return started
 
 
 @router.post("/drafts", status_code=201, response_model=RunReport)
 def create_draft(
     body: AgentRunRequest,
+    background: BackgroundTasks,
     user: dict = Depends(current_user),
     deps: AgentDeps = Depends(agent_deps),
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
-    """Chỉ lập kế hoạch và viết Spec, dừng ở trạng thái DRAFT để Engineer xem và sửa mapping trước khi chạy thử."""
+    """Chỉ lập kế hoạch và viết Spec, dừng ở trạng thái DRAFT để Engineer xem và sửa mapping trước khi chạy thử.
+
+    Trả ngay run ở trạng thái GENERATING; lập kế hoạch và viết Spec chạy nền.
+    """
     sources = _checked_sources(body, user, deps)
-    return draft_agent(body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id)
+    started, job = start_agent(
+        body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id, draft=True
+    )
+    background.add_task(job)
+    return started
 
 
 class ContinueRequest(BaseModel):
@@ -92,11 +106,12 @@ class ContinueRequest(BaseModel):
 def continue_draft(
     run_id: str,
     body: ContinueRequest,
+    background: BackgroundTasks,
     user: dict = Depends(current_user),
     deps: AgentDeps = Depends(agent_deps),
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
-    """Kiểm tra lại Spec đã sửa bằng đúng các cổng của agent, rồi sinh code và chạy thử trong sandbox."""
+    """Kiểm tra lại Spec đã sửa bằng đúng các cổng của agent (lỗi trả về ngay), rồi sinh code và chạy thử ở nền."""
     draft = get_run_report(config.store_path, run_id)
     if draft is None:
         raise HTTPException(404, f"Không tìm thấy run {run_id}")
@@ -105,11 +120,13 @@ def continue_draft(
     if draft.status != "DRAFT":
         raise HTTPException(409, f"Run đang ở trạng thái {draft.status}, chỉ bản nháp mới chạy tiếp được.")
     try:
-        return continue_agent(draft, body.spec, user["name"], deps, config.store_path)
+        started, job = start_continue(draft, body.spec, user["name"], deps, config.store_path)
     except SpecRejectedError as exc:
         raise HTTPException(422, "Spec chưa hợp lệ: " + "; ".join(exc.errors)) from exc
     except (ResolveError, SourceUnavailableError) as exc:
         raise HTTPException(503, str(exc)) from exc
+    background.add_task(job)
+    return started
 
 
 @router.get("/status")

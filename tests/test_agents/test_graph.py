@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.agents import service
 from src.agents.graph import build_graph
 from src.agents.nodes.common import AgentDeps
-from src.agents.service import run_agent
+from src.agents.service import run_agent, start_agent
 from src.codegen.sandbox import SandboxResult
 from src.pipeline import auth
 from src.policy.loader import load_policy
@@ -223,6 +224,46 @@ def test_service_saves_report_and_files(tmp_path):
     assert set(files) == set(report.files) and len(files) == 5
 
 
+def test_progress_is_saved_after_each_step_and_background_job_finishes(tmp_path, monkeypatch):
+    store = str(tmp_path / "runs.sqlite3")
+    seen = []
+    original = service.save_run_report
+
+    def recording(path, report):
+        seen.append((report.status, report.stage_reached))
+        original(path, report)
+
+    monkeypatch.setattr(service, "save_run_report", recording)
+    started, job = start_agent("Doanh thu theo ngày", "minh", deps(FakeLLM(PLAN, SPEC)), store)
+    assert started.status == "GENERATING" and get_run_report(store, started.run_id).status == "GENERATING"
+    done = job()
+    assert done.status == "READY_FOR_REVIEW" and get_run_report(store, started.run_id).status == "READY_FOR_REVIEW"
+    assert ("GENERATING", "plan") in seen and ("VALIDATING", "static") in seen, seen
+
+
+def test_background_crash_still_closes_the_run(tmp_path, monkeypatch):
+    store = str(tmp_path / "runs.sqlite3")
+    started, job = start_agent("x", "minh", deps(FakeLLM(PLAN, SPEC)), store)
+
+    def crash(*_args, **_kwargs):
+        raise RuntimeError("hỏng")
+
+    monkeypatch.setattr(service, "_run", crash)
+    job()
+    report = get_run_report(store, started.run_id)
+    assert report.status == "INTERNAL_ERROR" and "hỏng" in report.error_trace[-1]["error"]
+
+
+def test_abandoned_runs_are_closed_on_startup(tmp_path):
+    from src.run_report.store import abandon_unfinished
+
+    store = str(tmp_path / "runs.sqlite3")
+    started, _job = start_agent("x", "minh", deps(FakeLLM(PLAN, SPEC)), store)  # backend tắt trước khi job chạy
+    assert abandon_unfinished(store) == [started.run_id]
+    assert get_run_report(store, started.run_id).status == "INTERNAL_ERROR"
+    assert abandon_unfinished(store) == []
+
+
 def test_service_records_unexpected_crash(tmp_path):
     def crashing(spec, files, policy, settings):
         raise RuntimeError("boom")
@@ -259,7 +300,9 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
             "/api/v1/agent/runs",
             json={"request": "Doanh thu", "sources": [{"source_ref": "sales_pg", "tables": ["orders"]}]},
         )
-        assert scoped.status_code == 201 and scoped.json()["plan"]["sources"][0]["source_ref"] == "sales_pg"
+        assert scoped.status_code == 201
+        scoped_run = (await client.get(f"/api/v1/runs/{scoped.json()['run_id']}")).json()
+        assert scoped_run["plan"]["sources"][0]["source_ref"] == "sales_pg"
         child = await client.post(
             "/api/v1/agent/runs", json={"request": "Doanh thu", "parent_run_id": scoped.json()["run_id"]}
         )
@@ -267,8 +310,8 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
         compared = (await client.get(f"/api/v1/runs/{child.json()['run_id']}/compare")).json()
         assert compared["available"] is True and compared["base"]["run_id"] == scoped.json()["run_id"]
         response = await client.post("/api/v1/agent/runs", json={"request": "Doanh thu theo ngày"})
-        assert response.status_code == 201
-        report = response.json()
+        assert response.status_code == 201 and response.json()["status"] == "GENERATING"
+        report = (await client.get(f"/api/v1/runs/{response.json()['run_id']}")).json()
         assert report["status"] == "READY_FOR_REVIEW" and report["created_by"] == "minh"
         files = (await client.get(f"/api/v1/runs/{report['run_id']}/files")).json()
         assert files["version"] == 1 and set(files["files"]) == set(report["files"])

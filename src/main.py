@@ -10,13 +10,18 @@ from src.api.routes import router
 from src.chat import router as chat_router
 from src.config import get_settings
 from src.pipeline.api import router as pipeline_router
+from src.pipeline.settings import PipelineSettings
 from src.run_report import router as run_reports_router
+from src.run_report.store import abandon_unfinished
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    # Agent chạy nền trong tiến trình này; run dở dang từ lần chạy trước không còn ai hoàn tất.
+    if abandoned := abandon_unfinished(PipelineSettings().store_path):
+        print(f"Đánh dấu lỗi {len(abandoned)} run bị bỏ dở khi backend tắt")
     yield
     print("Shutting down...")
 

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from src.codegen import reference
 from src.pipeline import connectors, postgres
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
@@ -9,6 +10,7 @@ from src.policy.loader import PolicyError, load_policy
 from src.policy.models import Policy
 from src.run_report.drift import detect, live_pipelines
 from src.run_report.store import list_run_reports
+from src.spec.models import Spec
 
 router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(current_user)])
 
@@ -133,3 +135,37 @@ def schema_drift(config: PipelineSettings = Depends(settings)) -> dict:
 
     pipelines = [detect(report, tables_of) for report in live_pipelines(list_run_reports(config.store_path))]
     return {"checked_at": datetime.now(UTC).isoformat(), "pipelines": pipelines}
+
+
+@router.post("/datasets/{domain}/{model}/reconcile")
+def reconcile_deployed(domain: str, model: str, config: PipelineSettings = Depends(settings)) -> dict:
+    """Đối chiếu lại bảng gold Dagster đang giữ với kết quả tính lại thẳng trên nguồn Postgres, ngay lúc gọi.
+
+    Dùng Spec của bản đang chạy (bản duyệt mới nhất của model). Không ghi gì: chỉ đọc warehouse và nguồn.
+    """
+    import duckdb
+
+    live = [r for r in live_pipelines(list_run_reports(config.store_path, limit=1000)) if r.domain == domain]
+    report = next((r for r in live if r.spec and r.spec.get("transform", {}).get("model_name") == model), None)
+    if report is None:
+        raise HTTPException(404, f"Không có pipeline đã duyệt nào tạo gold.{model} trong domain {domain}.")
+    base = {"run_id": report.run_id, "model": model, "checked_at": datetime.now(UTC).isoformat()}
+    try:
+        with duckdb.connect(config.warehouse_path, read_only=True) as db:
+            gold = reference.read_gold(db, model)
+    except duckdb.CatalogException:
+        return {
+            **base,
+            "available": False,
+            "reason": f"Dagster chưa materialize gold.{model}: chạy job trong Dagster trước.",
+        }
+    except duckdb.Error as exc:
+        reason = "Dagster đang ghi warehouse, thử lại sau ít giây." if "lock" in str(exc).lower() else str(exc)
+        return {**base, "available": False, "reason": reason}
+    try:
+        matched, observed = reference.reconcile(Spec.model_validate(report.spec), gold, _policy(), config)
+    except reference.UnsupportedError as exc:
+        return {**base, "available": False, "reason": f"Chưa đối chiếu được: {exc}."}
+    except postgres.SourceUnavailableError as exc:
+        return {**base, "available": False, "reason": str(exc)}
+    return {**base, "available": True, "matched": matched, "observed": observed}

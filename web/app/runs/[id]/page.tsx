@@ -2,10 +2,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CircleAlert, GitBranch, RotateCcw } from 'lucide-react';
 import { currentUser, getCatalog, getComparison, runFiles } from '@/lib/catalog/source';
-import { STAGES, canReview, shortId } from '@/lib/studio';
+import { STAGES, STAGE_IDS, canReview, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
 import { RunResultView } from '../../_components/run-result';
 import { MappingEditor } from '../../_components/mapping-editor';
+import { RunProgress } from '../../_components/run-progress';
 import type { AgentSpec } from '@/lib/postgres-api';
 import { RunCompareView, impactNotes } from '../../_components/run-compare';
 import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, StatusBadge, Tabs, fmtDate, statusTone } from '../../_components/ui';
@@ -35,10 +36,12 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const versions = result ? cat.runs.filter(r => r.domain === run.domain && r.result?.model === result.model && r.fileCount > 0)
     .map(r => ({ id: r.id, label: `${shortId(r.id)} · ${fmtDate(r.updatedAt)}${r.status === 'DEPLOYED' ? ' (đang chạy)' : ''}` })) : [];
   const comparable = versions.some(v => v.id !== run.id);
+  // Agent chạy nền: trang tự làm mới tới khi run dừng (DRAFT là nháp chờ người sửa, không phải đang chạy).
+  const inProgress = run.status === 'GENERATING' || run.status === 'VALIDATING';
   const draftSpec = run.status === 'DRAFT' && run.spec && typeof run.spec === 'object' && 'sources' in run.spec ? run.spec as AgentSpec : null;
   const tabs = [
     ...(draftSpec ? [{ id: 'mapping', label: 'Mapping' }] : []),
-    ...(result && !draftSpec ? [{ id: 'result', label: 'Kết quả' }] : []),
+    ...(result && !draftSpec && !inProgress ? [{ id: 'result', label: 'Kết quả' }] : []),
     { id: 'overview', label: 'Tổng quan' },
     { id: 'evidence', label: 'Bằng chứng', count: run.checks.length },
     ...(files ? [{ id: 'code', label: 'Code', count: files }] : []),
@@ -63,6 +66,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
     </PageHeader>
 
     {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Run dừng ở “{STAGES[run.stage]}”</strong><p>{run.error}</p>{RULES[run.status] && <p className="muted small">Luật áp dụng: {RULES[run.status]}</p>}</div></div>}
+
+    {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={run.updatedAt} specRetries={run.specRetries} />}
 
     <Tabs base={base} active={tab} tabs={tabs} />
 
