@@ -14,8 +14,10 @@ export type StagingObserved = {
 export type AgentSpec = {
   domain: string;
   sources: { id: string; kind: string; source_ref: string; table?: string; endpoint?: string; path_pattern?: string;
-    primary_key: string[]; cursor_field: string | null; write_disposition: string; target: { table: string } }[];
-  transform: { model_name: string; grain: string[]; metrics: { name: string; expr: string }[]; filters: string[] };
+    primary_key: string[]; cursor_field: string | null; write_disposition: string; target: { table: string };
+    staging?: { columns: { from: string; as: string; type: string }[]; reject_if?: string[] } }[];
+  transform: { model_name: string; grain: string[]; metrics: { name: string; expr: string }[]; filters: string[];
+    joins?: { source: string; type: string; on: [string, string][] }[] };
   schedule: { cron: string };
 };
 export type AgentPlan = {
