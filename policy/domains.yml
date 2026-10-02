@@ -40,5 +40,38 @@ domains:
         canonical: false
         definition: "người để lại email"
         tables: [mkt_api.leads, mkt_api.contacts]
+  rental:                             # Pagila (bộ dữ liệu mẫu cho thuê DVD), schema pagila trong cùng Postgres
+    datasets: [pagila]
+    steward: steward@company.vn       # TODO: đổi thành steward thật của domain
+    currency:
+      base: USD                       # Pagila ghi tiền thuê bằng USD
+      rates: { USD: 1 }
+    sources:
+      pagila_pg: { kind: postgres, connection_ref: sandbox_pg, schema: pagila }
+    entities:
+      film:
+        canonical: true
+        definition: "phim trong danh mục cho thuê"
+        tables: [pagila_pg.film]
+      inventory:
+        canonical: true
+        definition: "một bản DVD vật lý của một phim, thuộc một cửa hàng"
+        tables: [pagila_pg.inventory]
+      rental:
+        canonical: true
+        definition: "một lượt khách thuê một bản DVD, từ lúc thuê đến lúc trả"
+        tables: [pagila_pg.rental]
+      payment:
+        canonical: false
+        definition: "khoản khách trả cho một lượt thuê (USD)"
+        tables: [pagila_pg.payment]
+      customer:
+        canonical: false
+        definition: "khách có tài khoản thuê DVD tại một cửa hàng"
+        tables: [pagila_pg.customer]
+      store:
+        canonical: true
+        definition: "cửa hàng cho thuê DVD"
+        tables: [pagila_pg.store]
 
 conformed_dimensions: []   # rỗng nghĩa là chưa có thực thể nào được công nhận dùng chung

@@ -89,6 +89,9 @@ uvicorn src.main:app --reload --port 8000
 cd web && npm ci && npm run dev
 ```
 
+Bộ dữ liệu mẫu **Pagila** (cho thuê DVD, 15 bảng, domain `rental`, nguồn `pagila_pg`): tải Pagila rồi chạy
+`python scripts/load_pagila.py <thư mục pagila>` để nạp vào schema `pagila` và cấp quyền đọc (thêm `--replace` để nạp lại).
+
 Chi tiết: `docs/task-b.md` (Postgres, làm sạch, đăng nhập), `docs/task-c.md` (agent,
 template, sandbox), `web/README.md` (Studio). Hoặc dùng `make run`, `make test`,
 `make lint` — xem `Makefile`.
