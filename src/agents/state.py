@@ -29,5 +29,6 @@ class AgentState(TypedDict, total=False):
     llm_calls: int
     duration_sec: float
     error_trace: list[dict]
+    timeline: list[dict]  # mốc thời gian {event, at, actor} để đo công sức (RunReport.timeline)
     stage_reached: str
     status: str

@@ -10,7 +10,7 @@ const count = (n: number) => n.toLocaleString('vi-VN');
  * Kết quả đối chiếu độc lập: bảng gold của pipeline so với kết quả tính lại thẳng trên Postgres nguồn
  * (SQL sinh từ Spec bằng code riêng, không qua dlt / DuckDB / dbt / template), so từng dòng.
  */
-export function ReconcileCard({ r, subject = 'Kết quả chạy thử' }: { r: Reconcile; subject?: string }) {
+export function ReconcileCard({ r, subject = 'Kết quả chạy thử', timezone = null }: { r: Reconcile; subject?: string; timezone?: string | null }) {
   const totalsAgree = Object.values(r.totals).every(t => Number(t.gold) === Number(t.source));
   return <section className={`panel reconcile ${r.matched ? 'ok' : 'bad'}`}>
     <div className="reconcile-head">
@@ -21,6 +21,7 @@ export function ReconcileCard({ r, subject = 'Kết quả chạy thử' }: { r: 
           : <>Lệch so với nguồn: {[r.mismatchCount && `${count(r.mismatchCount)} giá trị khác`, r.missingCount && `${count(r.missingCount)} dòng thiếu`, r.extraCount && `${count(r.extraCount)} dòng thừa`].filter(Boolean).join(' · ')}</>}</h2>
         <p className="muted">{subject} được tính lại bằng một đường hoàn toàn khác: một câu SQL sinh từ Spec, chạy thẳng trên Postgres nguồn
           (tài khoản chỉ đọc), không đi qua dlt, DuckDB, dbt hay template. Rồi so từng dòng theo khóa gộp.</p>
+        <p className="muted small reconcile-scope">Phạm vi: kiểm tra pipeline <strong>thực hiện đúng Spec</strong>. Spec có đúng nhu cầu nghiệp vụ hay không do Engineer xác nhận và Reviewer duyệt; nếu Spec hiểu sai yêu cầu, hai đường tính vẫn có thể khớp nhau.</p>
       </div>
     </div>
     <dl className="reconcile-totals">
@@ -29,6 +30,7 @@ export function ReconcileCard({ r, subject = 'Kết quả chạy thử' }: { r: 
       <div><dt>Số dòng</dt><dd><span>Pipeline <strong>{count(r.rows.gold)}</strong></span><span>Nguồn <strong>{count(r.rows.source)}</strong></span></dd></div>
     </dl>
     {r.shiftHours !== null && <p className="reconcile-diagnosis"><strong>Chẩn đoán: mọi thời điểm của pipeline lệch đúng {r.shiftHours > 0 ? '+' : ''}{r.shiftHours.toLocaleString('vi-VN')} giờ so với nguồn.</strong> Đây là dấu hiệu ép kiểu thời gian theo múi giờ của máy chạy thay vì UTC.</p>}
+    {!r.matched && timezone && timezone !== 'UTC' && <p className="reconcile-diagnosis"><strong>Chẩn đoán: chạy thử dùng múi giờ warehouse {timezone}, trong khi nguồn và phép đối chiếu dùng UTC.</strong> Giao dịch gần nửa đêm bị dồn sang ngày khác. Sửa cấu hình <code>PIPELINE_WAREHOUSE_TIMEZONE=UTC</code> rồi chạy lại.</p>}
     {!r.matched && totalsAgree && <p className="reconcile-note"><strong>Tổng vẫn khớp</strong> nên chỉ kiểm tra tổng sẽ không thấy lỗi này. Phải so từng dòng mới phát hiện các dòng bị đặt sai chỗ.</p>}
     {!r.matched && <div className="reconcile-diff">
       {(r.missingInGold.length > 0 || r.extraInGold.length > 0) && <div className="reconcile-keys">

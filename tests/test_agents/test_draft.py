@@ -30,6 +30,11 @@ def test_continue_unchanged_spec_runs_sandbox_on_same_run(tmp_path):
     assert "giữ nguyên Spec" in done.spec_history[-1]["reason"]
     assert len(get_run_files(store, done.run_id, 1)) == 5
     assert get_run_report(store, done.run_id).status == "READY_FOR_REVIEW"
+    # Mốc thời gian để đo công sức: máy chạy và người chỉnh mapping tách bạch.
+    assert [e.event for e in draft.timeline] == ["submitted", "spec_ready"]
+    assert [e.event for e in done.timeline] == ["submitted", "spec_ready", "mapping_submitted", "finished"]
+    assert done.timeline[0].actor == "minh" and done.timeline[2].actor == "Minh"
+    assert all(a.at <= b.at for a, b in zip(done.timeline, done.timeline[1:], strict=False))
 
 
 def test_continue_with_edited_mapping_records_the_edit(tmp_path):

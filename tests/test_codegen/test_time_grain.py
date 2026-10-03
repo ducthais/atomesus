@@ -145,8 +145,7 @@ def test_fixture_specs_still_valid():
 # ---------- chạy dbt thật ----------
 
 
-@pytest.fixture(scope="module")
-def gold(tmp_path_factory, policy):
+def _gold(tmp_path_factory, policy, timezone):
     pytest.importorskip("dbt.cli.main")
     duckdb = pytest.importorskip("duckdb")
     from src.codegen import sandbox
@@ -172,12 +171,25 @@ def gold(tmp_path_factory, policy):
                 (3, Decimal("10.00"), "2017-02-15 09:00:00+00", "c"),
             ],
         )
-    env = sandbox._env(root, model, policy, _Settings())
+    settings = _Settings()
+    settings.warehouse_timezone = timezone
+    env = sandbox._env(root, model, policy, settings)
     results, error = sandbox._t_run(root, env, timeout=300)
     assert error is None, error
     with duckdb.connect(str(path), read_only=True) as db:
         return db.execute('select * from gold."fct_revenue_by_period" order by payment_date').fetchall()
 
 
+@pytest.fixture(scope="module")
+def gold(tmp_path_factory, policy):
+    return _gold(tmp_path_factory, policy, "UTC")
+
+
 def test_dbt_groups_by_month_in_utc(gold):
     assert gold == [(date(2017, 1, 1), Decimal("7.00"), 2), (date(2017, 2, 1), Decimal("10.00"), 1)]
+
+
+def test_wrong_warehouse_timezone_reproduces_the_shift(tmp_path_factory, policy):
+    # Cấu hình cũ (múi giờ máy, UTC+7): giao dịch 31/01 18:00 UTC rơi sang tháng 2. Đối chiếu độc lập bắt lỗi này.
+    shifted = _gold(tmp_path_factory, policy, "Asia/Ho_Chi_Minh")
+    assert shifted == [(date(2017, 1, 1), Decimal("2.99"), 1), (date(2017, 2, 1), Decimal("14.01"), 2)]

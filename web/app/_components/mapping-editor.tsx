@@ -38,6 +38,7 @@ export function MappingEditor({ runId, spec, sourceColumns, canEdit }: { runId: 
 
   return <div className="stack">
     <div className="callout info"><CircleAlert size={16} aria-hidden /><span>Đây là bản nháp: agent đã đọc schema thật và đề xuất mapping dưới đây, <strong>chưa sinh code và chưa chạy gì</strong>. Sửa nếu cần rồi bấm <strong>Chạy thử</strong>; hệ thống kiểm tra lại cột có thật ở nguồn và biểu thức an toàn trước khi chạy.</span></div>
+    <div className="callout warn"><CircleAlert size={16} aria-hidden /><span><strong>Bạn xác nhận Spec đúng nhu cầu.</strong> Sau khi chạy thử, hệ thống đối chiếu kết quả với nguồn để kiểm tra pipeline <strong>làm đúng Spec này</strong>; nó không biết Spec có đúng ý nghiệp vụ hay không. Hãy kiểm tra cột nào được lấy, gộp theo gì, chỉ số tính thế nào và bộ lọc ở khung “Bảng kết quả sẽ tính”.</span></div>
     {sources.map(src => {
       const info = sourceColumns[src.id];
       const specSource = spec.sources.find(s => s.id === src.id)!;
@@ -91,7 +92,8 @@ export function MappingEditor({ runId, spec, sourceColumns, canEdit }: { runId: 
     {errors.length > 0 && <div className="callout warn" role="alert"><CircleAlert size={16} aria-hidden /><div>{errors.map(e => <p key={e}>{e}</p>)}</div></div>}
     {state?.error && <div className="callout bad" role="alert"><CircleAlert size={16} aria-hidden /><div><strong>Chưa chạy được</strong>{state.error.split('; ').map(e => <p key={e}>{e}</p>)}</div></div>}
     <div className="form-actions">
-      {!canEdit && <span className="muted">Chỉ người tạo bản nháp (Engineer) được sửa và chạy tiếp.</span>}
+      {!canEdit ? <span className="muted">Chỉ người tạo bản nháp (Engineer) được sửa và chạy tiếp.</span>
+        : <span className="muted small">Bấm chạy thử là xác nhận Spec này đúng nhu cầu; mốc xác nhận được ghi vào sổ bằng chứng.</span>}
       <button className="button primary" disabled={!canEdit || errors.length > 0 || pending} onClick={() => start(async () => setState(await continueRun(runId, preview)))}>
         {pending ? <><LoaderCircle size={15} className="spin" aria-hidden /> Đang sinh code và chạy thử…</> : <><Play size={15} aria-hidden /> Chạy thử với mapping này</>}
       </button>

@@ -200,6 +200,14 @@ def impact(report: RunReport, reports: list[RunReport]) -> dict:
     }
 
 
+def _config_changes(base: RunReport, new: RunReport) -> list[dict]:
+    """Cấu hình môi trường chạy thử khác nhau giữa hai bản (không nằm trong Spec nhưng đổi kết quả)."""
+    before, after = _gate(base, "post_run").get("warehouse_timezone"), _gate(new, "post_run").get("warehouse_timezone")
+    if before and after and before != after:
+        return [{"field": "Cấu hình chạy thử · múi giờ warehouse", "before": [before], "after": [after]}]
+    return []
+
+
 def compare(
     new: RunReport,
     base: RunReport,
@@ -217,7 +225,7 @@ def compare(
             "user_request": base.user_request,
             "reason": reason,
         },
-        "spec": _spec_changes(base.spec or {}, new.spec or {}),
+        "spec": _spec_changes(base.spec or {}, new.spec or {}) + _config_changes(base, new),
         "results": _result_changes(base, new),
         "files": _file_changes(base_files, new_files),
         "impact": impact(new, reports),

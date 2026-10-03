@@ -13,7 +13,7 @@ export function RunResultView({ result, summary, request, goldId, deployed }: { 
   const rowMeaning = result.grain.length ? <>mỗi dòng là <strong>{result.grain.map(grainLabel).join(' + ')}</strong></> : <>chỉ <strong>một dòng tổng</strong></>;
 
   return <div className="stack">
-    {result.reconcile && <ReconcileCard r={result.reconcile} />}
+    {result.reconcile && <ReconcileCard r={result.reconcile} timezone={result.warehouseTimezone} />}
     {!result.reconcile && result.reconcileSkipped && <div className="callout warn"><TriangleAlert size={16} aria-hidden /><span>{result.reconcileSkipped}</span></div>}
     <section className="panel explain">
       <div className="panel-head"><h2><Sparkles size={16} aria-hidden /> Pipeline này làm gì</h2></div>

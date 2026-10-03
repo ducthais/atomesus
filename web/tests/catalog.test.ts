@@ -201,3 +201,17 @@ test('sửa mapping: đổi tên lan sang transform, kiểm tra nhập liệu, g
   assert.deepEqual(suggestColumn('Payment Date', 'timestamp with time zone'), { from: 'Payment Date', as: 'payment_date', type: 'timestamp', keep: true });
   assert.equal(suggestColumn('amount', 'numeric(5,2)').type, 'decimal(18,2)');
 });
+
+test('effort: máy và người tách bạch, thời gian người tính tới lúc duyệt', async () => {
+  const { effort, codeVolume, duration } = await import('../lib/catalog/effort.ts');
+  const t = (s: number) => new Date(Date.UTC(2026, 9, 3, 9, 0, s)).toISOString();
+  const timeline = [{ event: 'submitted', at: t(0) }, { event: 'spec_ready', at: t(14) }, { event: 'mapping_submitted', at: t(104) }, { event: 'finished', at: t(124) }];
+  const e = effort(timeline, t(244))!;
+  assert.deepEqual(e.segments.map(s => [s.key, s.sec]), [['agent_spec', 14], ['mapping', 90], ['agent_test', 20], ['review', 120]]);
+  assert.deepEqual([e.agentSec, e.humanSec, e.totalSec, e.approved], [34, 210, 244, true]);
+  const direct = effort([{ event: 'submitted', at: t(0) }, { event: 'spec_ready', at: t(10) }, { event: 'finished', at: t(30) }], null)!;
+  assert.deepEqual(direct.segments.map(s => s.key), ['agent_spec', 'agent_test'], 'không xem mapping thì không có chặng của engineer');
+  assert.equal(effort([], null), null);
+  assert.equal(duration(244), '4 phút 4 giây');
+  assert.deepEqual(codeVolume({ 'ingestion/x_pipeline.py': 'a\n\nb\n', 'dbt_project/models/gold/x.sql': 'select 1\n', 'dbt_project/models/gold/x.yml': 'v: 2\n' }).map(v => v.lines), [2, 1, 1]);
+});

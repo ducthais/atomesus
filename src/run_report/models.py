@@ -102,6 +102,22 @@ class Cost(_Contract):
     usd: float = Field(ge=0)
 
 
+TimelineEventName = Literal["submitted", "spec_ready", "mapping_submitted", "finished"]
+
+
+class TimelineEvent(_Contract):
+    """Mốc thời gian của một run, để đo công sức: máy chạy bao lâu, người (chỉnh mapping, duyệt) mất bao lâu.
+
+    submitted: Engineer gửi yêu cầu. spec_ready: agent viết xong Spec đã qua cổng. mapping_submitted: Engineer
+    duyệt / sửa mapping xong và cho chạy thử. finished: agent dừng (chạy thử xong hoặc bị chặn). Thời điểm duyệt
+    lấy từ approval.at.
+    """
+
+    event: TimelineEventName
+    at: datetime
+    actor: str | None = None
+
+
 class Timing(_Contract):
     baseline_sec: float | None = Field(default=None, ge=0)
     optimized_sec: float | None = Field(default=None, ge=0)
@@ -159,6 +175,7 @@ class RunReport(_Contract):
     llm_calls: int = Field(ge=0)
     error_trace: list[dict[str, Any]] = Field(default_factory=list)
     approval: Approval | None = None
+    timeline: list[TimelineEvent] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _approval_is_valid_signature(self) -> "RunReport":

@@ -597,3 +597,17 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 .bad-text { color: var(--bad); font-weight: 600; }
 .reconcile-diagnosis { margin: 0; padding: 10px 12px; border-radius: var(--r-control); background: var(--bad-soft); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); font-size: 13.5px; }
 .reconcile-diff .data-table { margin-top: 12px; }
+
+/* ── Thời gian & công sức ── */
+.effort-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.effort-totals > div { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-control); }
+.effort-totals strong { grid-column: 1 / -1; font-size: 20px; }
+.effort-totals small { grid-column: 1 / -1; }
+.effort-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; gap: 2px; margin: 14px 0 8px; }
+.effort-bar .agent, .effort-steps .agent::before { background: var(--accent); }
+.effort-bar .human, .effort-steps .human::before { background: var(--wait); }
+.effort-steps { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; font-size: 13.5px; }
+.effort-steps li { display: flex; align-items: center; gap: 8px; }
+.effort-steps li::before { content: ''; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.effort-steps li span { flex: 1; }
+.reconcile-scope { margin-top: 6px !important; }

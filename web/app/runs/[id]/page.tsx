@@ -7,6 +7,7 @@ import { CodeViewer, ReviewPanel } from '../../_components/run-client';
 import { RunResultView } from '../../_components/run-result';
 import { MappingEditor } from '../../_components/mapping-editor';
 import { RunProgress } from '../../_components/run-progress';
+import { EffortPanel } from '../../_components/effort';
 import type { AgentSpec } from '@/lib/postgres-api';
 import { RunCompareView, impactNotes } from '../../_components/run-compare';
 import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, StatusBadge, Tabs, fmtDate, statusTone } from '../../_components/ui';
@@ -20,6 +21,7 @@ const RULES: Partial<Record<string, string>> = {
   INFRA_ERROR: 'Kết nối nguồn hoặc nhà cung cấp LLM. Không phải lỗi của Spec.',
   INTERNAL_ERROR: 'Lỗi của hệ thống (template/sandbox), không phải lỗi agent.',
 };
+const RECONCILE_RULE = 'kết quả chạy thử phải khớp phép tính lại thẳng trên nguồn (metric_reconcile, src/codegen/reference.py); lệch thì không chuyển cho Reviewer.';
 const LEVEL_LABEL = { info: 'Thông tin', success: 'Đạt', warning: 'Cảnh báo', error: 'Lỗi' } as const;
 
 export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; base?: string }> }) {
@@ -52,6 +54,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   // So sánh dùng cho tab So sánh, và cho tóm tắt ảnh hưởng trong khung duyệt của run đang chờ duyệt.
   const comparison = comparable && (tab === 'compare' || (tab === 'overview' && run.status === 'READY_FOR_REVIEW')) ? await getComparison(run.id, tab === 'compare' ? compareBase : undefined) : null;
   const notes = comparison?.available ? impactNotes(comparison) : [];
+  const overviewFiles = tab === 'overview' && run.fileCount && run.timeline?.length ? await runFiles(run) : null;
   const base = `/runs/${shortId(run.id)}`;
   const eligible = canReview(run, user.role, user.id);
   const reviewReason = eligible ? 'Duyệt sẽ ghi đúng bộ file này thành project Dagster local.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
@@ -65,7 +68,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
 
-    {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Run dừng ở “{STAGES[run.stage]}”</strong><p>{run.error}</p>{RULES[run.status] && <p className="muted small">Luật áp dụng: {RULES[run.status]}</p>}</div></div>}
+    {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Run dừng ở “{STAGES[run.stage]}”</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
 
     {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={run.updatedAt} specRetries={run.specRetries} />}
 
@@ -85,6 +88,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
 
     {tab === 'overview' && <div className="detail-grid">
       <div className="stack">
+        {run.timeline && run.timeline.length > 0 && <EffortPanel timeline={run.timeline} approvedAt={run.approval?.at ?? null} files={overviewFiles} />}
         <Panel title="Yêu cầu"><blockquote>{run.request}</blockquote>{run.summary && <><h3>Kế hoạch của agent</h3><p>{run.summary}</p></>}</Panel>
         <Panel title="Spec">
           <Facts items={[['Nguồn', run.plan.sources.join(', ') || '—'], ['Bảng', run.plan.tables.join(', ') || '—'], ['Khóa chính', run.plan.primaryKey], ['Cursor', run.plan.cursor],

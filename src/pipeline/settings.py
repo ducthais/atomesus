@@ -12,5 +12,8 @@ class PipelineSettings(BaseSettings):
     dagster_url: str = "http://127.0.0.1:3070"
     # Warehouse DuckDB mà Dagster local ghi bronze / staging / gold (scripts/dagster_local.py).
     warehouse_path: str = "data/warehouse/warehouse.duckdb"
+    # Múi giờ phiên DuckDB khi dbt ép timestamptz → timestamp. Phải là UTC (giống Postgres và phép đối chiếu);
+    # đặt khác (ví dụ Asia/Ho_Chi_Minh) là tái hiện lỗi lệch giờ đã gặp: đối chiếu độc lập sẽ chặn run.
+    warehouse_timezone: str = "UTC"
     max_rows: int = Field(default=1000, ge=1, le=10000)
     max_bytes: int = Field(default=2_000_000, ge=1024, le=10_000_000)

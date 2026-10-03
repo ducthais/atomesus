@@ -76,6 +76,7 @@ def _env(sandbox: Path, spec: Spec, policy: Policy, settings: PipelineSettings) 
     env = {key: os.environ[key] for key in PASSTHROUGH_ENV if key in os.environ}
     env.update(
         WAREHOUSE_PATH=str(sandbox / "warehouse.duckdb"),
+        WAREHOUSE_TIMEZONE=settings.warehouse_timezone,
         DLT_DATA_DIR=str(sandbox / ".dlt"),
         RUNTIME__LOG_LEVEL="WARNING",
         DBT_SEND_ANONYMOUS_USAGE_STATS="false",
@@ -331,7 +332,7 @@ def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: 
             with duckdb.connect(env["WAREHOUSE_PATH"], read_only=True) as db:
                 result.checks += _staging_reconcile(db, spec, max_reject_pct)
                 result.checks.append(_dbt_test_check(results))
-                preview = _gold_preview(db, spec)
+                preview = {**_gold_preview(db, spec), "warehouse_timezone": settings.warehouse_timezone}
                 gold = reference.read_gold(db, spec.transform.model_name)
             try:
                 matched, observed = reference.reconcile(spec, gold, policy, settings)

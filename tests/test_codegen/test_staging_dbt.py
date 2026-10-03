@@ -118,6 +118,8 @@ def warehouse(tmp_path_factory):
 class _Settings:
     """Không cần kết nối nguồn: bronze được dựng sẵn, chỉ chạy dbt."""
 
+    warehouse_timezone = "UTC"
+
     class database_url:  # noqa: N801
         @staticmethod
         def get_secret_value():

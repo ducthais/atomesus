@@ -66,7 +66,7 @@ export type Activity = { id: string; at: string; actor: string; action: string; 
 export type PolicyFile = { name: string; description: string; content: string };
 
 /** `files`: đường dẫn → nội dung. Mock có sẵn; backend để trống, đọc nội dung qua `runFiles()` (GET /runs/{id}/files). */
-export type CatalogRun = Run & { files: Record<string, string>; result?: RunResult | null; spec?: unknown };
+export type CatalogRun = Run & { files: Record<string, string>; result?: RunResult | null; spec?: unknown; timeline?: { event: string; at: string; actor?: string | null }[] };
 
 export type LineageGraph = { nodes: Dataset[]; edges: { from: string; to: string }[]; focus?: string };
 

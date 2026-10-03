@@ -73,18 +73,42 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
 
 ---
 
-## ★ Điểm nhấn: con số có bằng chứng (2 phút)
+## ★ Điểm nhấn: đối chiếu độc lập với nguồn (2 phút)
 
-Đây là phần làm Atomesus khác các công cụ "AI viết SQL": hệ thống **tự chứng minh con số đúng** bằng một đường tính độc lập, và **bắt được lỗi mà mọi test đều cho qua**.
+Đây là phần làm Atomesus khác các công cụ "AI viết SQL": kết quả của pipeline được **tính lại bằng một đường độc lập và so từng dòng**, nên các lỗi thực thi mà test thông thường cho qua (múi giờ, ép kiểu, mất dòng) bị bắt trước khi duyệt.
+
+**Giới hạn, nói ngay từ đầu:** đối chiếu kiểm tra **pipeline thực hiện đúng Spec**. Spec có đúng nhu cầu nghiệp vụ hay không thì **Engineer xác nhận** (tab Mapping, trước khi chạy thử) và Reviewer xem lại trước khi duyệt. Không nói "hệ thống đảm bảo đúng business logic".
 
 | Thao tác | Nói / chỉ vào |
 |---|---|
-| Ở run vừa tạo (hoặc **`98506251`**, doanh thu theo tháng), tab **Kết quả**: khung xanh trên cùng | "Mentor hỏi AI có bịa số không? Đây: sau khi chạy thử, hệ thống dịch Spec thành **một câu SQL chạy thẳng trên Postgres nguồn**, không đi qua dlt, DuckDB, dbt hay template, rồi so **từng dòng**. 6/6 dòng khớp tới từng xu." |
+| Ở run vừa tạo (hoặc **`98506251`**, doanh thu theo tháng), tab **Kết quả**: khung xanh trên cùng | "Sau khi chạy thử, hệ thống dịch Spec thành **một câu SQL chạy thẳng trên Postgres nguồn**, không đi qua dlt, DuckDB, dbt hay template, rồi so **từng dòng**. 6/6 dòng khớp tới từng xu: pipeline đã làm đúng những gì Spec mô tả. Còn Spec có đúng ý người dùng không thì Engineer đã xác nhận ở tab Mapping." |
 | Mở **Truy vấn đối chiếu trên Postgres** | "Câu SQL này ai cũng tự chạy lại được trên nguồn để kiểm tra." |
 | Khám phá → **`gold.fct_total_revenue`** (pipeline đang chạy trên Dagster) → **Đối chiếu lại** | Khung đỏ: **tổng vẫn khớp 227.768,87**, nhưng 16.871 dòng lệch. Hệ thống **tự chẩn đoán: mọi thời điểm lệch đúng +7 giờ**, tức lỗi múi giờ. Hai cột cạnh nhau: nguồn 18:21 ngày 24/01, pipeline 01:21 ngày 25/01. |
 | Câu chốt | "Lỗi này có thật, nằm trong pipeline của chính chúng tôi. Mọi dbt test đều đạt, tổng doanh thu cũng khớp. Chỉ có phép đối chiếu từng dòng bắt được nó. Bây giờ mỗi lần chạy thử đều đối chiếu như vậy, và lệch thì run bị chặn, không tới được tay Reviewer." |
 
-**Nói thật nếu được hỏi:** đối chiếu chứng minh pipeline **tính đúng như Spec**. Spec có hiểu đúng ý người dùng không thì do cổng "Gộp đúng kỳ yêu cầu" và người duyệt lo (bước 5).
+**Nếu được hỏi "vậy là kết quả chắc chắn đúng?":** không hứa vậy. Đối chiếu chỉ kiểm tra pipeline **thực hiện đúng Spec**; nếu Spec hiểu sai yêu cầu (ví dụ lọc nhầm trạng thái đơn), hai đường tính sẽ cùng sai và vẫn khớp nhau. Phần đó do Engineer xác nhận Spec, cộng một số cổng hỗ trợ như "Gộp đúng kỳ yêu cầu" và cảnh báo ở tab Kết quả (bước 5), và Reviewer xem lại trước khi duyệt.
+
+### Bắt lỗi trước khi duyệt: test đạt nhưng đối chiếu lệch (3 phút, tùy chọn)
+
+Tái hiện đúng lỗi múi giờ đã gặp, lần này **ở bước chạy thử, trước khi tới Reviewer**.
+
+| Thao tác | Nói / chỉ vào |
+|---|---|
+| Trước khi demo: thêm dòng `PIPELINE_WAREHOUSE_TIMEZONE=Asia/Ho_Chi_Minh` vào `.env` (backend đọc lại mỗi request, không cần khởi động lại) | "Giả sử warehouse được cấu hình theo giờ máy, như lúc đầu dự án." |
+| Gửi yêu cầu **"Tính doanh thu và số đơn hàng theo từng ngày"** trên `pagila_pg.payment` (bỏ tích xem mapping) | Run chạy khoảng 30 giây. |
+| Run dừng ở **Cần kỹ sư** → tab **Bằng chứng** | dbt test **5/5 đạt**, đối soát số dòng **32.093 → 32.093 đạt**, làm sạch **đạt**. Chỉ **Đối chiếu độc lập** không đạt. Test thông thường không bắt được lỗi này. |
+| Tab **Kết quả** | **Tổng vẫn khớp 227.768,87** nhưng 81 giá trị lệch, 7 ngày thiếu, 6 ngày thừa. Chẩn đoán: chạy thử dùng múi giờ `Asia/Ho_Chi_Minh` trong khi nguồn dùng UTC. Run không tới tay Reviewer. |
+| Engineer sửa: xóa dòng vừa thêm trong `.env` (về UTC) → **Sửa & chạy lại** → Gửi | Run mới khớp **50/50 dòng**, chuyển sang Chờ duyệt. |
+| Tab **So sánh** của run mới | So với run bị chặn: "Cấu hình chạy thử · múi giờ warehouse: Asia/Ho_Chi_Minh → UTC", số dòng 49 → 50. |
+
+Run mẫu đã chạy sẵn: bị chặn **`1072d9dc`**, đã sửa **`56329f23`**. **Nhớ xóa dòng trong `.env`** sau phần này.
+
+### Giảm việc lặp lại: thời gian làm tay so với agent (1 phút)
+
+| Thao tác | Nói / chỉ vào |
+|---|---|
+| Mở run đã đi hết luồng (gửi → chỉnh mapping → chạy thử → duyệt), tab **Tổng quan** → khung **Thời gian & công sức** | Hệ thống tự ghi: máy chạy bao lâu, người chỉnh mapping và duyệt bao lâu, agent sinh bao nhiêu dòng code (ví dụ run **`dee0dc49`**: máy 27 giây, engineer chỉnh mapping 35 giây, 187 dòng code trong 5 file). |
+| So với số làm tay | Đọc bảng trong `docs/time-study.md`: cùng yêu cầu, một engineer làm tay có bấm giờ. **Chỉ nói số đã đo thật.** |
 
 ---
 
@@ -145,8 +169,8 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 ## 8. Kết (1 phút)
 
 **Nói:**
-- Đã có: catalog trên dữ liệu thật, kết nối nguồn theo yêu cầu, agent sinh pipeline có bằng chứng, người duyệt, Dagster chạy định kỳ và theo dõi.
-- Điểm khác biệt: mỗi con số được tính lại bằng một đường độc lập trên nguồn và so từng dòng; hệ thống đã bắt được lỗi thật mà test không thấy.
+- Đã có: catalog trên dữ liệu thật, kết nối nguồn theo yêu cầu, agent sinh pipeline kèm sổ bằng chứng (mọi phép đo của lần chạy thử), người duyệt, Dagster chạy định kỳ và theo dõi.
+- Điểm khác biệt: kết quả được tính lại bằng một đường độc lập trên nguồn và so từng dòng, nên lỗi thực thi bị chặn trước khi duyệt; hệ thống đã bắt được lỗi thật mà test không thấy. Spec có đúng nhu cầu hay không vẫn do Engineer xác nhận và Reviewer duyệt.
 - Tiếp theo: backfill theo partition, connector MongoDB, đối chiếu định kỳ sau mỗi lần Dagster chạy, deploy production qua pull request.
 
 ---
@@ -155,7 +179,8 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 
 | Câu hỏi | Trả lời ngắn |
 |---|---|
-| AI có bịa số không? | Không, và có bằng chứng: mỗi lần chạy thử, kết quả được tính lại bằng SQL chạy thẳng trên Postgres nguồn (không qua dlt / DuckDB / dbt) và so từng dòng; lệch thì run bị chặn. LLM chỉ viết kế hoạch và Spec, code sinh từ template. |
+| AI có bịa số không? | LLM không tạo ra con số: nó chỉ viết kế hoạch và Spec, code sinh từ template, số liệu là phép đo khi chạy thật. Mỗi lần chạy thử, kết quả còn được tính lại bằng SQL chạy thẳng trên Postgres nguồn và so từng dòng; lệch thì run bị chặn. Điều này kiểm tra pipeline **làm đúng Spec**; Spec có đúng nhu cầu không do Engineer xác nhận và Reviewer duyệt. |
+| Vậy hệ thống có đảm bảo đúng business logic không? | Không hứa điều đó. Hệ thống kiểm tra được thực thi (pipeline ↔ Spec) và chặn một số lỗi hiểu ý phổ biến (gộp sai kỳ, bảng rỗng), nhưng nghiệp vụ đúng hay sai là quyết định của Engineer khi xác nhận Spec và của Reviewer khi duyệt. |
 | Đối chiếu có bắt được lỗi thật không? | Có: nó bắt lỗi múi giờ +7 giờ trong pipeline của chính chúng tôi, khi tổng vẫn khớp và mọi dbt test đều đạt (mở `gold.fct_total_revenue` → Đối chiếu lại). |
 | AI hiểu sai thì sao? | Cảnh báo dễ hiểu ở tab Kết quả, Reviewer bắt lỗi trước khi duyệt; sửa và chạy lại tạo run mới, lịch sử giữ nguyên. |
 | Bảo mật? | Tài khoản Postgres chỉ đọc, mọi giao dịch read-only; credential ở server; agent không chạm production. |

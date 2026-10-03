@@ -181,3 +181,20 @@ async def test_compare_endpoint(client, tmp_path, monkeypatch):
         json.dumps(body)  # trả về JSON được
     finally:
         app.dependency_overrides.pop(auth.settings, None)
+
+
+def test_warehouse_timezone_change_is_shown_as_a_config_change():
+    from src.run_report.compare import _config_changes
+
+    def with_tz(r, tz):
+        gates = [
+            g.model_copy(update={"observed": {**g.observed, "warehouse_timezone": tz}}) if g.name == "post_run" else g
+            for g in r.gates
+        ]
+        return r.model_copy(update={"gates": gates})
+
+    old, new = with_tz(report("a", 0), "Asia/Ho_Chi_Minh"), with_tz(report("b", 5), "UTC")
+    assert _config_changes(old, new) == [
+        {"field": "Cấu hình chạy thử · múi giờ warehouse", "before": ["Asia/Ho_Chi_Minh"], "after": ["UTC"]}
+    ]
+    assert _config_changes(new, new) == [] and _config_changes(report("c", 0), new) == []

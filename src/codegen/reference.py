@@ -3,8 +3,10 @@
 Pipeline đi đường dlt → DuckDB (bronze) → dbt (staging, gold) theo template. Ở đây Spec được dịch sang **một câu
 SQL Postgres** bằng code riêng, không dùng template, dlt, DuckDB hay dbt, và chạy trên chính bảng nguồn bằng tài
 khoản chỉ đọc. Hai đường tính cùng một Spec mà ra cùng con số thì con số đó không phải do một bước nào đó làm lệch
-(ép kiểu, múi giờ, mất dòng khi tải, loại trùng...). Đối chiếu chứng minh pipeline **tính đúng như Spec**; Spec có
-hiểu đúng ý người dùng hay không là việc của cổng `time_grain` và người duyệt.
+(ép kiểu, múi giờ, mất dòng khi tải, loại trùng...).
+
+Giới hạn: đối chiếu chỉ kiểm tra pipeline **thực hiện đúng Spec**. Spec hiểu sai yêu cầu thì cả hai đường cùng sai và
+vẫn khớp. Spec có đúng nhu cầu nghiệp vụ hay không do Engineer xác nhận (bản nháp / tab Mapping) và Reviewer duyệt.
 
 Quy tắc làm sạch phải giống staging (templates/dbt_staging.sql.j2): ép kiểu lỗi hoặc thỏa `reject_if` thì loại,
 rồi khử trùng theo khóa. Thời gian có múi giờ quy về UTC.

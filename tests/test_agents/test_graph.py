@@ -239,6 +239,7 @@ def test_progress_is_saved_after_each_step_and_background_job_finishes(tmp_path,
     done = job()
     assert done.status == "READY_FOR_REVIEW" and get_run_report(store, started.run_id).status == "READY_FOR_REVIEW"
     assert ("GENERATING", "plan") in seen and ("VALIDATING", "static") in seen, seen
+    assert [e.event for e in done.timeline] == ["submitted", "spec_ready", "finished"]
 
 
 def test_background_crash_still_closes_the_run(tmp_path, monkeypatch):

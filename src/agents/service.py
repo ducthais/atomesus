@@ -62,6 +62,7 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
         attempts=Attempts.model_validate(state.get("attempts") or {}),
         llm_calls=state.get("llm_calls", 0),
         error_trace=state.get("error_trace", []),
+        timeline=state.get("timeline", []),
     )
 
 
@@ -79,7 +80,12 @@ def _initial(user_request: str, created_by: str, sources: list[dict] | None, par
         "error_trace": [],
         "status": "GENERATING",
         "stage_reached": "intake",
+        "timeline": [_event("submitted", created_by)],
     }
+
+
+def _event(name: str, actor: str | None = None) -> dict:
+    return {"event": name, "at": datetime.now(UTC).isoformat(), "actor": actor}
 
 
 def _invoke(
@@ -107,16 +113,25 @@ def _save(state: AgentState, created_at: datetime, store_path: str) -> RunReport
     return report
 
 
-def _progress(created_at: datetime, store_path: str) -> Callable[[AgentState], None]:
-    """Ghi trạng thái đang chạy vào sổ bằng chứng sau mỗi bước (giao diện đọc lại để hiện tiến độ)."""
-    return lambda state: save_run_report(store_path, _report(state, created_at))
+class _Progress:
+    """Ghi trạng thái đang chạy vào sổ bằng chứng sau mỗi bước (giao diện đọc lại để hiện tiến độ),
+    và mốc spec_ready lần đầu Spec qua các cổng."""
+
+    def __init__(self, timeline: list[dict], created_at: datetime, store_path: str):
+        self.timeline, self.created_at, self.store_path = list(timeline), created_at, store_path
+
+    def __call__(self, state: AgentState) -> None:
+        if state.get("status") == "VALIDATING" and not any(e["event"] == "spec_ready" for e in self.timeline):
+            self.timeline.append(_event("spec_ready"))
+        save_run_report(self.store_path, _report({**state, "timeline": self.timeline}, self.created_at))
 
 
 def _run(initial: AgentState, created_at: datetime, deps: AgentDeps, store_path: str, draft: bool) -> RunReport:
-    state = _invoke(deps, initial, stop_after_spec=draft, progress=_progress(created_at, store_path))
+    progress = _Progress(initial.get("timeline", []), created_at, store_path)
+    state = _invoke(deps, initial, stop_after_spec=draft, progress=progress)
     if draft and state.get("status") == "VALIDATING":  # Spec hợp lệ, dừng chờ Engineer
-        state = {**state, "status": "DRAFT"}
-    return _save(state, created_at, store_path)
+        return _save({**state, "status": "DRAFT", "timeline": progress.timeline}, created_at, store_path)
+    return _save({**state, "timeline": [*progress.timeline, _event("finished")]}, created_at, store_path)
 
 
 def _guarded(job: Job, state: AgentState, created_at: datetime, store_path: str) -> Job:
@@ -201,9 +216,9 @@ def start_continue(
         *draft.spec_history,
         {
             "version": draft.version,
-            "reason": f"{edited_by} chỉnh mapping trước khi chạy thử"
+            "reason": f"{edited_by} chỉnh mapping và xác nhận Spec đúng nhu cầu trước khi chạy thử"
             if edited
-            else f"{edited_by} giữ nguyên Spec của agent và cho chạy thử",
+            else f"{edited_by} giữ nguyên Spec của agent, xác nhận đúng nhu cầu và cho chạy thử",
         },
     ]
     state: AgentState = {
@@ -224,6 +239,7 @@ def start_continue(
         "error_trace": [],
         "status": "VALIDATING",
         "stage_reached": "static",
+        "timeline": [*(e.model_dump(mode="json") for e in draft.timeline), _event("mapping_submitted", edited_by)],
     }
     started = _save(state, draft.created_at, store_path)
 
@@ -234,7 +250,7 @@ def start_continue(
                 break
             current = {**current, **node(current)}
             if current["status"] in RUNNING:
-                _progress(draft.created_at, store_path)(current)
-        return _save(current, draft.created_at, store_path)
+                save_run_report(store_path, _report(current, draft.created_at))
+        return _save({**current, "timeline": [*current["timeline"], _event("finished")]}, draft.created_at, store_path)
 
     return started, _guarded(job, state, draft.created_at, store_path)

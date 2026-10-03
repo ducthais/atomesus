@@ -16,6 +16,8 @@ export type RunResult = {
   sources: ResultSource[]; tests: { passed: number; failed: number } | null;
   /** Đối chiếu độc lập với nguồn (check metric_reconcile); null khi chưa chạy, kèm lý do nếu không đối chiếu được. */
   reconcile: Reconcile | null; reconcileSkipped: string | null;
+  /** Múi giờ phiên DuckDB lúc chạy thử (cấu hình PIPELINE_WAREHOUSE_TIMEZONE). */
+  warehouseTimezone: string | null;
 };
 
 type Key = Record<string, string | null>;
@@ -59,6 +61,7 @@ export function runResult(report: RunReport): RunResult | null {
     tests: dbt ? { passed: Number(dbt.observed.passed ?? 0), failed: Number(dbt.observed.failed ?? 0) } : null,
     reconcile: reconcile ? toReconcile(reconcile.observed, reconcile.result === 'pass') : null,
     reconcileSkipped: typeof post?.observed.reconcile_skipped === 'string' ? post.observed.reconcile_skipped : null,
+    warehouseTimezone: typeof post?.observed.warehouse_timezone === 'string' ? post.observed.warehouse_timezone : null,
     sources: s.sources.map(src => {
       const rows = report.checks.find(c => c.name === 'row_reconcile' && c.source_id === src.id)?.observed ?? {};
       const staged = report.checks.find(c => c.name === 'staging_reconcile' && c.source_id === src.id)?.observed ?? {};

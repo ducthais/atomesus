@@ -68,7 +68,7 @@ function toCheck(check: RunReport['checks'][number]): Check {
   if (check.name === 'metric_reconcile') {
     const rows = (o.rows ?? {}) as { source?: number };
     return { ...base, value: check.result === 'pass' ? `${num(o.matched)} / ${num(rows.source)} dòng khớp` : `${num(o.mismatch_count)} khác · ${num(o.missing_count)} thiếu · ${num(o.extra_count)} thừa`,
-      detail: 'Tính lại gold thẳng trên Postgres nguồn (không qua dlt / DuckDB / dbt), so từng dòng' };
+      detail: 'Pipeline có thực hiện đúng Spec không: tính lại gold thẳng trên Postgres nguồn (không qua dlt / DuckDB / dbt), so từng dòng. Không kiểm tra Spec có đúng nhu cầu.' };
   }
   if (check.name === 'dbt_test') return { ...base, value: `${num(o.passed)} / ${num(Number(o.passed ?? 0) + Number(o.failed ?? 0))} đạt`, detail: 'dbt build trong sandbox' };
   return { ...base, value: check.result === 'pass' ? 'Đạt' : 'Không đạt', detail: JSON.stringify(o).slice(0, 120) };

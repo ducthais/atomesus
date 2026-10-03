@@ -8,5 +8,6 @@ p045:
       schema: main
       threads: 1
       # Ép timestamptz → timestamp theo UTC (giống Postgres), không theo múi giờ của máy chạy.
+      # PIPELINE_WAREHOUSE_TIMEZONE đổi được để tái hiện lỗi lệch giờ (đối chiếu độc lập sẽ chặn).
       settings:
-        TimeZone: UTC
+        TimeZone: "{{ env_var('WAREHOUSE_TIMEZONE', 'UTC') }}"

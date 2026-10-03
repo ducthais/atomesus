@@ -42,6 +42,7 @@ export type RunReport = {
   timing: { baseline_sec: number | null; optimized_sec: number | null };
   // error_trace là dict tự do trong hợp đồng: agent ghi `error`, run mẫu cũ ghi `message`.
   error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string }[]; approval: Approval | null;
+  timeline?: { event: string; at: string; actor?: string | null }[];
 };
 export function stagingOf(report: RunReport): StagingObserved | null {
   const check = report.checks.find(item => item.name === 'staging_reconcile');
