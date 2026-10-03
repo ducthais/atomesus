@@ -82,7 +82,7 @@ def main() -> int:
             check(False, f"Kết nối {ref}", found.text[:200])
             continue
         objects, fks = found.json()["objects"], found.json()["foreign_keys"]
-        fix = "python scripts/load_pagila.py <thư mục pagila>" if ref == "pagila_pg" else START["postgres"]
+        fix = "python scripts/load_pagila.py (nạp bộ Pagila kèm trong repo)" if ref == "pagila_pg" else START["postgres"]
         check(len(objects) > 0, f"Kết nối {ref} ({schema}): {len(objects)} bảng, {len(fks)} khóa ngoại", fix)
 
     print("\n== Run dùng trong kịch bản ==")
