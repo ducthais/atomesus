@@ -15,6 +15,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from langgraph.checkpoint.memory import MemorySaver
+
 from src.agents.graph import build_graph
 from src.agents.nodes.common import RUNNING, AgentDeps
 from src.agents.nodes.render import render_node
@@ -26,6 +28,7 @@ from src.run_report.store import save_run_files
 
 log = logging.getLogger(__name__)
 Job = Callable[[], RunReport]
+DEFAULT_CHECKPOINTER = MemorySaver()
 
 
 class SpecRejectedError(Exception):
@@ -93,7 +96,11 @@ def _invoke(
 ) -> AgentState:
     try:
         state = initial
-        for state in build_graph(deps, stop_after_spec=stop_after_spec).stream(initial, stream_mode="values"):
+        checkpointer = getattr(deps, "checkpointer", None) or DEFAULT_CHECKPOINTER
+        graph = build_graph(deps, stop_after_spec=stop_after_spec, checkpointer=checkpointer)
+        thread_id = initial.get("run_id") or str(uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        for state in graph.stream(initial, config=config, stream_mode="values"):
             if progress and state.get("status") in RUNNING:
                 progress(state)
         return state

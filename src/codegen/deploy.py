@@ -4,7 +4,10 @@ Mỗi pipeline một thư mục `<deploy_dir>/<model_name>/`, gồm scaffold dbt
 Duyệt lại cùng model thì thay toàn bộ thư mục. Sprint 3 thay bước này bằng pull request.
 """
 
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from src.codegen.sandbox import prepare_project
@@ -34,12 +37,31 @@ def write_workspace(deploy_dir: str) -> Path:
     return path
 
 
+def _compile_manifest(project_root: Path) -> None:
+    """Biên dịch trước manifest.json cho dbt để Dagster nạp được code location ngay."""
+    dbt_dir = project_root / "dbt_project"
+    warehouse = Path("data/warehouse/warehouse.duckdb").resolve()
+    env = {
+        **os.environ,
+        "WAREHOUSE_PATH": str(warehouse),
+        "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+    }
+    subprocess.run(
+        [sys.executable, "-m", "dbt.cli.main", "parse", "--project-dir", str(dbt_dir), "--profiles-dir", str(dbt_dir)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
 def deploy_local(spec: Spec, files: dict[str, str], deploy_dir: str) -> Path:
     """Ghi project ra đĩa, trả đường dẫn thư mục project."""
     target = Path(deploy_dir) / spec.transform.model_name
     staging = target.with_name(target.name + ".tmp")
     shutil.rmtree(staging, ignore_errors=True)
     prepare_project(staging, files)
+    _compile_manifest(staging)
     # Thay thư mục cũ sau khi bản mới đã ghi xong, để không bao giờ còn lại project ghi dở.
     shutil.rmtree(target, ignore_errors=True)
     staging.rename(target)

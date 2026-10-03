@@ -11,6 +11,7 @@ Trạng thái kết thúc (mọi trạng thái ngoài DRAFT/GENERATING/VALIDATIN
 Sprint 1 chưa có cổng người xác nhận kế hoạch (P2) và chưa có optimizer (P13).
 """
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
 from src.agents.nodes.codegen import codegen
@@ -39,8 +40,10 @@ def _after_codegen(stop_after_spec: bool):
     return route
 
 
-def build_graph(deps: AgentDeps, stop_after_spec: bool = False):
-    """`stop_after_spec`: dừng khi Spec đã hợp lệ (bản nháp để Engineer xem và sửa mapping trước khi chạy)."""
+def build_graph(deps: AgentDeps, stop_after_spec: bool = False, checkpointer: BaseCheckpointSaver | None = None):
+    """`stop_after_spec`: dừng khi Spec đã hợp lệ (bản nháp để Engineer xem và sửa mapping trước khi chạy).
+    `checkpointer`: Checkpointer của LangGraph (MemorySaver, SqliteSaver...) lưu trạng thái agent (phi trạng thái).
+    """
     graph = StateGraph(AgentState)
     graph.add_node("planner", planner(deps))
     graph.add_node("codegen", codegen(deps))
@@ -51,4 +54,5 @@ def build_graph(deps: AgentDeps, stop_after_spec: bool = False):
     graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "render", END])
     graph.add_conditional_edges("render", _then("test_run"), ["test_run", END])
     graph.add_edge("test_run", END)
-    return graph.compile()
+    saver = checkpointer if checkpointer is not None else getattr(deps, "checkpointer", None)
+    return graph.compile(checkpointer=saver)

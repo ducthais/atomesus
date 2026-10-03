@@ -24,6 +24,7 @@ class AgentDeps:
     catalog: Callable = resolve.catalog
     snapshot: Callable = resolve.snapshot
     sandbox: Callable = run_in_sandbox
+    checkpointer: object = None
 
 
 class StopError(Exception):

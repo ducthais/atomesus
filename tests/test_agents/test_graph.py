@@ -320,3 +320,27 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
     finally:
         app.dependency_overrides.pop(auth.settings, None)
         app.dependency_overrides.pop(routes.agent_deps, None)
+
+
+def test_graph_with_checkpointer():
+    from langgraph.checkpoint.memory import MemorySaver
+
+    saver = MemorySaver()
+    llm = FakeLLM(PLAN, SPEC)
+    g = build_graph(deps(llm), checkpointer=saver)
+    config = {"configurable": {"thread_id": "test-thread-checkpointer"}}
+    state = g.invoke(
+        {
+            "run_id": "test-thread-checkpointer",
+            "version": 1,
+            "user_request": "Doanh thu theo ngày",
+            "llm_calls": 0,
+            "error_trace": [],
+        },
+        config=config,
+    )
+    assert state["status"] == "READY_FOR_REVIEW"
+    assert state["stage_reached"] == "t_validate"
+    checkpoint = saver.get(config)
+    assert checkpoint is not None
+    assert checkpoint["channel_values"]["status"] == "READY_FOR_REVIEW"

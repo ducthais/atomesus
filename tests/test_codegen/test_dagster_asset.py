@@ -3,8 +3,10 @@
 Không cần Postgres: bảng nguồn chỉ được đọc cấu trúc lúc chạy (defer_table_reflect)."""
 
 import importlib
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +26,7 @@ def test_generated_code_location_loads(tmp_path, monkeypatch):
     monkeypatch.setenv("WAREHOUSE_PATH", str(tmp_path / "warehouse.duckdb"))
     monkeypatch.setenv("DLT_DATA_DIR", str(tmp_path / ".dlt"))
     monkeypatch.setenv("SOURCES__SALES_PG__CREDENTIALS", "postgresql+psycopg://reader:x@127.0.0.1:1/none")
+    monkeypatch.setenv("PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""))
     project = str(tmp_path / "dbt_project")
     parsed = subprocess.run(
         [sys.executable, "-m", "dbt.cli.main", "parse", "--project-dir", project, "--profiles-dir", project],

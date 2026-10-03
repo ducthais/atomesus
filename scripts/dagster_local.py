@@ -39,11 +39,14 @@ def start() -> tuple[subprocess.Popen, Path]:
     (home / "dagster.yaml").touch()
     warehouse = ROOT / "data" / "warehouse" / "warehouse.duckdb"
     warehouse.parent.mkdir(parents=True, exist_ok=True)
+    scripts_dir = str(Path(sys.executable).parent)
     env = {
         **os.environ,
         **credentials_env(load_policy(), settings),
+        "PATH": scripts_dir + os.pathsep + os.environ.get("PATH", ""),
         "DAGSTER_HOME": str(home),
         "WAREHOUSE_PATH": str(warehouse),
+        "DAGSTER_IS_DEV_CLI": "1",
         "PYTHONIOENCODING": "utf-8",
     }
     locations = workspace.read_text(encoding="utf-8").count("location_name:")
