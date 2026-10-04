@@ -44,52 +44,37 @@ không hứa "đảm bảo đúng business logic".
 
 ```mermaid
 flowchart TB
-    U([Engineer / Reviewer]) --> W
+    U(["Engineer / Reviewer"])
 
-    subgraph UI["Frontend · web/"]
-        W["Next.js App Router<br/>Server Components · Server Actions"]
+    subgraph APP["① Giao diện & API"]
+        direction LR
+        W["Web<br/>Next.js"] --> A["Backend<br/>FastAPI"] <--> E[("SQLite<br/>RunReport")]
     end
 
-    subgraph CONTROL["Control plane · FastAPI · src/"]
-        A["API /api/v1<br/>auth · agent · catalog · run · policy"]
-        G["LangGraph agent<br/>planner → codegen → render → test_run"]
-        V["Kiểm tra Spec<br/>schema thật · policy · biểu thức an toàn"]
-        C["Catalog / connector<br/>khám phá bảng · khóa · drift"]
-        E[("SQLite<br/>phiên đăng nhập · RunReport · file sinh ra")]
+    subgraph AI["② Lập kế hoạch & sinh code"]
+        direction LR
+        G["Agent LangGraph<br/>kế hoạch → Spec → code"] <--> L["OpenAI"]
     end
 
-    subgraph BUILD["Sinh và chạy thử pipeline"]
-        L["OpenAI<br/>lập kế hoạch và viết Spec"]
-        T["Jinja templates<br/>dlt · dbt · Dagster"]
-        S[("DuckDB sandbox riêng cho từng run")]
-        R["SQL đối chiếu độc lập<br/>so từng dòng với kết quả gold"]
+    subgraph TEST["③ Chạy thử & bằng chứng"]
+        direction LR
+        S["Sandbox DuckDB<br/>dlt → dbt build + test"] --> R["Đối chiếu độc lập<br/>tính lại trên nguồn"]
     end
 
-    subgraph DATA["Dữ liệu và vận hành local"]
-        P[("PostgreSQL nguồn<br/>sales_raw · pagila · tài khoản chỉ đọc")]
-        X["data/dagster_local/<br/>project đã được duyệt"]
-        D["Dagster UI + daemon<br/>workspace tự nạp lại"]
-        H[("DuckDB warehouse dùng chung<br/>data/warehouse/warehouse.duckdb")]
+    subgraph OPS["④ Duyệt & vận hành"]
+        direction LR
+        D["Dagster<br/>chạy theo lịch"] --> H[("Warehouse<br/>DuckDB")]
     end
 
-    W -->|"REST + cookie phiên"| A
-    A --> G
-    A --> C
-    A <--> E
-    C -->|"đọc metadata"| P
-    G --> L
-    G --> V
-    V --> T
-    T -->|"render code tất định"| S
-    P -->|"dlt đọc dữ liệu thật"| S
-    S -->|"dbt build + test"| R
-    P -->|"chạy SQL trực tiếp"| R
-    R -->|"checks + dữ liệu mẫu"| E
-    A -->|"Reviewer phê duyệt"| X
-    X --> D
-    P -->|"dlt theo lịch"| D
-    D --> H
-    A -->|"GraphQL: trạng thái asset/run"| D
+    P[("PostgreSQL nguồn · chỉ đọc")]
+
+    U --> APP
+    APP -->|yêu cầu| AI
+    AI -->|code sinh ra| TEST
+    APP <-.->|lưu bằng chứng| TEST
+    APP -->|Reviewer duyệt| OPS
+    TEST -->|đọc dữ liệu| P
+    OPS -->|dlt theo lịch| P
 ```
 
 Luồng được chia thành bốn phần rõ ràng:
