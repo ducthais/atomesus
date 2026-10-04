@@ -10,7 +10,7 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
 
 1. Mở **Docker Desktop**, rồi 4 terminal tại `D:\Repo\P-045`:
    ```bash
-   docker compose --env-file infra/postgres/.env -p p045-b -f infra/postgres/compose.yml up -d --wait
+   docker compose --env-file .env -p p045-b -f infra/postgres/compose.yml up -d --wait
    .venv\Scripts\uvicorn.exe src.main:app --port 8000
    .venv\Scripts\python.exe scripts\dagster_local.py
    cd web && npm run dev

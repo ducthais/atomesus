@@ -18,7 +18,7 @@ os.chdir(ROOT)
 
 BACKEND, DAGSTER, WEB = "http://127.0.0.1:8000", "http://127.0.0.1:3070", "http://localhost:3000"
 START = {
-    "postgres": "docker compose --env-file infra/postgres/.env -p p045-b -f infra/postgres/compose.yml up -d --wait",
+    "postgres": "docker compose --env-file .env -p p045-b -f infra/postgres/compose.yml up -d --wait",
     "backend": r".venv\Scripts\uvicorn.exe src.main:app --port 8000",
     "dagster": r".venv\Scripts\python.exe scripts\dagster_local.py",
     "web": "cd web && npm run dev",

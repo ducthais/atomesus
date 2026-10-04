@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPOSE = ["docker", "compose", "--env-file", "infra/postgres/.env", "-p", "p045-b", "-f", "infra/postgres/compose.yml"]
+COMPOSE = ["docker", "compose", "--env-file", ".env", "-p", "p045-b", "-f", "infra/postgres/compose.yml"]
 
 
 def main():

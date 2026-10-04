@@ -24,14 +24,14 @@ python -m pip install -r requirements.txt
 python scripts/setup_pipeline.py
 ```
 
-Script tạo `infra/postgres/.env` với mật khẩu ngẫu nhiên, không ghi đè file đã có. File này bị Git bỏ qua. Backend đọc `.env` gốc rồi `infra/postgres/.env`; biến môi trường tiến trình có ưu tiên cao hơn cả hai.
+Script điền mật khẩu ngẫu nhiên cho Postgres nguồn vào `.env` gốc (tạo từ `.env.example` nếu chưa có), không ghi đè giá trị đã có; còn file cũ `infra/postgres/.env` thì lấy lại mật khẩu từ đó. `.env` bị Git bỏ qua. Backend và `docker compose --env-file .env` cùng đọc file này; biến môi trường tiến trình có ưu tiên cao hơn.
 
 Nếu tạo file thủ công từ `.env.example`, phải đặt mật khẩu reader trùng với phần mật khẩu trong `PIPELINE_DATABASE_URL` (URL-encode nếu có ký tự đặc biệt).
 
 ### 2. Dựng và seed Postgres
 
 ```bash
-docker compose --env-file infra/postgres/.env -p p045-b \
+docker compose --env-file .env -p p045-b \
   -f infra/postgres/compose.yml up -d --build --wait
 ```
 

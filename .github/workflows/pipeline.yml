@@ -17,7 +17,7 @@ jobs:
       - run: pip install -r requirements/pipeline.txt
       - run: python scripts/setup_pipeline.py
       - name: Start source Postgres
-        run: docker compose --env-file infra/postgres/.env -p p045-b -f infra/postgres/compose.yml up -d --build --wait
+        run: docker compose --env-file .env -p p045-b -f infra/postgres/compose.yml up -d --build --wait
       - name: Lint
         run: ruff check src/pipeline src/run_report src/agents src/codegen pipeline_tests scripts/setup_pipeline.py scripts/seed_pipeline.py scripts/seed_run_reports.py
       - name: Test backend and real Postgres
@@ -34,7 +34,7 @@ jobs:
           PY
       - name: Stop source Postgres
         if: always()
-        run: docker compose --env-file infra/postgres/.env -p p045-b -f infra/postgres/compose.yml down
+        run: docker compose --env-file .env -p p045-b -f infra/postgres/compose.yml down
   frontend:
     runs-on: ubuntu-latest
     defaults:

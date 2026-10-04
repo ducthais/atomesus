@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class PipelineSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="PIPELINE_", env_file=(".env", "infra/postgres/.env"), extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="PIPELINE_", env_file=".env", extra="ignore")
     database_url: SecretStr = SecretStr("")
     store_path: str = "data/pipeline/runs.sqlite3"
     # Tài khoản local/demo. Production vẫn chặn đăng nhập này trong auth.demo_only.

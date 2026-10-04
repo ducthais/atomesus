@@ -123,16 +123,20 @@ cd web && npm ci && cd ..
 
 ### 2. Cấu hình
 
-- **`.env`** ở thư mục gốc (không đưa lên Git): tối thiểu `OPENAI_API_KEY`. Các biến khác xem mục
-  [Cấu hình](#cấu-hình).
-- **Mật khẩu Postgres nguồn:** `python scripts/setup_pipeline.py` tạo `infra/postgres/.env` với mật khẩu ngẫu nhiên
-  (chỉ lần đầu; đã có thì giữ nguyên).
+Mọi cấu hình nằm trong **một file `.env` ở thư mục gốc** (không đưa lên Git), mẫu ở `.env.example`:
+
+```bash
+cp .env.example .env                   # điền OPENAI_API_KEY; các biến khác xem mục Cấu hình
+python scripts/setup_pipeline.py       # sinh mật khẩu Postgres nguồn vào .env (đã có thì giữ nguyên)
+```
+
+Máy nào còn file cũ `infra/postgres/.env` thì `setup_pipeline.py` tự chép mật khẩu sang `.env`, sau đó xóa file cũ.
 
 ### 3. Khởi động (4 terminal)
 
 ```bash
 # Postgres nguồn: tự nạp dữ liệu mẫu sales_raw và pagila khi volume còn trống
-docker compose --env-file infra/postgres/.env -p p045-b -f infra/postgres/compose.yml up -d --build --wait
+docker compose --env-file .env -p p045-b -f infra/postgres/compose.yml up -d --build --wait
 
 # Backend: http://localhost:8000 (Swagger ở /docs)
 uvicorn src.main:app --port 8000
@@ -234,7 +238,7 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 |---|---|---|
 | `OPENAI_API_KEY` | `.env` | Khóa LLM (bắt buộc để tạo pipeline) |
 | `MODEL_NAME`, `MODEL_NAME_STRONG` | `.env` | Model lập kế hoạch / viết Spec (mặc định `gpt-4o-mini`) |
-| `PIPELINE_DATABASE_URL` | `infra/postgres/.env` | Kết nối Postgres nguồn bằng tài khoản chỉ đọc (do `setup_pipeline.py` tạo) |
+| `POSTGRES_PASSWORD`, `PIPELINE_READER_PASSWORD`, `PIPELINE_DATABASE_URL` | `.env` | Mật khẩu Postgres nguồn và kết nối bằng tài khoản chỉ đọc (do `setup_pipeline.py` sinh) |
 | `PIPELINE_WAREHOUSE_TIMEZONE` | `.env` | Múi giờ DuckDB khi chạy thử, **phải là `UTC`** (mặc định). Đặt khác để tái hiện lỗi lệch giờ trong demo |
 | `PIPELINE_DAGSTER_URL` | `.env` | Dagster local (mặc định `http://127.0.0.1:3070`) |
 | `PIPELINE_ENGINEER_PASSWORD`, `PIPELINE_REVIEWER_PASSWORD` | `.env` | Mật khẩu hai tài khoản local (nên đổi khỏi giá trị mặc định khi chia sẻ môi trường) |
