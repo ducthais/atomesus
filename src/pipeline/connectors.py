@@ -119,9 +119,37 @@ def postgres_row_estimates(config: PipelineSettings, schema: str) -> dict[str, i
     return counts
 
 
+def schema_visibility(config: PipelineSettings, schema: str) -> tuple[bool, bool]:
+    """(schema có trong database, tài khoản đang dùng có quyền USAGE trên schema đó)."""
+    with postgres.connection(config) as conn:
+        row = conn.execute(
+            "SELECT n.oid IS NOT NULL, COALESCE(has_schema_privilege(n.oid, 'USAGE'), false) "
+            "FROM (SELECT %s::text AS name) s LEFT JOIN pg_namespace n ON n.nspname = s.name",
+            (schema,),
+        ).fetchone()
+    return bool(row[0]), bool(row[1])
+
+
+def _empty_reason(config: PipelineSettings, schema: str) -> str:
+    """Kết nối được nhưng không thấy bảng nào: nói rõ vì sao và cách sửa, thay vì trả danh sách rỗng."""
+    exists, usable = schema_visibility(config, schema)
+    fix = (
+        " Chạy `python scripts/load_pagila.py` (Postgres tạo từ trước khi repo có Pagila không tự nạp lại)."
+        if schema == "pagila"
+        else " Kiểm tra dữ liệu seed của nguồn này."
+    )
+    if not exists:
+        return f"Schema '{schema}' chưa có trong Postgres nguồn.{fix}"
+    if not usable:
+        return f"Tài khoản chỉ đọc chưa được cấp quyền đọc schema '{schema}'.{fix.replace('load_pagila.py', 'load_pagila.py --replace')}"
+    return f"Schema '{schema}' có nhưng không có bảng nào tài khoản chỉ đọc đọc được.{fix}"
+
+
 def _postgres(decl: SourceDecl, config: PipelineSettings) -> dict:
     schema = decl.schema_
     columns = postgres_columns(config, schema)
+    if not columns:
+        raise postgres.SourceUnavailableError(_empty_reason(config, schema))
     primary, foreign = postgres_keys(config, schema)
     estimates = postgres_row_estimates(config, schema)
     objects = [

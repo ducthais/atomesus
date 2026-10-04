@@ -125,3 +125,28 @@ async def test_source_discovery_connects_on_request(client, catalog_api, monkeyp
     monkeypatch.setattr(catalog_api, "postgres_columns", _down)
     down = await client.get("/api/v1/catalog/sources/sales_pg/objects")
     assert down.status_code == 503 and down.json()["detail"] == "Không đọc được Postgres."
+
+
+@pytest.mark.parametrize(
+    ("schema", "visibility", "expected"),
+    [
+        ("pagila", (False, False), "chưa có trong Postgres nguồn. Chạy `python scripts/load_pagila.py`"),
+        (
+            "pagila",
+            (True, False),
+            "chưa được cấp quyền đọc schema 'pagila'. Chạy `python scripts/load_pagila.py --replace`",
+        ),
+        ("sales_raw", (False, False), "Schema 'sales_raw' chưa có trong Postgres nguồn. Kiểm tra dữ liệu seed"),
+    ],
+)
+def test_empty_postgres_schema_explains_how_to_fix(monkeypatch, schema, visibility, expected):
+    from src.pipeline import connectors, postgres
+    from src.policy.models import SourceDecl
+
+    monkeypatch.setattr(connectors, "postgres_columns", lambda _c, _s: {})
+    monkeypatch.setattr(connectors, "schema_visibility", lambda _c, _s: visibility)
+    decl = SourceDecl.model_validate({"kind": "postgres", "connection_ref": "sandbox_pg", "schema": schema})
+    with pytest.raises(
+        postgres.SourceUnavailableError, match=expected.replace("(", r"\(").replace(")", r"\)").replace(".", r"\.")
+    ):
+        connectors.discover(decl, None)

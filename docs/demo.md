@@ -195,6 +195,7 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 |---|---|
 | Trang báo "Jest worker encountered…" | Tắt terminal `npm run dev` rồi chạy lại. |
 | Bấm Kết nối báo lỗi | Kiểm tra Docker Desktop / container Postgres; chạy lại `demo_check.py`. |
+| Kết nối `pagila_pg` báo "Schema 'pagila' chưa có" | Postgres tạo từ volume cũ: chạy `python scripts/load_pagila.py` rồi Kết nối lại. |
 | Tạo pipeline lỗi `INFRA_ERROR` | Hết hạn hoặc thiếu `OPENAI_API_KEY`, hoặc mạng; dùng run dự phòng `ce884a4f`. |
 | Dagster không thấy pipeline vừa duyệt | Đợi 1–2 phút; nếu vẫn không thấy, kiểm tra terminal `dagster_local.py` có dòng "workspace.yaml đổi". |
 | Màn hình đăng nhập hiện ra giữa chừng | Phiên 8 giờ đã hết; đăng nhập lại. |
