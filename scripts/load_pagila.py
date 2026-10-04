@@ -19,6 +19,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Some Windows shells still expose a legacy code page (for example cp1252).
+# Replace unsupported display characters instead of aborting after the SQL has
+# already been applied successfully.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(errors="replace")
+
 ROOT = Path(__file__).resolve().parents[1]
 INIT = ROOT / "infra" / "postgres" / "init"
 DUMP, GRANTS_FILE = INIT / "003_pagila.sql.gz", INIT / "004_pagila_grants.sql"
@@ -55,7 +62,9 @@ def run_file(container: str, sql: str, label: str, tmp: Path) -> bool:
     if done.returncode != 0:
         print(f"Lỗi ở {label}:\n{done.stderr[-2000:]}", file=sys.stderr)
         return False
-    print(f"✓ {label}")
+    # Keep console output compatible with the default Windows code page
+    # (often cp1252 when the script is launched outside a UTF-8 terminal).
+    print(f"[OK] {label}")
     return True
 
 
