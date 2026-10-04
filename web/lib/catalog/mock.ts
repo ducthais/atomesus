@@ -458,7 +458,7 @@ marketing:
 ];
 
 /** Trần đọc từ budgets.yml, cùng hình dạng `Limits` của GET /policy. */
-export const LIMITS = { max_llm_calls: 6, max_spec_attempts: 2, max_sql_attempts: 2, max_usd_per_day: 2 };
+export const LIMITS = { max_llm_calls: 6, max_spec_attempts: 2, max_sql_attempts: 2, max_chat_calls: 20, max_usd_per_day: 2 };
 
 export const RELATIONSHIPS: Relationship[] = [
   { id: 'fk:sales_pg.orders_customer_id_fkey', kind: 'foreign_key', from: 'sales.source.orders', fromColumns: ['customer_id'], to: 'sales.source.customers', toColumns: ['customer_id'], label: 'orders_customer_id_fkey', usedBy: [] },

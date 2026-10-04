@@ -13,7 +13,7 @@ export const STAGES = [
 ] as const;
 
 /** Trần đọc từ policy/budgets.yml qua GET /api/v1/policy. */
-export type Limits = { max_llm_calls: number; max_spec_attempts: number; max_sql_attempts: number; max_usd_per_day: number };
+export type Limits = { max_llm_calls: number; max_spec_attempts: number; max_sql_attempts: number; max_chat_calls: number; max_usd_per_day: number };
 export type Status = 'DRAFT' | 'GENERATING' | 'VALIDATING' | 'READY_FOR_REVIEW' | 'APPROVED' | 'DEPLOYED'
   | 'NEEDS_HUMAN' | 'BLOCKED_SEMANTIC_CONFLICT' | 'BLOCKED_BUDGET' | 'BLOCKED_AST' | 'REJECTED'
   | 'INFRA_ERROR' | 'INTERNAL_ERROR' | 'DEPLOY_FAILED' | 'CANCELLED' | 'NO_IMPROVEMENT' | 'PLAN_CONFIRMED';

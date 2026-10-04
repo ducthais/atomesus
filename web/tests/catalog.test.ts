@@ -97,7 +97,7 @@ const cleaningRun: RunReport = {
   ...agentRun('c1eaa000-0000-4000-8000-000000000000', 'NEEDS_HUMAN', '2026-10-01T07:00:00Z'),
   spec: { title: 'Làm sạch', table: 'sales_raw.orders', columns: [{ from: 'order_id', as: 'order_id', type: 'integer' }] }, plan: null, gates: [], checks: [],
 };
-const POLICY = { files: { 'domains.yml': 'domains: {}' }, limits: { max_llm_calls: 6, max_spec_attempts: 2, max_sql_attempts: 2, max_usd_per_day: 2 } };
+const POLICY = { files: { 'domains.yml': 'domains: {}' }, limits: { max_llm_calls: 6, max_spec_attempts: 2, max_sql_attempts: 2, max_chat_calls: 20, max_usd_per_day: 2 } };
 const USERS = [{ id: 'minh', name: 'Minh', role: 'Engineer' as const }, { id: 'an', name: 'An', role: 'Reviewer' as const }];
 
 test('live: nguồn từ /catalog, bronze → staging → gold từ Spec, số đo từ RunReport', () => {

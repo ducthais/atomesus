@@ -56,10 +56,14 @@ Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy
 
 `make dagster` (hoặc `python scripts/dagster_local.py`) bật Dagster UI + daemon ở http://127.0.0.1:3070 cho mọi pipeline đã duyệt trong `data/dagster_local/` (workspace tự sinh, lịch sử run giữ ở `data/dagster_home`, warehouse DuckDB chung ở `data/warehouse/`). Trang dataset (lớp bronze/staging/gold) có panel **Vận hành · Dagster**: lần chạy cuối (thành công / thất bại, thời lượng, link run), dữ liệu cập nhật lúc nào, lịch chạy (bật / tắt) và lần chạy kế tiếp, đọc qua `GET /orchestration/status` (backend gọi GraphQL của Dagster). Lịch mặc định ở trạng thái tắt; bật trong Dagster UI (Automation).
 
+## Hỏi đáp về run
+
+Tab **Hỏi đáp** trên trang run gửi `POST /chat` kèm `run_id` và hiện lịch sử từ `GET /runs/{id}/messages`. Backend trả lời tất định từ RunReport (vì sao dừng, số dòng mỗi nguồn, file sinh ra, trạng thái duyệt), không gọi LLM và không đổi trạng thái run. Trần câu hỏi mỗi run là `per_run.max_chat_calls` trong `budgets.yml` (trả qua `GET /policy`); hết trần thì ô nhập khóa. Run đang chạy thì chưa hỏi được.
+
 ## Chưa có
 
 - Thuật ngữ gắn theo cột, mô tả dataset do steward viết: backend chưa lưu.
-- Trợ lý chat (`POST /chat`) chưa chuyển sang giao diện mới.
+- Tạo run mới từ chat (`POST /chat` không có `run_id`): giao diện dùng form Yêu cầu pipeline.
 - Theo dõi tiến độ trực tiếp (SSE), yêu cầu sửa qua review: Sprint 2.
 
 Monaco tải mã từ CDN; trong lúc tải (hoặc khi mạng chặn CDN) code vẫn hiện dạng văn bản có số dòng.

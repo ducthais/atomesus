@@ -20,6 +20,7 @@ def read_policy() -> dict:
             "max_llm_calls": per_run.max_llm_calls,
             "max_spec_attempts": per_run.max_spec_attempts,
             "max_sql_attempts": per_run.max_sql_attempts,
+            "max_chat_calls": per_run.max_chat_calls,
             "max_usd_per_day": policy.budgets.per_day.max_usd,
         },
     }

@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { refresh } from 'next/cache';
 import type { ColumnRule, RunReport } from '@/lib/postgres-api';
+import { chatPayload, type ChatResponse } from '@/lib/studio';
 import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, discoverObjects } from '@/lib/catalog/source';
 import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections';
 import type { Discovery } from '@/lib/catalog/types';
@@ -136,6 +137,17 @@ export async function reconcileDataset(domain: string, model: string): Promise<R
     if (!r.available || !r.observed) return { available: false, reason: r.reason ?? 'Không đối chiếu được.' };
     return { available: true, checkedAt: r.checked_at, runId: r.run_id, reconcile: toReconcile(r.observed, !!r.matched) };
   } catch (err) { return { available: false, reason: err instanceof Error ? err.message : 'Không đối chiếu được.' }; }
+}
+
+/** Hỏi về một run (POST /chat có run_id): backend trả lời tất định từ RunReport, không đổi trạng thái run. */
+export async function askRun(runId: string, message: string): Promise<ActionState> {
+  const payload = chatPayload(message, 'ask', runId);
+  if (!payload) return { error: 'Nhập câu hỏi.' };
+  if (MOCK) return { error: 'Mock: chưa gọi backend. Bỏ CATALOG_MOCK để hỏi về run thật.' };
+  try { await backend<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify(payload) }); }
+  catch (err) { return failure(err); }
+  refresh(); // tải lại lịch sử chat (và bộ đếm câu hỏi) từ backend
+  return null;
 }
 
 /** Chạy tiếp bản nháp với mapping đã duyệt / sửa: backend kiểm tra lại Spec, sinh code và chạy thử. */

@@ -6,6 +6,7 @@
 import { cache } from 'react';
 import { cookies } from 'next/headers';
 import type { RunReport, User } from '../postgres-api.ts';
+import type { ChatMessage } from '../studio.ts';
 import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live.ts';
 import { DATASETS, DOMAINS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE } from './mock.ts';
 import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
@@ -72,6 +73,12 @@ export const currentUser = cache(async (): Promise<Person | null> => {
 export async function runFiles(run: CatalogRun): Promise<Record<string, string>> {
   if (MOCK || !run.fileCount) return run.files;
   return (await backend<{ files: Record<string, string> }>(`/runs/${encodeURIComponent(run.id)}/files?version=${run.version}`)).files;
+}
+
+/** Lịch sử hỏi đáp của một run (GET /runs/{id}/messages). Mock chưa có chat nên trả rỗng. */
+export async function runMessages(runId: string): Promise<ChatMessage[]> {
+  if (MOCK) return [];
+  return backend<ChatMessage[]>(`/runs/${encodeURIComponent(runId)}/messages`);
 }
 
 const EMPTY = new Catalog({ ...MOCK_SNAPSHOT, datasets: [], domains: [], glossary: [], runs: [], live: true });

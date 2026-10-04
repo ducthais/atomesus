@@ -1,12 +1,13 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CircleAlert, GitBranch, RotateCcw } from 'lucide-react';
-import { currentUser, getCatalog, getComparison, runFiles } from '@/lib/catalog/source';
+import { currentUser, getCatalog, getComparison, runFiles, runMessages } from '@/lib/catalog/source';
 import { STAGES, STAGE_IDS, canReview, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
 import { RunResultView } from '../../_components/run-result';
 import { MappingEditor } from '../../_components/mapping-editor';
 import { RunProgress } from '../../_components/run-progress';
+import { RunChat } from '../../_components/run-chat';
 import { EffortPanel } from '../../_components/effort';
 import type { AgentSpec } from '@/lib/postgres-api';
 import { RunCompareView, impactNotes } from '../../_components/run-compare';
@@ -45,6 +46,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
     ...(draftSpec ? [{ id: 'mapping', label: 'Mapping' }] : []),
     ...(result && !draftSpec && !inProgress ? [{ id: 'result', label: 'Kết quả' }] : []),
     { id: 'overview', label: 'Tổng quan' },
+    { id: 'chat', label: 'Hỏi đáp' },
     { id: 'evidence', label: 'Bằng chứng', count: run.checks.length },
     ...(files ? [{ id: 'code', label: 'Code', count: files }] : []),
     { id: 'logs', label: 'Log', count: run.logs.length },
@@ -55,6 +57,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const comparison = comparable && (tab === 'compare' || (tab === 'overview' && run.status === 'READY_FOR_REVIEW')) ? await getComparison(run.id, tab === 'compare' ? compareBase : undefined) : null;
   const notes = comparison?.available ? impactNotes(comparison) : [];
   const overviewFiles = tab === 'overview' && run.fileCount && run.timeline?.length ? await runFiles(run) : null;
+  const messages = tab === 'chat' ? await runMessages(run.id) : [];
   const base = `/runs/${shortId(run.id)}`;
   const eligible = canReview(run, user.role, user.id);
   const reviewReason = eligible ? 'Duyệt sẽ ghi đúng bộ file này thành project Dagster local.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
@@ -83,6 +86,10 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         const dataset = cat.datasetByName(`${s.source_ref}.${table}`);
         return [s.id, { table, sourceRef: s.source_ref, columns: (dataset?.columns ?? []).map(c => ({ name: c.name, type: c.type })) }];
       }))} />}
+
+    {tab === 'chat' && <RunChat runId={run.id} messages={messages} limit={limits.max_chat_calls}
+      people={Object.fromEntries(messages.map(m => [m.author, cat.personName(m.author)]))}
+      disabledReason={inProgress ? 'Agent đang chạy; hỏi sau khi run dừng để câu trả lời đọc từ RunReport đầy đủ.' : null} />}
 
     {tab === 'compare' && comparison && <RunCompareView comparison={comparison} runId={run.id} versions={versions.filter(v => v.id !== run.id)} />}
 

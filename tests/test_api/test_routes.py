@@ -37,6 +37,7 @@ async def test_policy_requires_session_and_returns_files_and_limits(client, tmp_
             "max_llm_calls": 6,
             "max_spec_attempts": 2,
             "max_sql_attempts": 2,
+            "max_chat_calls": 20,
             "max_usd_per_day": 2.0,
         }
     finally:
