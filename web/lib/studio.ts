@@ -28,6 +28,8 @@ export type Run = {
   filesHash: string; status: Status; stage: number; plan: Plan; summary: string; checks: Check[]; logs: Log[];
   specRetries: number; sqlRetries: number; llmCalls: number; updatedAt: string; usd: number;
   fileCount: number; assets: Asset[]; approval: Approval | null; error: string | null; question: string | null;
+  /** Bảng `nguồn.bảng` tích sẵn khi bấm "Sửa & chạy lại": phạm vi đã chọn + bảng kế hoạch cần mà chưa chọn. */
+  retryTables?: string[];
   /** Run đang chờ backend trả về (POST /agent/runs chạy đồng bộ ~30 giây), chưa có trong sổ bằng chứng. */
   pending?: boolean;
 };
@@ -140,6 +142,7 @@ export function toStudioRun(report: RunReport): Run {
     llmCalls: report.llm_calls ?? 0, updatedAt: report.created_at, usd: report.cost?.usd ?? 0,
     fileCount: Object.keys(report.files ?? {}).length, assets: toAssets(report), approval: report.approval,
     error: last ? (last.question ? `Cần làm rõ: ${last.question}` : traceText(last)) : null, question: last?.question ?? null,
+    retryTables: [...new Set([...(report.source_scope ?? []).flatMap(s => s.tables.map(t => `${s.source_ref}.${t}`)), ...(last?.need_tables ?? [])])],
   };
 }
 

@@ -175,8 +175,170 @@ def test_plan_question_stops_for_human():
 )
 def test_plan_must_point_at_readable_sources(source, message):
     plan = {**PLAN, "sources": [{"id": "x", **source}]}
-    state = run(FakeLLM(plan))
+    llm = FakeLLM(plan, plan)
+    state = run(llm)
     assert state["status"] == "NEEDS_HUMAN" and message in state["error_trace"][-1]["error"]
+    assert state["llm_calls"] == 2 and any(message in e for e in llm.calls[1]["user"]["lỗi_lần_trước"])
+
+
+CUSTOMERS = ["customer_id", "name", "region"]
+JOIN_CUSTOMERS = [{"left": "orders.customer_id", "right": "customers.customer_id", "type": "left"}]
+
+
+def test_plan_retries_once_when_join_points_at_a_column_instead_of_a_table(monkeypatch):
+    # run 870fe465: LLM coi cột `district` của address là một bảng. Lần sửa nhận gợi ý cụ thể rồi qua được.
+    monkeypatch.setitem(CATALOG["sales"]["sources"]["sales_pg"]["objects"], "customers", CUSTOMERS)
+    bad = {**PLAN, "joins": [{"left": "orders.customer_id", "right": "region.region", "type": "inner"}]}
+    llm = FakeLLM(bad, PLAN, SPEC)
+    state = run(llm)
+    assert state["status"] == "READY_FOR_REVIEW" and state["llm_calls"] == 3
+    feedback = llm.calls[1]["user"]["lỗi_lần_trước"]
+    assert any("'region' là cột của bảng customers" in e for e in feedback)
+    assert llm.calls[1]["user"]["kế_hoạch_lần_trước"]["joins"][0]["right"] == "region.region"
+
+
+def test_plan_join_to_selected_table_missing_from_sources_is_completed_without_llm(monkeypatch):
+    # Model rẻ hay chỉ ghi bảng chính vào sources: bảng có trong phạm vi đã chọn thì tự thêm, không tốn lượt LLM.
+    monkeypatch.setitem(CATALOG["sales"]["sources"]["sales_pg"]["objects"], "customers", CUSTOMERS)
+    llm = FakeLLM({**PLAN, "joins": JOIN_CUSTOMERS}, SPEC)
+    state = run(llm, scope=[{"source_ref": "sales_pg", "tables": ["orders", "customers"]}])
+    assert state["status"] == "READY_FOR_REVIEW" and state["llm_calls"] == 2
+    assert [s["object"] for s in state["plan"]["sources"]] == ["orders", "customers"]
+
+
+def test_plan_needing_a_table_outside_the_selection_stops_with_what_to_select(monkeypatch):
+    # Người dùng chỉ chọn orders mà yêu cầu cần customers: LLM không được tự mở rộng phạm vi, dừng ngay ở kế hoạch.
+    monkeypatch.setitem(CATALOG["sales"]["sources"]["sales_pg"]["objects"], "customers", CUSTOMERS)
+    state = run(FakeLLM({**PLAN, "joins": JOIN_CUSTOMERS}), scope=[{"source_ref": "sales_pg", "tables": ["orders"]}])
+    assert state["status"] == "NEEDS_HUMAN" and state["stage_reached"] == "plan" and state["llm_calls"] == 1
+    error = state["error_trace"][-1]["error"]
+    assert "ngoài phạm vi đã chọn: sales_pg.customers" in error and "Chọn thêm" in error
+    assert state["error_trace"][-1]["need_tables"] == ["sales_pg.customers"]
+
+
+def test_join_must_follow_a_foreign_key(monkeypatch):
+    # Hai cột có thật nhưng không có quan hệ (payment.customer_id = address.address_id): số liệu sẽ sai, gửi lại LLM.
+    sales_pg = CATALOG["sales"]["sources"]["sales_pg"]
+    monkeypatch.setitem(sales_pg["objects"], "customers", CUSTOMERS)
+    monkeypatch.setitem(sales_pg, "relations", ["orders.customer_id -> customers.customer_id"])
+    customers = {"id": "customers", "source_ref": "sales_pg", "object": "customers"}
+    wrong = {
+        **PLAN,
+        "sources": [*PLAN["sources"], customers],
+        "joins": [{"left": "orders.order_id", "right": "customers.customer_id", "type": "left"}],
+    }
+    llm = FakeLLM(wrong, PLAN, SPEC)
+    state = run(llm)
+    assert state["status"] == "READY_FOR_REVIEW"
+    feedback = llm.calls[1]["user"]["lỗi_lần_trước"]
+    assert any("không khớp khóa ngoại" in e and "orders.customer_id -> customers.customer_id" in e for e in feedback)
+    assert llm.calls[0]["user"]["danh_mục"]["sales"]["sources"]["sales_pg"]["relations"]
+
+
+def test_narrowed_catalog_keeps_only_relations_between_selected_tables(monkeypatch):
+    sales_pg = CATALOG["sales"]["sources"]["sales_pg"]
+    monkeypatch.setitem(sales_pg["objects"], "customers", CUSTOMERS)
+    monkeypatch.setitem(sales_pg, "relations", ["orders.customer_id -> customers.customer_id"])
+    llm = FakeLLM(PLAN, SPEC)
+    run(llm, scope=[{"source_ref": "sales_pg", "tables": ["orders"]}])
+    assert llm.calls[0]["user"]["danh_mục"]["sales"]["sources"]["sales_pg"]["relations"] == []
+
+
+def test_concept_without_a_column_becomes_a_question_instead_of_another_metric():
+    # Yêu cầu "theo khu vực" mà chỉ có bảng đơn hàng: LLM đánh dấu column null, hệ thống hỏi thay vì gộp theo ngày.
+    plan = {
+        **PLAN,
+        "concepts": [{"term": "khu vực", "column": None}, {"term": "doanh thu", "column": "orders.amount_text"}],
+    }
+    state = run(FakeLLM(plan))
+    assert state["status"] == "NEEDS_HUMAN" and state["stage_reached"] == "plan" and state["llm_calls"] == 1
+    assert "không có cột nào thể hiện: khu vực" in state["error_trace"][-1]["question"]
+
+
+def test_concept_pointing_at_unknown_column_is_sent_back():
+    bad = {**PLAN, "concepts": [{"term": "khu vực", "column": "orders.region"}]}
+    llm = FakeLLM(bad, PLAN, SPEC)
+    assert run(llm)["status"] == "READY_FOR_REVIEW"
+    assert any("concepts 'khu vực'" in e for e in llm.calls[1]["user"]["lỗi_lần_trước"])
+
+
+def test_codegen_declares_forgotten_join_keys_in_staging():
+    # run 3f485a6d: LLM ghép address.city_id nhưng 3 lần liền không khai báo cột này ở staging của address.
+    from src.agents.nodes.codegen import _add_key_columns
+
+    raw = {
+        "sources": [
+            {"id": "address", "staging": {"columns": [{"from": "address_id", "as": "address_id", "type": "integer"}]}},
+            {"id": "city", "staging": {"columns": [{"from": "city_id", "as": "city_id", "type": "integer"}]}},
+        ],
+        "transform": {
+            "from": "address",
+            "joins": [{"source": "city", "on": [["address.city_id", "city.city_id"]]}],
+            "grain": ["city.city"],
+        },
+    }
+    snapshot = {
+        "address": {"columns": {"address_id": "integer", "city_id": "smallint"}},
+        "city": {"columns": {"city_id": "integer", "city": "text"}},
+    }
+    fixed = _add_key_columns(raw, snapshot)
+    assert {"from": "city_id", "as": "city_id", "type": "integer"} in fixed["sources"][0]["staging"]["columns"]
+    assert {"from": "city", "as": "city", "type": "varchar"} in fixed["sources"][1]["staging"]["columns"]
+    assert len(fixed["sources"][1]["staging"]["columns"]) == 2  # city_id đã có, không thêm trùng
+
+
+def test_codegen_maps_postgres_type_names_in_staging():
+    from src.agents.nodes.codegen import _add_key_columns
+
+    raw = {
+        "sources": [
+            {
+                "id": "p",
+                "staging": {
+                    "columns": [
+                        {"from": "a", "as": "a", "type": "smallint"},
+                        {"from": "b", "as": "b", "type": "decimal(18,2)"},
+                    ]
+                },
+            }
+        ],
+        "transform": {"joins": [], "grain": []},
+    }
+    types = [c["type"] for c in _add_key_columns(raw, {})["sources"][0]["staging"]["columns"]]
+    assert types == ["integer", "decimal(18,2)"]
+
+
+def test_plan_accepts_null_lists_from_llm():
+    state = run(FakeLLM({**PLAN, "joins": None, "filters": None, "schedule": None}, SPEC))
+    assert state["status"] == "READY_FOR_REVIEW" and state["plan"]["filters"] == []
+    assert state["plan"]["schedule"] == "0 2 * * *"
+
+
+def test_malformed_plan_gets_one_retry():
+    llm = FakeLLM("không phải JSON", PLAN, SPEC)
+    state = run(llm)
+    assert state["status"] == "READY_FOR_REVIEW" and state["llm_calls"] == 3
+    assert llm.calls[1]["user"]["lỗi_lần_trước"]
+
+
+def test_plan_self_join_is_sent_back(monkeypatch):
+    bad = {**PLAN, "joins": [{"left": "orders.customer_id", "right": "orders.customer_id", "type": "inner"}]}
+    llm = FakeLLM(bad, PLAN, SPEC)
+    assert run(llm)["status"] == "READY_FOR_REVIEW"
+    assert any("chính nó" in e for e in llm.calls[1]["user"]["lỗi_lần_trước"])
+
+
+def test_plan_join_with_unknown_column_is_rejected(monkeypatch):
+    monkeypatch.setitem(CATALOG["sales"]["sources"]["sales_pg"]["objects"], "customers", CUSTOMERS)
+    customers = {"id": "customers", "source_ref": "sales_pg", "object": "customers"}
+    bad = {
+        **PLAN,
+        "sources": [*PLAN["sources"], customers],
+        "joins": [{"left": "orders.cust_id", "right": "customers.customer_id", "type": "left"}],
+    }
+    state = run(FakeLLM(bad, bad))
+    assert state["status"] == "NEEDS_HUMAN"
+    assert "cột 'cust_id' không có trong bảng 'orders'" in state["error_trace"][-1]["error"]
 
 
 def test_selected_sources_narrow_what_planner_sees():
@@ -222,6 +384,26 @@ def test_service_saves_report_and_files(tmp_path):
     assert get_run_report(store, report.run_id) == report
     files = get_run_files(store, report.run_id, 1)
     assert set(files) == set(report.files) and len(files) == 5
+    assert report.source_scope is None
+
+
+def test_service_records_the_tables_the_user_selected(tmp_path):
+    store, scope = str(tmp_path / "runs.sqlite3"), [{"source_ref": "sales_pg", "tables": ["orders"]}]
+    report = run_agent("Doanh thu theo ngày", "minh", deps(FakeLLM(PLAN, SPEC)), store, sources=scope)
+    assert get_run_report(store, report.run_id).source_scope == scope
+
+
+def test_spec_with_field_errors_also_reports_undeclared_join_sources():
+    # run 870fe465: lỗi kiểu cột che mất lỗi "joins nhắc nguồn chưa khai báo", LLM tốn thêm một lượt sửa.
+    from src.agents.validate import validate_spec
+
+    broken = with_column(SPEC, 1, type="smallint")
+    broken["transform"]["joins"] = [
+        {"source": "customers", "type": "left", "on": [["orders.customer_id", "customers.customer_id"]]}
+    ]
+    result = validate_spec(broken, SNAPSHOT, load_policy())
+    assert any("smallint" in e for e in result.errors)
+    assert any("đang có ['customers']" in e and "khai báo đủ ở sources" in e for e in result.errors)
 
 
 def test_progress_is_saved_after_each_step_and_background_job_finishes(tmp_path, monkeypatch):

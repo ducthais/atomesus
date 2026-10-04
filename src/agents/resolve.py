@@ -20,14 +20,30 @@ def _tables(settings: PipelineSettings, schema: str) -> dict[str, list[str]]:
     return {table: [c["name"] for c in cols] for table, cols in connectors.postgres_columns(settings, schema).items()}
 
 
+def _relations(settings: PipelineSettings, schema: str) -> list[str]:
+    """Khóa ngoại trong cùng schema dạng `bảng.cột -> bảng_đích.cột_đích`: planner ghép bảng theo đúng các quan hệ này."""
+    _, foreign = connectors.postgres_keys(settings, schema)
+    return [
+        f"{fk['table']}.{col} -> {fk['ref_table']}.{ref}"
+        for fk in foreign
+        if fk["ref_schema"] == schema
+        for col, ref in zip(fk["columns"], fk["ref_columns"], strict=True)
+    ]
+
+
 def catalog(policy: Policy, settings: PipelineSettings) -> dict:
-    """Mọi domain → nguồn → đối tượng đọc được (tên bảng và cột). Đưa cho planner chọn nguồn."""
+    """Mọi domain → nguồn → đối tượng đọc được (tên bảng và cột) và khóa ngoại. Đưa cho planner chọn nguồn."""
     result = {}
     for domain_name, domain in policy.domains.domains.items():
         sources = {}
         for ref, decl in domain.sources.items():
             if decl.kind == "postgres":
-                sources[ref] = {"kind": decl.kind, "available": True, "objects": _tables(settings, decl.schema_)}
+                sources[ref] = {
+                    "kind": decl.kind,
+                    "available": True,
+                    "objects": _tables(settings, decl.schema_),
+                    "relations": _relations(settings, decl.schema_),
+                }
             else:
                 sources[ref] = {"kind": decl.kind, "available": False, "reason": "chưa hỗ trợ ở Sprint 1"}
         result[domain_name] = {

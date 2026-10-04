@@ -67,7 +67,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   return <>
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/runs">Hoạt động</Link><span>/</span><span className="mono">{shortId(run.id)}</span></nav>
     <PageHeader icon={<GitBranch size={22} />} kicker={<><StatusBadge status={run.status} /><span className="meta-tag">v{run.version}</span><span className="meta-tag">Phase {run.stage + 1}/{STAGES.length} · {STAGES[run.stage]}</span></>} title={run.title}
-      actions={<Link href={`/runs/new?request=${encodeURIComponent(run.request)}&parent=${run.id}`} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link>}>
+      actions={<Link href={`/runs/new?request=${encodeURIComponent(run.request)}&parent=${run.id}${run.retryTables?.length ? `&tables=${encodeURIComponent(run.retryTables.join(','))}` : ''}`} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link>}>
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
 

@@ -156,6 +156,9 @@ class RunReport(_Contract):
     )
     trigger: Trigger
     parent_run_id: str | None = None
+    source_scope: list[dict[str, Any]] | None = Field(
+        default=None, description="Nguồn và bảng người dùng chọn khi tạo run; null = để agent chọn trong mọi nguồn"
+    )
     regression: dict[str, Any] | None = None
     created_at: datetime
     user_request: str

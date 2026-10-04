@@ -12,14 +12,15 @@ const EXAMPLES = [
 ];
 const STEPS = ['Kết nối nguồn, liệt kê bảng đang có', 'Lập kế hoạch chỉ trên các bảng bạn chọn', 'Đọc schema + 20 dòng mẫu, viết Spec', 'Kiểm tra Spec; sai thì tự sửa (trần trong budgets.yml)', 'Sinh dlt, dbt, Dagster từ template', 'Chạy dlt → dbt trong sandbox, đối soát'];
 
-export default async function NewRequestPage({ searchParams }: { searchParams: Promise<{ dataset?: string; request?: string; parent?: string }> }) {
-  const { dataset: datasetId, request, parent: parentId } = await searchParams;
+export default async function NewRequestPage({ searchParams }: { searchParams: Promise<{ dataset?: string; request?: string; parent?: string; tables?: string }> }) {
+  const { dataset: datasetId, request, parent: parentId, tables } = await searchParams;
   const [user, cat, sources, connected] = await Promise.all([currentUser(), getCatalog(), listDeclaredSources(), rememberedConnections()]);
   const dataset = datasetId ? cat.dataset(datasetId) : null;
   const parent = parentId ? cat.run(parentId) : null;
   const initial = request ?? (dataset ? `Từ ${dataset.name}: ` : '');
   // Bắt đầu từ một dataset: chọn sẵn các bảng nguồn phía thượng nguồn của nó (form tự kết nối các nguồn đó để kiểm tra bảng còn tồn tại).
-  const initialTables = dataset ? cat.sourceTablesOf(dataset.id) : [];
+  // Sửa & chạy lại: ?tables=nguồn.bảng,... (phạm vi run cũ + bảng kế hoạch cần thêm).
+  const initialTables = tables ? tables.split(',').filter(t => /^[\w-]+\.[\w-]+$/.test(t)) : dataset ? cat.sourceTablesOf(dataset.id) : [];
   return <>
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/runs">Hoạt động</Link><span>/</span><span>Yêu cầu mới</span></nav>
     <PageHeader icon={<Workflow size={22} />} kicker="Agent" title="Yêu cầu pipeline mới">

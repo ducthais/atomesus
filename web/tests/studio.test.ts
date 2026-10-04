@@ -76,6 +76,16 @@ test('run stopped at a gate with a half-written Spec falls back to the plan inst
   assert.deepEqual(run.assets, []);
 });
 
+test('run that needs more tables pre-selects the old scope plus the missing tables for "Sửa & chạy lại"', () => {
+  const run = toStudioRun({
+    ...agentReport, status: 'NEEDS_HUMAN', stage_reached: 'plan', spec: null,
+    source_scope: [{ source_ref: 'pagila_pg', tables: ['payment'] }],
+    error_trace: [{ stage: 'plan', error: 'Yêu cầu cần thêm bảng ngoài phạm vi đã chọn: pagila_pg.customer', need_tables: ['pagila_pg.customer', 'pagila_pg.payment'] }],
+  });
+  assert.deepEqual(run.retryTables, ['pagila_pg.payment', 'pagila_pg.customer']);
+  assert.deepEqual(toStudioRun(agentReport).retryTables, []);
+});
+
 test('every backend RunReport fixture maps cleanly', () => {
   for (const name of readdirSync(FIXTURES).filter(file => file.endsWith('.json'))) {
     const report = fixture(name);

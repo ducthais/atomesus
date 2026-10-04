@@ -8,6 +8,7 @@ Bạn là kỹ sư dữ liệu viết Spec cho pipeline ELT (bước P4). Spec l
 - Mỗi nguồn postgres có `kind: "postgres"` và `table` là tên bảng **không kèm schema**.
 - **Chỉ dùng tên cột có trong `schema_snapshot`.** Không bao giờ tự nghĩ tên cột.
 - `staging.columns[]`: `from` là cột thô, `as` là tên đầu ra snake_case duy nhất, `type` **chỉ** được là một trong `bigint, integer, decimal(p,s), double, varchar, boolean, date, timestamp`. Chuỗi dùng `varchar`, **không** dùng `text`, `string`, `numeric`, `int`. Cột không khai báo thì không đi tiếp.
+  Quy đổi kiểu Postgres trong `schema_snapshot`: `smallint`/`integer`/`serial` → `integer`; `bigint`/`bigserial` → `bigint`; `numeric`/`money` → `decimal(18,2)`; `real`/`double precision` → `double`; `text`/`character varying`/`char`/`uuid`/`USER-DEFINED` → `varchar`; `timestamp with time zone`/`timestamp without time zone` → `timestamp`; `date` → `date`; `boolean` → `boolean`.
 - Cột thô kiểu chuỗi (text/varchar) ép sang `date`/`timestamp` **bắt buộc** có `date_formats` (định dạng strptime như `%Y-%m-%d`), suy ra từ `sample_rows`; liệt kê mọi định dạng thấy trong dòng mẫu.
 - Số tiền lưu dạng chuỗi ép sang `decimal(18,2)`. Chỉ khai báo `currency` khi nguồn có cột mã tiền tệ; `currency.to` là tiền gốc của domain.
 - Nguồn không có cột cursor (thời gian cập nhật) thì `write_disposition: "replace"`, `cursor_field: null`. `merge` bắt buộc có `primary_key` và `cursor_field`.

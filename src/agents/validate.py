@@ -89,6 +89,27 @@ def _format(error: ValidationError) -> list[str]:
     return messages
 
 
+def _join_coverage(raw: object) -> list[str]:
+    """Luật ghép nguồn của Spec chỉ chạy khi mọi trường đã hợp lệ; trên Spec còn lỗi trường thì kiểm tra thô ở đây để
+    báo cùng một lượt, LLM không mất một lần sửa chỉ để thấy lỗi tiếp theo."""
+    if (
+        not isinstance(raw, dict)
+        or not isinstance(raw.get("sources"), list)
+        or not isinstance(raw.get("transform"), dict)
+    ):
+        return []
+    ids = {s.get("id") for s in raw["sources"] if isinstance(s, dict)}
+    joins = raw["transform"].get("joins") or []
+    joined = [j.get("source") for j in joins if isinstance(j, dict)]
+    expected = ids - {raw["transform"].get("from")}
+    if sorted(map(str, joined)) == sorted(map(str, expected)):
+        return []
+    return [
+        "<gốc>: mọi nguồn khác transform.from phải xuất hiện đúng một lần trong joins và mọi nguồn trong joins phải "
+        f"khai báo đủ ở sources (kèm staging từ schema_snapshot); cần {sorted(map(str, expected))}, đang có {joined}"
+    ]
+
+
 def _schema_real(spec: Spec, snapshot: dict) -> list[str]:
     by_table = {(item["source_ref"], item["table"]): item for item in snapshot.values()}
     errors = []
@@ -153,7 +174,7 @@ def validate_spec(raw: dict, snapshot: dict, policy: Policy, request: str | None
     try:
         spec = Spec.model_validate(raw)
     except ValidationError as exc:
-        errors = _format(exc)
+        errors = _format(exc) + _join_coverage(raw)
         return Validation(None, [GateResult(name="spec_schema", result="fail", detail="; ".join(errors))], errors)
     errors = policy_violations(spec, policy)
     gates = [

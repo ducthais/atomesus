@@ -54,7 +54,9 @@ export type RunReport = {
   cost?: { usd: number }; attempts?: { spec: number; sql: number }; llm_calls?: number;
   timing: { baseline_sec: number | null; optimized_sec: number | null };
   // error_trace là dict tự do trong hợp đồng: agent ghi `error`, run mẫu cũ ghi `message`.
-  error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string }[]; approval: Approval | null;
+  error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string; need_tables?: string[] }[];
+  /** Nguồn và bảng người dùng chọn khi tạo run; null = agent chọn trong mọi nguồn. */
+  source_scope?: { source_ref: string; tables: string[] }[] | null; approval: Approval | null;
   timeline?: { event: string; at: string; actor?: string | null }[];
 };
 export function stagingOf(report: RunReport): StagingObserved | null {
