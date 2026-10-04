@@ -3,7 +3,7 @@
  * GET /runs (RunReport) và GET /policy. Dataset bronze/staging/gold suy ra từ Spec của các run đã chạy thử
  * thành công; số dòng, kiểm tra chất lượng và mẫu dữ liệu chỉ lấy từ phép đo trong RunReport (NFR-08).
  */
-import type { AgentSpec, RunReport, User } from '../postgres-api.ts';
+import { isAgentSpec, type RunReport, type User } from '../postgres-api.ts';
 import { toStudioRun, type Check, type Limits } from '../studio.ts';
 import { runResult } from './explain.ts';
 import type { CatalogRun, Column, Dataset, Domain, GlossaryTerm, Person, Platform, PolicyFile, QualityCheck, Relationship, Snapshot } from './types.ts';
@@ -31,7 +31,6 @@ const POLICY_DESCRIPTION: Record<string, string> = {
   'objectives.yml': 'Ngưỡng chất lượng, độ tươi và suy giảm theo domain.',
 };
 
-const isAgentSpec = (spec: RunReport['spec']): spec is AgentSpec => !!spec && 'sources' in spec && 'transform' in spec;
 const num = (v: unknown) => typeof v === 'number' ? v : null;
 const title = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const stripAlias = (col: string) => col.split('.').at(-1)!;

@@ -1,4 +1,4 @@
-import type { AgentSpec, Approval, RunReport } from './postgres-api.ts';
+import { isAgentSpec, type AgentSpec, type Approval, type RunReport } from './postgres-api.ts';
 
 /** Phase P0–P14 theo SPEC §9, cùng thứ tự với `stage_reached` của RunReport. */
 export const STAGE_IDS = [
@@ -53,10 +53,6 @@ export const shortId = (id: string) => id.startsWith('pending-') ? 'đang tạo'
 export const stageIndex = (stage: string) => Math.max(0, STAGE_IDS.indexOf(stage as typeof STAGE_IDS[number]));
 const traceText = (item: RunReport['error_trace'][number]) => item.error ?? item.message ?? JSON.stringify(item);
 const num = (value: unknown) => typeof value === 'number' ? value.toLocaleString('vi-VN') : '—';
-
-function isAgentSpec(spec: RunReport['spec']): spec is AgentSpec {
-  return !!spec && 'sources' in spec && 'transform' in spec;
-}
 
 function toCheck(check: RunReport['checks'][number]): Check {
   const o = check.observed;

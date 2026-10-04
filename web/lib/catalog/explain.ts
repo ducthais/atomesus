@@ -2,7 +2,7 @@
  * Diễn giải một run cho người không đọc code: pipeline đọc gì, làm sạch thế nào, bảng kết quả mỗi dòng là gì,
  * và các dấu hiệu kết quả khó dùng. Chỉ dựa trên Spec và số đo trong RunReport (hàm thuần, có test).
  */
-import type { AgentSpec, RunReport, TimeUnit } from '../postgres-api.ts';
+import { isAgentSpec, type RunReport, type TimeUnit } from '../postgres-api.ts';
 
 export type ResultSource = {
   id: string; table: string; sourceRef: string;
@@ -49,8 +49,8 @@ const bare = (column: string) => column.split('.').at(-1)!;
 /** RunReport → kết quả diễn giải được; null khi run dừng trước khi có Spec (không có gì để giải thích). */
 export function runResult(report: RunReport): RunResult | null {
   const spec = report.spec;
-  if (!spec || !('sources' in spec) || !('transform' in spec)) return null;
-  const s = spec as AgentSpec;
+  if (!isAgentSpec(spec)) return null;
+  const s = spec;
   const post = report.gates.find(g => g.name === 'post_run');
   const dbt = report.checks.find(c => c.name === 'dbt_test');
   const reconcile = report.checks.find(c => c.name === 'metric_reconcile');

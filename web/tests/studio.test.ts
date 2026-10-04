@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { canReview, chatMode, chatPayload, pendingRun, stageIndex, toArtifacts, toStudioRun, STAGES } from '../lib/studio.ts';
-import type { RunReport } from '../lib/postgres-api.ts';
+import { isAgentSpec, type RunReport } from '../lib/postgres-api.ts';
 
 const FIXTURES = new URL('../../fixtures/run_reports/', import.meta.url);
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(name, FIXTURES), 'utf-8')) as RunReport;
@@ -63,6 +63,17 @@ test('stopped run exposes the recorded reason and stage', () => {
   assert.equal(run.fileCount, 0);
   assert.deepEqual(run.assets, []);
   assert.equal(run.plan.model, 'fct_daily_orders');
+});
+
+test('run stopped at a gate with a half-written Spec falls back to the plan instead of crashing', () => {
+  // Spec LLM viết dở, lưu nguyên khi cổng kiểm tra chặn (run 870fe465): nguồn thiếu primary_key, write_disposition.
+  const partial = { domain: 'rental', sources: [{ id: 'customer', kind: 'postgres', source_ref: 'pagila_pg', table: 'customer' }], transform: {}, schedule: {} };
+  const run = toStudioRun({ ...agentReport, status: 'NEEDS_HUMAN', stage_reached: 'resolve', spec: partial as unknown as RunReport['spec'], files: {}, files_hash: null, checks: [], gates: [] });
+  assert.equal(isAgentSpec(partial), false);
+  assert.equal(isAgentSpec(agentReport.spec), true);
+  assert.equal(run.plan.model, 'fct_daily_orders');
+  assert.equal(run.plan.primaryKey, '—');
+  assert.deepEqual(run.assets, []);
 });
 
 test('every backend RunReport fixture maps cleanly', () => {

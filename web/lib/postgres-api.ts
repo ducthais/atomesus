@@ -23,6 +23,19 @@ export type AgentSpec = {
   schedule: { cron: string };
 };
 export type TimeUnit = 'day' | 'week' | 'month' | 'quarter' | 'year';
+
+const strings = (v: unknown) => Array.isArray(v) && v.every(x => typeof x === 'string');
+/** Spec đủ các trường giao diện đọc. Run dừng ở cổng kiểm tra (NEEDS_HUMAN, BLOCKED_*) có thể lưu Spec dở dang của
+ *  LLM, ví dụ nguồn thiếu primary_key: khi đó giao diện dùng kế hoạch (`plan`) thay vì Spec. */
+export function isAgentSpec(spec: unknown): spec is AgentSpec {
+  if (!spec || typeof spec !== 'object' || !('sources' in spec) || !('transform' in spec)) return false;
+  const { sources, transform: t, schedule } = spec as Partial<AgentSpec>;
+  return Array.isArray(sources) && sources.length > 0
+    && sources.every(s => !!s && typeof s.id === 'string' && typeof s.source_ref === 'string' && strings(s.primary_key) && typeof s.write_disposition === 'string')
+    && !!t && typeof t.model_name === 'string' && strings(t.grain) && strings(t.filters)
+    && Array.isArray(t.metrics) && t.metrics.every(m => !!m && typeof m.name === 'string' && typeof m.expr === 'string')
+    && typeof schedule?.cron === 'string';
+}
 export type AgentPlan = {
   summary?: string; model_name?: string; schedule?: string; question?: string | null;
   sources: { id: string; source_ref: string; object: string }[]; metrics?: { name: string; definition?: string }[];

@@ -9,7 +9,7 @@ import { MappingEditor } from '../../_components/mapping-editor';
 import { RunProgress } from '../../_components/run-progress';
 import { RunChat } from '../../_components/run-chat';
 import { EffortPanel } from '../../_components/effort';
-import type { AgentSpec } from '@/lib/postgres-api';
+import { isAgentSpec } from '@/lib/postgres-api';
 import { RunCompareView, impactNotes } from '../../_components/run-compare';
 import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, StatusBadge, Tabs, fmtDate, statusTone } from '../../_components/ui';
 
@@ -41,7 +41,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const comparable = versions.some(v => v.id !== run.id);
   // Agent chạy nền: trang tự làm mới tới khi run dừng (DRAFT là nháp chờ người sửa, không phải đang chạy).
   const inProgress = run.status === 'GENERATING' || run.status === 'VALIDATING';
-  const draftSpec = run.status === 'DRAFT' && run.spec && typeof run.spec === 'object' && 'sources' in run.spec ? run.spec as AgentSpec : null;
+  const draftSpec = run.status === 'DRAFT' && isAgentSpec(run.spec) ? run.spec : null;
   const tabs = [
     ...(draftSpec ? [{ id: 'mapping', label: 'Mapping' }] : []),
     ...(result && !draftSpec && !inProgress ? [{ id: 'result', label: 'Kết quả' }] : []),
