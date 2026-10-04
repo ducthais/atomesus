@@ -43,19 +43,67 @@ không hứa "đảm bảo đúng business logic".
 ## Kiến trúc
 
 ```mermaid
-graph LR
-    U([Engineer / Reviewer]) --> W[Web: Next.js]
-    W -->|REST| A[FastAPI]
-    A --> G[Agent LangGraph<br/>planner → codegen → render → sandbox]
-    G --> L[LLM OpenAI]
-    G --> T[Template Jinja<br/>dlt · dbt · Dagster]
-    G --> S[(Sandbox DuckDB<br/>mỗi run một file)]
-    A --> P[(Postgres nguồn<br/>tài khoản chỉ đọc)]
-    A --> E[(Sổ bằng chứng<br/>SQLite)]
-    A --> D[Dagster local<br/>pipeline đã duyệt]
-    P -. dlt .-> S
-    P -. dlt .-> D
+flowchart TB
+    U([Engineer / Reviewer]) --> W
+
+    subgraph UI["Frontend · web/"]
+        W["Next.js App Router<br/>Server Components · Server Actions"]
+    end
+
+    subgraph CONTROL["Control plane · FastAPI · src/"]
+        A["API /api/v1<br/>auth · agent · catalog · run · policy"]
+        G["LangGraph agent<br/>planner → codegen → render → test_run"]
+        V["Kiểm tra Spec<br/>schema thật · policy · biểu thức an toàn"]
+        C["Catalog / connector<br/>khám phá bảng · khóa · drift"]
+        E[("SQLite<br/>phiên đăng nhập · RunReport · file sinh ra")]
+    end
+
+    subgraph BUILD["Sinh và chạy thử pipeline"]
+        L["OpenAI<br/>lập kế hoạch và viết Spec"]
+        T["Jinja templates<br/>dlt · dbt · Dagster"]
+        S[("DuckDB sandbox riêng cho từng run")]
+        R["SQL đối chiếu độc lập<br/>so từng dòng với kết quả gold"]
+    end
+
+    subgraph DATA["Dữ liệu và vận hành local"]
+        P[("PostgreSQL nguồn<br/>sales_raw · pagila · tài khoản chỉ đọc")]
+        X["data/dagster_local/<br/>project đã được duyệt"]
+        D["Dagster UI + daemon<br/>workspace tự nạp lại"]
+        H[("DuckDB warehouse dùng chung<br/>data/warehouse/warehouse.duckdb")]
+    end
+
+    W -->|"REST + cookie phiên"| A
+    A --> G
+    A --> C
+    A <--> E
+    C -->|"đọc metadata"| P
+    G --> L
+    G --> V
+    V --> T
+    T -->|"render code tất định"| S
+    P -->|"dlt đọc dữ liệu thật"| S
+    S -->|"dbt build + test"| R
+    P -->|"chạy SQL trực tiếp"| R
+    R -->|"checks + dữ liệu mẫu"| E
+    A -->|"Reviewer phê duyệt"| X
+    X --> D
+    P -->|"dlt theo lịch"| D
+    D --> H
+    A -->|"GraphQL: trạng thái asset/run"| D
 ```
+
+Luồng được chia thành bốn phần rõ ràng:
+
+1. **Giao diện và API:** Next.js chỉ gọi FastAPI qua `/api/v1`; thông tin kết nối nguồn, khóa LLM và logic phân quyền
+   nằm ở backend. Phiên đăng nhập dùng cookie HttpOnly, token băm và RunReport được lưu trong SQLite.
+2. **Lập kế hoạch và sinh code:** LangGraph gọi LLM ở hai bước `planner` và `codegen` để tạo kế hoạch + Spec. Sau khi
+   Spec qua kiểm tra schema / policy, node `render` mới sinh code dlt, dbt và Dagster một cách tất định từ `templates/`.
+3. **Chạy thử và ghi bằng chứng:** node `test_run` dùng dlt đọc Postgres vào DuckDB riêng của run, chạy dbt + test,
+   rồi chạy một câu SQL độc lập trực tiếp trên Postgres để đối chiếu kết quả. Toàn bộ checks, timeline, file sinh ra và
+   dữ liệu mẫu được ghi vào `data/pipeline/runs.sqlite3` để Reviewer xem.
+4. **Duyệt và vận hành:** chỉ khi Reviewer phê duyệt, backend mới ghi project vào `data/dagster_local/`.
+   `scripts/dagster_local.py` phát hiện `workspace.yaml` thay đổi, khởi động lại Dagster và các pipeline đã duyệt chạy
+   vào warehouse chung `data/warehouse/warehouse.duckdb`; backend đọc trạng thái Dagster qua GraphQL.
 
 Đặc tả đầy đủ (luồng P0–P14, bất biến, cổng kiểm tra): [`SPEC.md`](SPEC.md). Chính sách mà backend áp dụng cho mọi
 run nằm trong [`policy/`](policy/): `domains.yml` (domain, nguồn, thuật ngữ, tỷ giá), `budgets.yml` (trần số lần gọi
