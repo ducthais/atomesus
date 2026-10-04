@@ -37,7 +37,11 @@ def env(tmp_path, monkeypatch):
 
 
 async def _login(client, user_id: str) -> None:
-    assert (await client.post("/api/v1/pipeline/session", json={"user_id": user_id})).status_code == 200
+    username = "engineer" if user_id == "minh" else "reviewer"
+    password = "Engineer@123" if user_id == "minh" else "Reviewer@123"
+    assert (
+        await client.post("/api/v1/pipeline/session", json={"username": username, "password": password})
+    ).status_code == 200
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@
 - Tài khoản `pipeline_reader` chỉ có quyền đọc nguồn.
 - API đọc schema thật, nhận cấu hình đổi tên/ép kiểu, chạy DuckDB mới cho mỗi lần thực thi.
 - `TRY_CAST` tách dòng lỗi, giữ giá trị gốc và tên cột lỗi; NULL nguồn được giữ nguyên.
-- Màn `/postgres`: chọn người dùng demo, cấu hình cột, chạy pipeline, xem kết quả/lỗi và 100 run gần nhất từ backend.
+- Màn `/postgres`: đăng nhập tài khoản local, cấu hình cột, chạy pipeline, xem kết quả/lỗi và 100 run gần nhất từ backend.
 - Session cookie HttpOnly, giới hạn 8 giờ; backend kiểm tra quyền Engineer/Reviewer. Đăng nhập demo bị khóa khi `APP_ENV=production`.
 - Kết quả lưu trong SQLite tại `data/pipeline/runs.sqlite3`, tồn tại qua restart backend.
 
@@ -65,13 +65,13 @@ Frontend proxy `/api/v1/*` sang backend `http://127.0.0.1:8000`, nên cookie cù
 
 ## Demo nghiệm thu
 
-1. Chọn **Minh · Engineer**; phải đọc được 5 cột từ Postgres.
+1. Đăng nhập `engineer` / `Engineer@123` (**Minh · Engineer**); phải đọc được 5 cột từ Postgres.
 2. Giữ mapping mặc định: `amount_text → amount / decimal(18,2)`, `ordered_at_text → ordered_at / date`.
 3. Bấm **Chạy pipeline**: 30 dòng đọc, 30 hợp lệ, 0 bị tách; dòng đầu có `amount = "1000.00"`.
 4. Đổi tên đầu ra `amount` thành `revenue_vnd`, chạy lại: kết quả dùng tên mới.
 5. Đổi kiểu của `amount_text` thành `date`, chạy: 30 dòng lỗi được tách; trạng thái **Cần kiểm tra**.
 6. Refresh trình duyệt: phiên đăng nhập và lịch sử vẫn còn. Chọn run để xem lại kết quả.
-7. Đăng xuất, chọn **An · Reviewer**: xem được lịch sử; UI vô hiệu hóa nút chạy và API trả 403 nếu vẫn gửi yêu cầu.
+7. Đăng xuất, đăng nhập `reviewer` / `Reviewer@123` (**An · Reviewer**): xem được lịch sử; UI vô hiệu hóa nút chạy và API trả 403 nếu vẫn gửi yêu cầu.
 8. Dừng Postgres, bấm **Đọc lại schema**: hiển thị lỗi kết nối; không thay thế bằng dữ liệu mẫu.
 
 ## API cho A/C/D tích hợp
@@ -81,7 +81,7 @@ Mọi API nằm dưới `/api/v1` và dùng chung phiên đăng nhập (`src/pip
 | Method | Path | Kết quả |
 |---|---|---|
 | GET | `/pipeline/users` | Danh sách người dùng demo |
-| POST | `/pipeline/session` | Body `{ "user_id": "minh" }`; tạo session cookie |
+| POST | `/pipeline/session` | Body `{ "username": "engineer", "password": "…" }`; xác thực và tạo session cookie |
 | GET / DELETE | `/pipeline/session` | Xem phiên / đăng xuất |
 | GET | `/pipeline/source` | Schema thật và giới hạn số dòng |
 | POST | `/pipeline/runs` | Chạy đồng bộ, ghi và trả `RunReport` |

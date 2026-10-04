@@ -57,7 +57,7 @@ export const listUsers = cache(async (): Promise<Person[]> => {
 export const currentUser = cache(async (): Promise<Person | null> => {
   if (MOCK) {
     const id = (await cookies()).get(MOCK_USER_COOKIE)?.value;
-    return PEOPLE.find(p => p.id === id) ?? PEOPLE[0];
+    return PEOPLE.find(p => p.id === id) ?? null;
   }
   try {
     const user = await backend<User>('/pipeline/session');

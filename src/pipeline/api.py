@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from src.pipeline import postgres, store
 from src.pipeline.auth import (
+    ACCOUNTS,
     COOKIE,
     COOKIE_PATH,
     SESSION_SECONDS,
@@ -33,22 +34,30 @@ SAMPLE_ROWS = 20
 MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema nguồn."
 
 
-@router.get("/users", dependencies=[Depends(demo_only)])
+@router.get("/users", dependencies=[Depends(current_user)])
 def users():
     return list(USERS.values())
 
 
 @router.post("/session", dependencies=[Depends(demo_only)])
 def login(body: LoginRequest, response: Response, config: PipelineSettings = Depends(settings)):
+    username = body.username.strip().lower()
+    user_id = ACCOUNTS.get(username)
+    expected = {
+        "engineer": config.engineer_password.get_secret_value(),
+        "reviewer": config.reviewer_password.get_secret_value(),
+    }.get(username, "")
+    if not user_id or not secrets.compare_digest(body.password, expected):
+        raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
     token = secrets.token_urlsafe(32)
     with store.database(config.store_path) as conn:
         conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
         conn.execute(
             "INSERT INTO sessions VALUES (?, ?, ?)",
-            (hashlib.sha256(token.encode()).hexdigest(), body.user_id, time.time() + SESSION_SECONDS),
+            (hashlib.sha256(token.encode()).hexdigest(), user_id, time.time() + SESSION_SECONDS),
         )
     response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=SESSION_SECONDS, path=COOKIE_PATH)
-    return USERS[body.user_id]
+    return USERS[user_id]
 
 
 @router.get("/session")

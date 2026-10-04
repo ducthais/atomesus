@@ -20,7 +20,7 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
    .venv\Scripts\python.exe scripts\demo_check.py
    ```
 3. Mở sẵn 2 tab trình duyệt:
-   - http://localhost:3000, đăng nhập **Minh · Engineer**
+   - http://localhost:3000, đăng nhập `engineer` / `Engineer@123` (**Minh · Engineer**)
    - http://127.0.0.1:3070 (Dagster), bấm **Skip** ở popup "Join the Dagster community"
 4. **Tập trước bước 4** (tạo pipeline) một lần để chắc LLM trả lời ổn định hôm đó.
 5. Phóng to trình duyệt 110–125% để mentor nhìn rõ; tắt thông báo hệ thống.
@@ -155,7 +155,7 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 
 | Thao tác | Nói / chỉ vào |
 |---|---|
-| Góc trên phải: đổi sang **An · Reviewer** | Người tạo không được tự duyệt. |
+| Đăng xuất rồi đăng nhập `reviewer` / `Reviewer@123` (**An · Reviewer**) | Người tạo không được tự duyệt. |
 | Mở run vừa tạo ở bước 4 (hoặc **`ce884a4f`**) → **Phê duyệt** | Duyệt đúng bộ file đã xem (chữ ký `files_hash`); hệ thống ghi thành project Dagster. |
 | Chờ 1–2 phút (khoảng 20 giây cho mỗi pipeline đã duyệt), sang tab **Dagster** → **Jobs** → `fct_customer_orders_job` | Dagster tự nạp pipeline mới. |
 | **Materialize all** → mở run | Dagster chạy dlt rồi dbt, log từng bước; khoảng 40–60 giây. |
@@ -197,4 +197,4 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 | Bấm Kết nối báo lỗi | Kiểm tra Docker Desktop / container Postgres; chạy lại `demo_check.py`. |
 | Tạo pipeline lỗi `INFRA_ERROR` | Hết hạn hoặc thiếu `OPENAI_API_KEY`, hoặc mạng; dùng run dự phòng `ce884a4f`. |
 | Dagster không thấy pipeline vừa duyệt | Đợi 1–2 phút; nếu vẫn không thấy, kiểm tra terminal `dagster_local.py` có dòng "workspace.yaml đổi". |
-| Màn hình đăng nhập hiện ra giữa chừng | Phiên 8 giờ đã hết; chọn lại người dùng. |
+| Màn hình đăng nhập hiện ra giữa chừng | Phiên 8 giờ đã hết; đăng nhập lại. |

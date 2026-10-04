@@ -113,8 +113,13 @@ cd web && npm run dev
 
 Kiểm tra mọi thứ đã sẵn sàng (phải ra "Sẵn sàng demo."): `python scripts/demo_check.py`.
 
-Đăng nhập bằng người dùng demo: **Minh · Engineer** (tạo pipeline) hoặc **An · Reviewer** (duyệt); đổi ở góc trên
-bên phải.
+Đăng nhập bằng một trong hai tài khoản local:
+
+- `engineer` / `Engineer@123` — **Minh · Engineer**, tạo và chạy thử pipeline.
+- `reviewer` / `Reviewer@123` — **An · Reviewer**, kiểm tra và phê duyệt.
+
+Muốn đổi vai trò, đăng xuất rồi đăng nhập bằng tài khoản còn lại. Có thể đổi hai mật khẩu mặc định bằng
+`PIPELINE_ENGINEER_PASSWORD` và `PIPELINE_REVIEWER_PASSWORD` trong `.env`.
 
 ### Dữ liệu mẫu
 
@@ -199,6 +204,7 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 | `PIPELINE_DATABASE_URL` | `infra/postgres/.env` | Kết nối Postgres nguồn bằng tài khoản chỉ đọc (do `setup_pipeline.py` tạo) |
 | `PIPELINE_WAREHOUSE_TIMEZONE` | `.env` | Múi giờ DuckDB khi chạy thử, **phải là `UTC`** (mặc định). Đặt khác để tái hiện lỗi lệch giờ trong demo |
 | `PIPELINE_DAGSTER_URL` | `.env` | Dagster local (mặc định `http://127.0.0.1:3070`) |
+| `PIPELINE_ENGINEER_PASSWORD`, `PIPELINE_REVIEWER_PASSWORD` | `.env` | Mật khẩu hai tài khoản local (nên đổi khỏi giá trị mặc định khi chia sẻ môi trường) |
 | `APP_ENV` | `.env` | `production` thì khóa đăng nhập người dùng demo |
 | `AI_LOG_API_KEY` | `.env` | Khóa ghi log AI của từng thành viên (xem bên dưới) |
 | `PIPELINE_BACKEND_URL`, `CATALOG_MOCK` | môi trường của `web/` | Địa chỉ backend; `CATALOG_MOCK=1` chạy giao diện với dữ liệu mock |

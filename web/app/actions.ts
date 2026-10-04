@@ -13,20 +13,31 @@ export type ActionState = { error?: string; message?: string } | null;
 const failure = (err: unknown): ActionState => ({ error: err instanceof Error ? err.message : 'Thao tác thất bại. Vui lòng thử lại.' });
 const MAX_AGE = 28800; // = SESSION_SECONDS của backend
 
-/** Đăng nhập (hoặc đổi người dùng). Backend đặt cookie Path=/api/v1; lưu lại token với Path=/ để mọi trang server gửi kèm. */
-export async function signIn(userId: string): Promise<ActionState> {
+/** Đăng nhập bằng tài khoản local. Backend đặt cookie Path=/api/v1; lưu lại token với Path=/ cho các Server Component. */
+export async function signIn(_: ActionState, form: FormData): Promise<ActionState> {
+  const username = String(form.get('username') ?? '').trim().toLowerCase();
+  const password = String(form.get('password') ?? '');
+  if (!username || !password) return { error: 'Nhập tên đăng nhập và mật khẩu.' };
   const jar = await cookies();
-  if (MOCK) { jar.set(MOCK_USER_COOKIE, userId, { path: '/', maxAge: 31536000, sameSite: 'lax' }); refresh(); return null; }
+  if (MOCK) {
+    const accounts: Record<string, { id: string; password: string }> = {
+      engineer: { id: 'minh', password: process.env.PIPELINE_ENGINEER_PASSWORD || 'Engineer@123' },
+      reviewer: { id: 'an', password: process.env.PIPELINE_REVIEWER_PASSWORD || 'Reviewer@123' },
+    };
+    const account = accounts[username];
+    if (!account || account.password !== password) return { error: 'Tên đăng nhập hoặc mật khẩu không đúng.' };
+    jar.set(MOCK_USER_COOKIE, account.id, { path: '/', maxAge: 31536000, sameSite: 'lax' });
+    redirect('/');
+  }
   let response: Response;
   try {
-    response = await fetch(`${BACKEND}/api/v1/pipeline/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId }), cache: 'no-store' });
+    response = await fetch(`${BACKEND}/api/v1/pipeline/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }), cache: 'no-store' });
   } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
   if (!response.ok) return { error: (await response.json().catch(() => null))?.detail ?? 'Đăng nhập thất bại.' };
   const token = response.headers.getSetCookie().map(c => c.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
   if (!token) return { error: 'Backend không trả cookie phiên.' };
   jar.set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', maxAge: MAX_AGE });
-  refresh();
-  return null;
+  redirect('/');
 }
 
 export async function signOut(): Promise<void> {

@@ -112,7 +112,7 @@ async def test_status_endpoint_reports_unavailable_dagster(client, tmp_path, mon
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         assert (await client.get("/api/v1/orchestration/status")).status_code == 401
-        await client.post("/api/v1/pipeline/session", json={"user_id": "an"})
+        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
         monkeypatch.setattr(dagster, "fetch_status", lambda url: dagster.parse_status(response()))
         body = (await client.get("/api/v1/orchestration/status")).json()
         assert body["available"] is True and body["url"] == "http://dagster"

@@ -287,9 +287,9 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         assert (await client.post("/api/v1/agent/runs", json={"request": "x"})).status_code == 401
-        await client.post("/api/v1/pipeline/session", json={"user_id": "an"})
+        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
         assert (await client.post("/api/v1/agent/runs", json={"request": "x"})).status_code == 403
-        await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         assert (await client.post("/api/v1/agent/runs", json={"request": ""})).status_code == 422
         for sources, message in [
             ([{"source_ref": "nope"}], "không có trong domains.yml"),

@@ -6,6 +6,9 @@ class PipelineSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PIPELINE_", env_file=(".env", "infra/postgres/.env"), extra="ignore")
     database_url: SecretStr = SecretStr("")
     store_path: str = "data/pipeline/runs.sqlite3"
+    # Tài khoản local/demo. Production vẫn chặn đăng nhập này trong auth.demo_only.
+    engineer_password: SecretStr = SecretStr("Engineer@123")
+    reviewer_password: SecretStr = SecretStr("Reviewer@123")
     # Sprint 1: duyệt xong thì ghi project Dagster ra đây (Sprint 3 chuyển sang pull request).
     deploy_dir: str = "data/dagster_local"
     # Dagster local (make dagster): trang dataset đọc trạng thái run qua GraphQL ở đây.

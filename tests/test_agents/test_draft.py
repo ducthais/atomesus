@@ -72,7 +72,7 @@ async def test_draft_api_flow(client, tmp_path, monkeypatch):
     app.dependency_overrides[routes.agent_deps] = lambda: deps(FakeLLM(PLAN, SPEC))
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
-        await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         started = (await client.post("/api/v1/agent/drafts", json={"request": "Doanh thu theo ngày"})).json()
         assert started["status"] == "GENERATING" and started["spec"] is None  # trả ngay, agent chạy nền
         draft = (await client.get(f"/api/v1/runs/{started['run_id']}")).json()
@@ -81,10 +81,10 @@ async def test_draft_api_flow(client, tmp_path, monkeypatch):
         bad["sources"][0]["staging"]["columns"][0]["from"] = "khong_co"
         rejected = await client.post(f"/api/v1/agent/runs/{draft['run_id']}/continue", json={"spec": bad})
         assert rejected.status_code == 422 and "khong_co" in rejected.json()["detail"]
-        await client.post("/api/v1/pipeline/session", json={"user_id": "an"})
+        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
         other = await client.post(f"/api/v1/agent/runs/{draft['run_id']}/continue", json={"spec": draft["spec"]})
         assert other.status_code == 403
-        await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         done = await client.post(f"/api/v1/agent/runs/{draft['run_id']}/continue", json={"spec": draft["spec"]})
         assert done.status_code == 200 and done.json()["status"] == "VALIDATING"  # Spec đã qua cổng, chạy thử ở nền
         finished = (await client.get(f"/api/v1/runs/{draft['run_id']}")).json()

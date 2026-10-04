@@ -59,7 +59,7 @@ Cần Postgres của B đang chạy (`docs/task-b.md`) và `OPENAI_API_KEY` tron
 ```bash
 python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
 # đăng nhập Engineer rồi gửi yêu cầu (body UTF-8)
-curl -c jar -X POST localhost:8000/api/v1/pipeline/session -H 'Content-Type: application/json' -d '{"user_id":"minh"}'
+curl -c jar -X POST localhost:8000/api/v1/pipeline/session -H 'Content-Type: application/json' -d '{"username":"engineer","password":"Engineer@123"}'
 curl -b jar -X POST localhost:8000/api/v1/agent/runs -H 'Content-Type: application/json' --data-binary @request.json
 ```
 

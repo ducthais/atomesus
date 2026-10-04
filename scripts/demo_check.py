@@ -74,7 +74,13 @@ def main() -> int:
 
     print("\n== Đăng nhập và nguồn dữ liệu ==")
     session = httpx.Client(base_url=f"{BACKEND}/api/v1", timeout=30)
-    login = session.post("/pipeline/session", json={"user_id": "minh"})
+    login = session.post(
+        "/pipeline/session",
+        json={
+            "username": "engineer",
+            "password": os.environ.get("PIPELINE_ENGINEER_PASSWORD", "Engineer@123"),
+        },
+    )
     check(login.status_code == 200, "Đăng nhập Minh (Engineer)")
     for ref, schema in [("sales_pg", "sales_raw"), ("pagila_pg", "pagila")]:
         found = session.get(f"/catalog/sources/{ref}/objects")

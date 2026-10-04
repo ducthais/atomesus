@@ -1051,7 +1051,7 @@ Trợ lý chat là **cửa vào chính** để người dùng làm việc với 
 
 **Danh tính và phân quyền:**
 - Mọi endpoint lấy người gọi và vai trò từ **phiên đăng nhập ở backend**. Body không có trường `user`/`reviewer`; nếu client gửi lên thì bỏ qua
-- MVP dùng đăng nhập giả lập: danh sách người dùng cố định (tên, vai trò) trong cấu hình backend, chọn người dùng ở màn đăng nhập. Không có mật khẩu, không dùng ở môi trường thật; đổi sang SSO chỉ là đổi lớp xác thực
+- MVP dùng hai tài khoản local cố định (Engineer, Reviewer) với mật khẩu cấu hình qua biến môi trường. Backend xác thực username/password và tạo session HttpOnly; cơ chế này bị khóa ở production, nơi lớp xác thực cần được thay bằng SSO.
 - Kiểm tra quyền (vai trò, `created_by`, trạng thái run) nằm ở **backend**. UI ẩn nút chỉ để tiện, không phải lớp bảo vệ
 - Sai vai trò trả 403; đúng vai trò nhưng sai trạng thái run trả 409
 

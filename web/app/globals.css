@@ -103,8 +103,8 @@ kbd { border: 1px solid var(--rule); border-radius: 6px; padding: 0 6px; font-si
 .global-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .global-search input { flex: 1; border: 0; background: none; padding: 10px 0; outline: none; box-shadow: none; }
 .user-switch { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.user-switch select { padding: 7px 10px; }
-.user-switch .form-error { margin: 0; font-size: 12px; }
+.user-identity { display: grid; line-height: 1.15; }
+.user-identity small { color: var(--muted); font-size: 11px; margin-top: 3px; }
 .avatar { width: 32px; height: 32px; flex: none; display: inline-grid; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
 .icon-button { display: inline-grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--rule); border-radius: var(--r-control); background: var(--surface); color: var(--muted); }
 .icon-button:hover { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 30%, var(--rule)); }
@@ -371,9 +371,9 @@ a.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login-card { width: min(440px, 100%); display: grid; gap: 14px; padding: 32px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-panel); box-shadow: var(--shadow-hover); }
 .login-card .brand-mark { width: 44px; height: 44px; }
-.login-users { display: grid; gap: 10px; margin-top: 6px; }
-.login-users .button { justify-content: flex-start; padding: 12px 16px; }
-.login-users .button .muted { margin-left: auto; font-weight: 500; }
+.login-form { display: grid; gap: 14px; margin-top: 6px; }
+.login-form .button { justify-content: center; margin-top: 2px; padding: 11px 16px; }
+.login-help { color: var(--muted); font-size: 12px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } * { transition: none !important; } }
@@ -406,7 +406,7 @@ a.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
 }
 @media (max-width: 560px) {
   .page-icon { display: none; }
-  .user-switch select { max-width: 140px; }
+  .user-identity { display: none; }
   .global-search kbd { display: none; }
   .flow { grid-template-columns: minmax(0, 1fr); }
   .flow-arrow { transform: rotate(90deg); margin: 0; }

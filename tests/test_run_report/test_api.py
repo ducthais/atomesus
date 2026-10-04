@@ -25,7 +25,9 @@ def store_path(tmp_path, monkeypatch):
 
 @pytest_asyncio.fixture
 async def logged_in(client, store_path):
-    response = await client.post("/api/v1/pipeline/session", json={"user_id": "an"})
+    response = await client.post(
+        "/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"}
+    )
     assert response.status_code == 200
     return client
 
@@ -124,7 +126,7 @@ async def test_approve_deploys_approved_files_to_local_dagster(logged_in, genera
 
 @pytest.mark.asyncio
 async def test_engineer_cannot_approve(client, store_path, generated_run):
-    await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
     response = await client.post(f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": generated_run.files_hash})
 
     assert response.status_code == 403

@@ -13,6 +13,7 @@ USERS = {
     "minh": {"id": "minh", "name": "Minh", "role": "Engineer"},
     "an": {"id": "an", "name": "An", "role": "Reviewer"},
 }
+ACCOUNTS = {"engineer": "minh", "reviewer": "an"}
 COOKIE = "pipeline_session"
 # Cookie phải gửi kèm mọi API dưới /api/v1, không chỉ /pipeline.
 COOKIE_PATH = "/api/v1"
@@ -25,7 +26,7 @@ def settings() -> PipelineSettings:
 
 def demo_only():
     if get_settings().app_env == "production":
-        raise HTTPException(403, "Đăng nhập chọn người dùng chỉ dành cho demo local.")
+        raise HTTPException(403, "Đăng nhập bằng tài khoản local chỉ dành cho môi trường phát triển.")
 
 
 def session_digest(request: Request) -> str:
@@ -39,5 +40,5 @@ def current_user(request: Request, config: PipelineSettings = Depends(settings))
             "SELECT user_id FROM sessions WHERE token = ? AND expires > ?", (session_digest(request), time.time())
         ).fetchone()
     if not row or row[0] not in USERS:
-        raise HTTPException(401, "Vui lòng chọn người dùng để đăng nhập.")
+        raise HTTPException(401, "Vui lòng đăng nhập.")
     return USERS[row[0]]

@@ -85,7 +85,7 @@ async def test_drift_endpoint(client, tmp_path, monkeypatch):
     save_run_report(config.store_path, report("dep", 0, "DEPLOYED"))
     save_run_report(config.store_path, report("draft", 5))  # chưa duyệt: không kiểm tra
     try:
-        await client.post("/api/v1/pipeline/session", json={"user_id": "an"})
+        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
         body = (await client.get("/api/v1/catalog/drift")).json()
         assert [p["run_id"] for p in body["pipelines"]] == ["dep"]
         assert body["pipelines"][0]["status"] == "breaking"

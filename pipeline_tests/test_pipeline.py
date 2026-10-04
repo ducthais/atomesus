@@ -114,7 +114,9 @@ def client(tmp_path, monkeypatch):
 
 
 def login(browser, user="minh"):
-    response = browser.post("/api/v1/pipeline/session", json={"user_id": user})
+    username = "engineer" if user == "minh" else "reviewer"
+    password = "Engineer@123" if user == "minh" else "Reviewer@123"
+    response = browser.post("/api/v1/pipeline/session", json={"username": username, "password": password})
     assert response.status_code == 200
     assert "HttpOnly" in response.headers["set-cookie"]
     assert "Path=/api/v1;" in response.headers["set-cookie"]
@@ -198,7 +200,18 @@ def test_expired_session_and_production_login(client, monkeypatch):
         conn.execute("UPDATE sessions SET expires = 0")
     assert browser.get("/api/v1/runs").status_code == 401
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="production"))
-    assert browser.post("/api/v1/pipeline/session", json={"user_id": "minh"}).status_code == 403
+    assert browser.post(
+        "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
+    ).status_code == 403
+
+
+def test_login_rejects_invalid_credentials(client):
+    browser, _ = client
+    response = browser.post(
+        "/api/v1/pipeline/session", json={"username": "engineer", "password": "wrong-password"}
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Tên đăng nhập hoặc mật khẩu không đúng."
 
 
 def test_invalid_source_column_and_empty_source_need_attention(client, monkeypatch):

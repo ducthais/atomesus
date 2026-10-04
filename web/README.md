@@ -15,11 +15,11 @@ npm test
 npm run build
 ```
 
-Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy hệ thống"). Đăng nhập bằng người dùng demo; đổi người dùng ở góc trên bên phải.
+Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy hệ thống"). Đăng nhập bằng `engineer` / `Engineer@123` hoặc `reviewer` / `Reviewer@123`; muốn đổi vai trò thì đăng xuất và đăng nhập lại.
 
 **Phiên kết nối nguồn:** bấm Kết nối thành công thì tên nguồn được nhớ trong cookie `catalog_connections` (chỉ tên nguồn, không có credential, hết hạn cùng phiên đăng nhập 8 giờ). Mở lại form Yêu cầu pipeline hay trang Quan hệ thì tự kết nối lại (danh sách bảng vẫn đọc mới từ nguồn). Nút Ngắt hoặc Đăng xuất thì quên.
 
-**Phiên đăng nhập:** backend đặt cookie `pipeline_session` với `Path=/api/v1`, nên trang render phía server không nhận được. Server Action `signIn` (`app/actions.ts`) gọi `POST /pipeline/session`, lấy token và đặt lại cookie với `Path=/`; mọi lời gọi backend từ server (`lib/catalog/source.ts`) gửi kèm token này.
+**Phiên đăng nhập:** Server Action gửi username/password tới `POST /pipeline/session`. Backend xác thực, đặt cookie HttpOnly `pipeline_session` với `Path=/api/v1`; action lấy token và đặt lại cookie với `Path=/` để mọi lời gọi backend từ server (`lib/catalog/source.ts`) gửi kèm token này. Mật khẩu có thể đổi bằng `PIPELINE_ENGINEER_PASSWORD` / `PIPELINE_REVIEWER_PASSWORD`.
 
 ## Màn hình
 

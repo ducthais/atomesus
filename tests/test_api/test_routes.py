@@ -29,7 +29,7 @@ async def test_policy_requires_session_and_returns_files_and_limits(client, tmp_
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         assert (await client.get("/api/v1/policy")).status_code == 401
-        await client.post("/api/v1/pipeline/session", json={"user_id": "an"})
+        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
         body = (await client.get("/api/v1/policy")).json()
         assert set(body["files"]) == {"domains.yml", "budgets.yml", "objectives.yml"}
         assert "max_llm_calls: 6" in body["files"]["budgets.yml"]
@@ -83,7 +83,7 @@ def _down(_config, schema):
 @pytest.mark.asyncio
 async def test_catalog_lists_declared_sources_with_real_columns_and_entities(client, catalog_api, monkeypatch):
     assert (await client.get("/api/v1/catalog")).status_code == 401
-    await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
     sales = (await client.get("/api/v1/catalog")).json()["domains"]["sales"]
     assert sales["steward"] == "an@company.vn"
     assert sales["sources"]["sales_pg"]["available"] is True
@@ -101,7 +101,7 @@ async def test_catalog_lists_declared_sources_with_real_columns_and_entities(cli
 @pytest.mark.asyncio
 async def test_source_discovery_connects_on_request(client, catalog_api, monkeypatch):
     assert (await client.get("/api/v1/catalog/sources")).status_code == 401
-    await client.post("/api/v1/pipeline/session", json={"user_id": "minh"})
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
     sources = {s["ref"]: s for s in (await client.get("/api/v1/catalog/sources")).json()}
     assert sources["sales_pg"]["supported"] is True
     assert sources["sales_pg"]["kind"] == "postgres" and sources["sales_pg"]["location"] == "sales_raw"
