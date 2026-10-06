@@ -153,7 +153,8 @@ def create_run(
         user_request=body.title,
         status=status,
         stage_reached=stage,
-        spec=body.model_dump(by_alias=True, exclude_none=True),  # cột không khai báo date_formats thì không ghi trường này
+        # Cột không khai báo date_formats thì không ghi trường này (Spec giữ nguyên như trước khi có tùy chọn này).
+        spec=body.model_dump(by_alias=True, exclude_none=True),
         gates=gates,
         checks=checks,
         # Chạy DuckDB local, không quét warehouse nên chưa có chi phí để ghi.
