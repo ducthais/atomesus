@@ -1,0 +1,299 @@
+{
+  "id": "valid_rest_api_paid_by_order",
+  "source_kinds": [
+    "rest_api"
+  ],
+  "request": "Tổng tiền đã thanh toán và số lần thanh toán của từng đơn hàng",
+  "sources": [
+    {
+      "source_ref": "sales_api",
+      "tables": [
+        "payments"
+      ]
+    }
+  ],
+  "key": [
+    "order_id"
+  ],
+  "measures": {
+    "paid": "tổng thanh toán đã đổi về VND",
+    "payment_count": "số khoản thanh toán"
+  },
+  "rows": [
+    {
+      "key": {
+        "order_id": 1
+      },
+      "values": {
+        "paid": "1000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 2
+      },
+      "values": {
+        "paid": "39500.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 3
+      },
+      "values": {
+        "paid": "3000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 4
+      },
+      "values": {
+        "paid": "4000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 5
+      },
+      "values": {
+        "paid": "54300.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 6
+      },
+      "values": {
+        "paid": "6000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 7
+      },
+      "values": {
+        "paid": "7000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 8
+      },
+      "values": {
+        "paid": "8000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 9
+      },
+      "values": {
+        "paid": "9000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 10
+      },
+      "values": {
+        "paid": "10000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 11
+      },
+      "values": {
+        "paid": "8800.00",
+        "payment_count": 3
+      }
+    },
+    {
+      "key": {
+        "order_id": 12
+      },
+      "values": {
+        "paid": "12000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 13
+      },
+      "values": {
+        "paid": "13000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 14
+      },
+      "values": {
+        "paid": "14000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 15
+      },
+      "values": {
+        "paid": "15000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 16
+      },
+      "values": {
+        "paid": "16000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 17
+      },
+      "values": {
+        "paid": "17000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 18
+      },
+      "values": {
+        "paid": "18000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 19
+      },
+      "values": {
+        "paid": "19000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 20
+      },
+      "values": {
+        "paid": "20000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 21
+      },
+      "values": {
+        "paid": "21000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 22
+      },
+      "values": {
+        "paid": "22000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 23
+      },
+      "values": {
+        "paid": "23000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 24
+      },
+      "values": {
+        "paid": "24000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 25
+      },
+      "values": {
+        "paid": "25000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 26
+      },
+      "values": {
+        "paid": "26000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 27
+      },
+      "values": {
+        "paid": "27000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 28
+      },
+      "values": {
+        "paid": "28000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 29
+      },
+      "values": {
+        "paid": "29000.00",
+        "payment_count": 4
+      }
+    },
+    {
+      "key": {
+        "order_id": 30
+      },
+      "values": {
+        "paid": "30000.00",
+        "payment_count": 4
+      }
+    }
+  ],
+  "totals": {
+    "paid": "549600.00",
+    "payment_count": 119
+  },
+  "notes": "2 bản ghi gửi lặp tính một lần; 2 khoản USD đổi theo tỷ giá 25400; khoản 42 có amount N/A bị tách."
+}

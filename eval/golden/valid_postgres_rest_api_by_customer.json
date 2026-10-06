@@ -1,0 +1,139 @@
+{
+  "id": "valid_postgres_rest_api_by_customer",
+  "source_kinds": [
+    "postgres",
+    "rest_api"
+  ],
+  "request": "Với từng khách hàng: số đơn hàng, tổng tiền đơn hàng và tổng tiền đã thanh toán",
+  "sources": [
+    {
+      "source_ref": "sales_pg",
+      "tables": [
+        "orders",
+        "customers"
+      ]
+    },
+    {
+      "source_ref": "sales_api",
+      "tables": [
+        "payments"
+      ]
+    }
+  ],
+  "key": [
+    "customer_id"
+  ],
+  "measures": {
+    "order_count": "số đơn",
+    "order_total": "tổng tiền đơn (VND)",
+    "paid": "tổng đã thanh toán (VND)"
+  },
+  "rows": [
+    {
+      "key": {
+        "customer_id": 1
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "33000.00",
+        "paid": "30800.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 2
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "36000.00",
+        "paid": "73500.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 3
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "39000.00",
+        "paid": "39000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 4
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "42000.00",
+        "paid": "42000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 5
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "45000.00",
+        "paid": "94300.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 6
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "48000.00",
+        "paid": "48000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 7
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "51000.00",
+        "paid": "51000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 8
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "54000.00",
+        "paid": "54000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 9
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "57000.00",
+        "paid": "57000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 10
+      },
+      "values": {
+        "order_count": 3,
+        "order_total": "60000.00",
+        "paid": "60000.00"
+      }
+    }
+  ],
+  "totals": {
+    "order_count": 30,
+    "order_total": "465000.00",
+    "paid": "549600.00"
+  },
+  "notes": "Ghép một-nhiều đơn → thanh toán: tổng tiền đơn không được cộng trùng theo số khoản thanh toán."
+}

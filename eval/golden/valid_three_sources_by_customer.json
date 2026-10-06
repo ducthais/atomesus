@@ -1,0 +1,146 @@
+{
+  "id": "valid_three_sources_by_customer",
+  "source_kinds": [
+    "postgres",
+    "rest_api",
+    "filesystem"
+  ],
+  "request": "Theo từng khách hàng: tổng tiền đơn hàng, tổng đã thanh toán và tổng đã hoàn",
+  "sources": [
+    {
+      "source_ref": "sales_pg",
+      "tables": [
+        "orders",
+        "customers"
+      ]
+    },
+    {
+      "source_ref": "sales_api",
+      "tables": [
+        "payments"
+      ]
+    },
+    {
+      "source_ref": "landing_sales",
+      "tables": [
+        "refunds"
+      ]
+    }
+  ],
+  "key": [
+    "customer_id"
+  ],
+  "measures": {
+    "order_total": "tổng tiền đơn (VND)",
+    "paid": "tổng đã thanh toán (VND)",
+    "refunded": "tổng đã hoàn (VND)"
+  },
+  "rows": [
+    {
+      "key": {
+        "customer_id": 1
+      },
+      "values": {
+        "order_total": "33000.00",
+        "paid": "30800.00",
+        "refunded": "0.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 2
+      },
+      "values": {
+        "order_total": "36000.00",
+        "paid": "73500.00",
+        "refunded": "6000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 3
+      },
+      "values": {
+        "order_total": "39000.00",
+        "paid": "39000.00",
+        "refunded": "0.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 4
+      },
+      "values": {
+        "order_total": "42000.00",
+        "paid": "42000.00",
+        "refunded": "1500.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 5
+      },
+      "values": {
+        "order_total": "45000.00",
+        "paid": "94300.00",
+        "refunded": "6000.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 6
+      },
+      "values": {
+        "order_total": "48000.00",
+        "paid": "48000.00",
+        "refunded": "0.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 7
+      },
+      "values": {
+        "order_total": "51000.00",
+        "paid": "51000.00",
+        "refunded": "13900.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 8
+      },
+      "values": {
+        "order_total": "54000.00",
+        "paid": "54000.00",
+        "refunded": "25400.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 9
+      },
+      "values": {
+        "order_total": "57000.00",
+        "paid": "57000.00",
+        "refunded": "22320.00"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 10
+      },
+      "values": {
+        "order_total": "60000.00",
+        "paid": "60000.00",
+        "refunded": "4000.00"
+      }
+    }
+  ],
+  "totals": {
+    "order_total": "465000.00",
+    "paid": "549600.00",
+    "refunded": "79120.00"
+  },
+  "notes": "Hai ghép một-nhiều cùng lúc (đơn → thanh toán, đơn → hoàn): mỗi bảng phía nhiều phải gộp trước."
+}

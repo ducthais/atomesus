@@ -1,0 +1,137 @@
+{
+  "id": "valid_filesystem_refunds_by_order",
+  "source_kinds": [
+    "filesystem"
+  ],
+  "request": "Tổng tiền hoàn và số khoản hoàn của từng đơn hàng",
+  "sources": [
+    {
+      "source_ref": "landing_sales",
+      "tables": [
+        "refunds"
+      ]
+    }
+  ],
+  "key": [
+    "order_id"
+  ],
+  "measures": {
+    "refunded": "tổng hoàn tiền đã đổi về VND",
+    "refund_count": "số khoản hoàn"
+  },
+  "rows": [
+    {
+      "key": {
+        "order_id": 2
+      },
+      "values": {
+        "refunded": "500.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 5
+      },
+      "values": {
+        "refunded": "1000.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 7
+      },
+      "values": {
+        "refunded": "12700.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 9
+      },
+      "values": {
+        "refunded": "2000.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 12
+      },
+      "values": {
+        "refunded": "3000.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 14
+      },
+      "values": {
+        "refunded": "1500.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 18
+      },
+      "values": {
+        "refunded": "25400.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 20
+      },
+      "values": {
+        "refunded": "4000.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 22
+      },
+      "values": {
+        "refunded": "2500.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 25
+      },
+      "values": {
+        "refunded": "5000.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 27
+      },
+      "values": {
+        "refunded": "1200.00",
+        "refund_count": 1
+      }
+    },
+    {
+      "key": {
+        "order_id": 29
+      },
+      "values": {
+        "refunded": "20320.00",
+        "refund_count": 1
+      }
+    }
+  ],
+  "totals": {
+    "refunded": "79120.00",
+    "refund_count": 12
+  },
+  "notes": "Hai file theo tháng ghi ngày khác kiểu; khoản hoàn 7 xuất lặp ở cả hai file; 3 khoản USD."
+}

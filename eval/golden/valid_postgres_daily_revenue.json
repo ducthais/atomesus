@@ -1,0 +1,267 @@
+{
+  "id": "valid_postgres_daily_revenue",
+  "source_kinds": [
+    "postgres"
+  ],
+  "request": "Doanh thu theo ngày",
+  "sources": [
+    {
+      "source_ref": "sales_pg",
+      "tables": [
+        "orders"
+      ]
+    }
+  ],
+  "key": [
+    "day"
+  ],
+  "measures": {
+    "revenue": "tổng tiền đơn (VND)"
+  },
+  "rows": [
+    {
+      "key": {
+        "day": "2026-01-01"
+      },
+      "values": {
+        "revenue": "1000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-02"
+      },
+      "values": {
+        "revenue": "2000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-03"
+      },
+      "values": {
+        "revenue": "3000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-04"
+      },
+      "values": {
+        "revenue": "4000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-05"
+      },
+      "values": {
+        "revenue": "5000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-06"
+      },
+      "values": {
+        "revenue": "6000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-07"
+      },
+      "values": {
+        "revenue": "7000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-08"
+      },
+      "values": {
+        "revenue": "8000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-09"
+      },
+      "values": {
+        "revenue": "9000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-10"
+      },
+      "values": {
+        "revenue": "10000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-11"
+      },
+      "values": {
+        "revenue": "11000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-12"
+      },
+      "values": {
+        "revenue": "12000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-13"
+      },
+      "values": {
+        "revenue": "13000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-14"
+      },
+      "values": {
+        "revenue": "14000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-15"
+      },
+      "values": {
+        "revenue": "15000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-16"
+      },
+      "values": {
+        "revenue": "16000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-17"
+      },
+      "values": {
+        "revenue": "17000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-18"
+      },
+      "values": {
+        "revenue": "18000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-19"
+      },
+      "values": {
+        "revenue": "19000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-20"
+      },
+      "values": {
+        "revenue": "20000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-21"
+      },
+      "values": {
+        "revenue": "21000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-22"
+      },
+      "values": {
+        "revenue": "22000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-23"
+      },
+      "values": {
+        "revenue": "23000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-24"
+      },
+      "values": {
+        "revenue": "24000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-25"
+      },
+      "values": {
+        "revenue": "25000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-26"
+      },
+      "values": {
+        "revenue": "26000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-27"
+      },
+      "values": {
+        "revenue": "27000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-28"
+      },
+      "values": {
+        "revenue": "28000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-29"
+      },
+      "values": {
+        "revenue": "29000.00"
+      }
+    },
+    {
+      "key": {
+        "day": "2026-01-30"
+      },
+      "values": {
+        "revenue": "30000.00"
+      }
+    }
+  ],
+  "totals": {
+    "revenue": "465000.00"
+  },
+  "notes": "Ngày ghi ba kiểu (YYYY-MM-DD, DD/MM/YYYY, YYYY/MM/DD); đọc thiếu kiểu nào là thiếu ngày đó."
+}
