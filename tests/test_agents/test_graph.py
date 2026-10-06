@@ -85,7 +85,14 @@ def passing_sandbox(spec, files, policy, settings):
     )
 
 
-def deps(llm, policy=None, sandbox=passing_sandbox):
+def small_cost(spec, policy, settings):
+    """Ước tính chi phí giả cho test: vài KB mỗi nguồn, không đọc nguồn thật."""
+    sources = {source.id: 4096 for source in spec.sources}
+    total = sum(sources.values()) * 2
+    return {"sources": sources, "model_bytes": total // 2, "bytes": total, "usd": 1e-8, "estimated": True}
+
+
+def deps(llm, policy=None, sandbox=passing_sandbox, estimate_cost=small_cost, spent_today=lambda settings: 0.0):
     return AgentDeps(
         llm=llm,
         policy=policy or load_policy(),
@@ -93,6 +100,8 @@ def deps(llm, policy=None, sandbox=passing_sandbox):
         catalog=lambda policy, settings: CATALOG,
         snapshot=lambda plan, policy, settings: SNAPSHOT,
         sandbox=sandbox,
+        estimate_cost=estimate_cost,
+        spent_today=spent_today,
     )
 
 
@@ -125,6 +134,7 @@ def test_happy_path_runs_four_steps():
         "join_fanout",
         "time_grain",
         "ast_guard",
+        "budget",
         "post_run",
     ]
 

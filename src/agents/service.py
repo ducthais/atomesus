@@ -18,6 +18,7 @@ from uuid import uuid4
 from langgraph.checkpoint.memory import MemorySaver
 
 from src.agents.graph import build_graph
+from src.agents.nodes.budget import budget_node
 from src.agents.nodes.common import RUNNING, AgentDeps
 from src.agents.nodes.render import render_node
 from src.agents.nodes.sandbox_run import sandbox_run_node
@@ -60,8 +61,8 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
         files_hash=state.get("files_hash"),
         gates=[GateResult.model_validate(gate) for gate in state.get("gates", [])],
         checks=[Check.model_validate(check) for check in state.get("checks", [])],
-        # Sandbox DuckDB local không quét warehouse; chi phí thật có ở P8/P14 với BigQuery.
-        cost=Cost(estimated_bytes=0, actual_bytes=0, usd=0),
+        # Ước tính ở cổng budget (P8); DuckDB local không có chi phí thật nên actual = ước tính (SPEC §12).
+        cost=Cost.model_validate(state.get("cost") or {"estimated_bytes": 0, "actual_bytes": 0, "usd": 0}),
         timing=Timing(baseline_sec=state.get("duration_sec")),
         attempts=Attempts.model_validate(state.get("attempts") or {}),
         llm_calls=state.get("llm_calls", 0),
@@ -254,7 +255,7 @@ def start_continue(
 
     def job() -> RunReport:
         current = state
-        for node in (render_node(deps), sandbox_run_node(deps)):
+        for node in (budget_node(deps), render_node(deps), sandbox_run_node(deps)):
             if current["status"] not in RUNNING:
                 break
             current = {**current, **node(current)}

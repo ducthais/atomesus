@@ -132,4 +132,4 @@ def continue_draft(
 
 @router.get("/status")
 async def agent_status():
-    return {"status": "ready", "graph": ["planner", "codegen", "render", "test_run"]}
+    return {"status": "ready", "graph": ["planner", "codegen", "budget", "render", "test_run"]}

@@ -1,9 +1,10 @@
-"""Graph sinh pipeline: planner → codegen → render → test_run (SPEC §9, §14.2).
+"""Graph sinh pipeline: planner → codegen → budget → render → test_run (SPEC §9, §14.2).
 
 | Node      | Phase    | Loại      | Kết quả                                                  |
 |-----------|----------|-----------|----------------------------------------------------------|
 | planner   | P1       | LLM rẻ    | kế hoạch: nguồn, join, độ hạt, chỉ số, lịch chạy          |
 | codegen   | P3, P4   | LLM mạnh  | schema thật + 20 dòng mẫu → Spec đã kiểm tra (vòng spec) |
+| budget    | P8       | tất định  | ước tính byte, USD; vượt trần run / ngày → BLOCKED_BUDGET |
 | render    | P6       | tất định  | 4 + N file từ templates/                                 |
 | test_run  | P9–P12   | tất định  | chạy dlt + dbt trong sandbox, đối soát, RunReport        |
 
@@ -14,6 +15,7 @@ Sprint 1 chưa có cổng người xác nhận kế hoạch (P2) và chưa có o
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
+from src.agents.nodes.budget import budget_node
 from src.agents.nodes.codegen import codegen
 from src.agents.nodes.common import RUNNING, AgentDeps
 from src.agents.nodes.planner import planner
@@ -35,7 +37,7 @@ def _after_codegen(stop_after_spec: bool):
             return END
         if state.get("feedback"):
             return "codegen"  # còn lỗi → vòng spec
-        return END if stop_after_spec else "render"
+        return END if stop_after_spec else "budget"
 
     return route
 
@@ -47,11 +49,13 @@ def build_graph(deps: AgentDeps, stop_after_spec: bool = False, checkpointer: Ba
     graph = StateGraph(AgentState)
     graph.add_node("planner", planner(deps))
     graph.add_node("codegen", codegen(deps))
+    graph.add_node("budget", budget_node(deps))
     graph.add_node("render", render_node(deps))
     graph.add_node("test_run", sandbox_run_node(deps))
     graph.set_entry_point("planner")
     graph.add_conditional_edges("planner", _then("codegen"), ["codegen", END])
-    graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "render", END])
+    graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "budget", END])
+    graph.add_conditional_edges("budget", _then("render"), ["render", END])
     graph.add_conditional_edges("render", _then("test_run"), ["test_run", END])
     graph.add_edge("test_run", END)
     saver = checkpointer if checkpointer is not None else getattr(deps, "checkpointer", None)

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.agents import resolve
+from src.agents import budget, resolve
 from src.agents.llm import JsonLLM
 from src.agents.state import AgentState
 from src.codegen.sandbox import run_in_sandbox
@@ -24,6 +24,8 @@ class AgentDeps:
     catalog: Callable = resolve.catalog
     snapshot: Callable = resolve.snapshot
     sandbox: Callable = run_in_sandbox
+    estimate_cost: Callable = budget.estimate
+    spent_today: Callable = budget.spent_today
     checkpointer: object = None
 
 

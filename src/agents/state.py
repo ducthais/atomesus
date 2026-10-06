@@ -27,6 +27,7 @@ class AgentState(TypedDict, total=False):
     checks: list[dict]
     attempts: dict[str, int]
     llm_calls: int
+    cost: dict  # {estimated_bytes, actual_bytes, usd} từ cổng budget (P8)
     duration_sec: float
     error_trace: list[dict]
     timeline: list[dict]  # mốc thời gian {event, at, actor} để đo công sức (RunReport.timeline)
