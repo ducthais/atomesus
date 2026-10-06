@@ -44,7 +44,7 @@ export const STATUS_LABEL: Record<Status, string> = {
 export const RUNNING: Status[] = ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'];
 const GATE_LABEL: Record<string, string> = {
   spec_schema: 'Spec hợp lệ', schema_real: 'Cột có thật ở nguồn', currency: 'Quy đổi tiền tệ', join_fanout: 'Không cộng trùng khi ghép', time_grain: 'Gộp đúng kỳ yêu cầu', semantic: 'Ngữ nghĩa',
-  ast_guard: 'Biểu thức an toàn', budget: 'Ngân sách', post_run: 'Tổng kết chạy thử',
+  ast_guard: 'Biểu thức an toàn', budget: 'Ngân sách', arbitrate: 'Chọn lịch chạy (P5)', post_run: 'Tổng kết chạy thử',
 };
 const CHECK_LABEL: Record<string, string> = {
   row_reconcile: 'Đối soát dòng', hash_reconcile: 'Đối soát nội dung', idempotent: 'Idempotent',

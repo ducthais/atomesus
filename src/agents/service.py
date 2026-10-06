@@ -18,6 +18,7 @@ from uuid import uuid4
 from langgraph.checkpoint.memory import MemorySaver
 
 from src.agents.graph import build_graph
+from src.agents.nodes.arbitrate import arbitrate_node
 from src.agents.nodes.budget import budget_node
 from src.agents.nodes.common import RUNNING, AgentDeps
 from src.agents.nodes.render import render_node
@@ -258,7 +259,7 @@ def start_continue(
 
     def job() -> RunReport:
         current = state
-        for node in (budget_node(deps), render_node(deps), sandbox_run_node(deps)):
+        for node in (budget_node(deps), arbitrate_node(deps), render_node(deps), sandbox_run_node(deps)):
             if current["status"] not in RUNNING:
                 break
             current = {**current, **node(current)}

@@ -136,6 +136,7 @@ def test_happy_path_runs_four_steps():
         "time_grain",
         "ast_guard",
         "budget",
+        "arbitrate",
         "post_run",
     ]
 

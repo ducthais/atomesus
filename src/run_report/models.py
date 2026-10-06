@@ -61,6 +61,7 @@ GateName = Literal[
     "semantic",
     "ast_guard",
     "budget",
+    "arbitrate",
     "post_run",
 ]
 CheckName = Literal[

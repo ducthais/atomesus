@@ -1,4 +1,4 @@
-"""Graph sinh pipeline: planner → semantic → codegen → budget → render → test_run (SPEC §9, §14.2).
+"""Graph sinh pipeline: planner → semantic → codegen → budget → arbitrate → render → test_run (SPEC §9, §14.2).
 
 | Node      | Phase    | Loại      | Kết quả                                                  |
 |-----------|----------|-----------|----------------------------------------------------------|
@@ -6,6 +6,7 @@
 | semantic  | P3       | tất định  | từ có hai nghĩa ở hai domain → BLOCKED_SEMANTIC_CONFLICT  |
 | codegen   | P3, P4   | LLM mạnh  | schema thật + 20 dòng mẫu → Spec đã kiểm tra (vòng spec) |
 | budget    | P8       | tất định  | ước tính byte, USD; vượt trần run / ngày → BLOCKED_BUDGET |
+| arbitrate | P5       | tất định  | lịch chạy thỏa độ tươi (objectives.yml), rẻ nhất; cần chi phí của P8 |
 | render    | P6       | tất định  | 4 + N file từ templates/                                 |
 | test_run  | P9–P12   | tất định  | chạy dlt + dbt trong sandbox, đối soát, RunReport        |
 
@@ -16,6 +17,7 @@ Sprint 1 chưa có cổng người xác nhận kế hoạch (P2) và chưa có o
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
+from src.agents.nodes.arbitrate import arbitrate_node
 from src.agents.nodes.budget import budget_node
 from src.agents.nodes.codegen import codegen
 from src.agents.nodes.common import RUNNING, AgentDeps
@@ -53,13 +55,15 @@ def build_graph(deps: AgentDeps, stop_after_spec: bool = False, checkpointer: Ba
     graph.add_node("semantic", semantic_node(deps))
     graph.add_node("codegen", codegen(deps))
     graph.add_node("budget", budget_node(deps))
+    graph.add_node("arbitrate", arbitrate_node(deps))
     graph.add_node("render", render_node(deps))
     graph.add_node("test_run", sandbox_run_node(deps))
     graph.set_entry_point("planner")
     graph.add_conditional_edges("planner", _then("semantic"), ["semantic", END])
     graph.add_conditional_edges("semantic", _then("codegen"), ["codegen", END])
     graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "budget", END])
-    graph.add_conditional_edges("budget", _then("render"), ["render", END])
+    graph.add_conditional_edges("budget", _then("arbitrate"), ["arbitrate", END])
+    graph.add_conditional_edges("arbitrate", _then("render"), ["render", END])
     graph.add_conditional_edges("render", _then("test_run"), ["test_run", END])
     graph.add_edge("test_run", END)
     saver = checkpointer if checkpointer is not None else getattr(deps, "checkpointer", None)

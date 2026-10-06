@@ -13,7 +13,7 @@ async def test_health(client):
 async def test_agent_status(client):
     response = await client.get("/api/v1/agent/status")
     assert response.status_code == 200
-    assert response.json()["graph"] == ["planner", "semantic", "codegen", "budget", "render", "test_run"]
+    assert response.json()["graph"] == ["planner", "semantic", "codegen", "budget", "arbitrate", "render", "test_run"]
 
 
 @pytest.mark.asyncio
