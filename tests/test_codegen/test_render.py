@@ -167,3 +167,10 @@ def test_post_run_fails_when_gold_is_empty_but_staging_is_not():
     failing = Check(name="dbt_test", result="fail", observed={"passed": 3, "failed": 1})
     gate, errors = _post_run([staging, failing], {"gold_rows": 30, "gold_samples": []})
     assert gate.result == "fail" and errors == ["Kiểm tra không đạt: dbt_test"]
+
+
+def test_sources_extract_in_parallel_only_when_there_are_several(policy):
+    multi = render(load(MULTI), policy)["ingestion/fct_daily_revenue_pipeline.py"]
+    assert "resource_orders().parallelize()" in multi and "resource_payments().parallelize()" in multi
+    single = next(v for k, v in render(load(SINGLE), policy).items() if k.startswith("ingestion/"))
+    assert ".parallelize()" not in single

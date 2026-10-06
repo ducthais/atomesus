@@ -36,11 +36,16 @@ PIPELINE_NAME = [[ model_name | pystr ]]
 
 @dlt.source(name=PIPELINE_NAME)
 def source():
+[%- if spec.sources | length > 1 %]
+    # Nhiều nguồn: mỗi resource đọc trong luồng riêng (dlt extract song song), không chờ nguồn chậm nhất tuần tự.
     return [
 [%- for source in spec.sources %]
-        resource_[[ source.id ]](),
+        resource_[[ source.id ]]().parallelize(),
 [%- endfor %]
     ]
+[%- else %]
+    return [resource_[[ spec.sources[0].id ]]()]
+[%- endif %]
 
 
 def pipeline() -> dlt.Pipeline:
