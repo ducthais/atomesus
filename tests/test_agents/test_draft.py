@@ -9,7 +9,7 @@ from src.agents.service import SpecRejectedError, continue_agent, draft_agent
 from src.pipeline import auth
 from src.run_report import get_run_report
 from src.run_report.store import get_run_files
-from tests.test_agents.test_graph import PLAN, SPEC, FakeLLM, deps
+from tests.test_agents.test_graph import PLAN, SPEC, FakeLLM, deps, tiered_llm
 
 
 def test_draft_stops_after_spec_without_files(tmp_path):
@@ -69,14 +69,17 @@ async def test_draft_api_flow(client, tmp_path, monkeypatch):
 
     config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
     app.dependency_overrides[auth.settings] = lambda: config
-    app.dependency_overrides[routes.agent_deps] = lambda: deps(FakeLLM(PLAN, SPEC))
+    app.dependency_overrides[routes.agent_deps] = lambda: deps(tiered_llm)
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
-        started = (await client.post("/api/v1/agent/drafts", json={"request": "Doanh thu theo ngày"})).json()
+        started = (await client.post("/api/v1/agent/runs", json={"request": "Doanh thu theo ngày"})).json()
         assert started["status"] == "GENERATING" and started["spec"] is None  # trả ngay, agent chạy nền
+        early = await client.post(f"/api/v1/agent/runs/{started['run_id']}/continue", json={"spec": {}})
+        assert early.status_code == 409, "chưa xác nhận kế hoạch thì chưa có Spec để chạy tiếp"
+        await client.post(f"/api/v1/agent/runs/{started['run_id']}/confirm-plan", json={"review_mapping": True})
         draft = (await client.get(f"/api/v1/runs/{started['run_id']}")).json()
-        assert draft["status"] == "DRAFT"
+        assert (draft["status"], draft["stage_reached"]) == ("DRAFT", "static")
         bad = copy.deepcopy(draft["spec"])
         bad["sources"][0]["staging"]["columns"][0]["from"] = "khong_co"
         rejected = await client.post(f"/api/v1/agent/runs/{draft['run_id']}/continue", json={"spec": bad})

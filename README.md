@@ -188,8 +188,9 @@ Schema, cách phân trang và khóa chính đọc từ mô tả OpenAPI của t�
 
 1. **Yêu cầu pipeline** → chọn nguồn và bảng (kết nối trực tiếp lúc bấm) → nhập yêu cầu bằng lời, ví dụ "Tính doanh
    thu và số đơn hàng theo từng ngày".
-2. Agent lập kế hoạch và viết Spec (khoảng 15 giây); trang run hiện tiến độ từng bước. Nếu để tích "Xem & chỉnh mapping",
-   agent dừng ở **bản nháp**: Engineer kiểm tra / sửa mapping rồi bấm chạy thử.
+2. Agent lập kế hoạch (vài giây) rồi **dừng chờ xác nhận** (cổng P2): tab **Kế hoạch** hiện bảng nguồn, cách ghép,
+   độ hạt, chỉ số, lịch chạy. Engineer bấm **Xác nhận kế hoạch** thì agent mới viết Spec. Nếu để tích "Xem & chỉnh
+   mapping", agent dừng tiếp ở **bản nháp**: Engineer kiểm tra / sửa mapping rồi bấm chạy thử.
 3. Agent sinh code từ template và chạy thử trên dữ liệu thật (khoảng 15–20 giây). Tab **Kết quả** diễn giải pipeline bằng
    lời, hiện dữ liệu kết quả và kết quả đối chiếu với nguồn; tab **Bằng chứng** liệt kê mọi phép đo.
 4. Reviewer xem bằng chứng, tab **So sánh** (khác gì bản đang chạy, ảnh hưởng tới pipeline khác) rồi **Phê duyệt**.
@@ -230,8 +231,8 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 
 | Method | Path | Làm gì |
 |---|---|---|
-| POST | `/agent/runs` | Gửi yêu cầu; trả ngay run đang chạy, agent chạy nền |
-| POST | `/agent/drafts` | Như trên nhưng dừng ở bản nháp để xem mapping |
+| POST | `/agent/runs` | Gửi yêu cầu; trả ngay, agent lập kế hoạch ở nền rồi dừng chờ xác nhận (DRAFT, stage `confirm`) |
+| POST | `/agent/runs/{id}/confirm-plan` | Engineer tạo run xác nhận kế hoạch; body `{review_mapping}`: dừng ở bản nháp để xem mapping |
 | POST | `/agent/runs/{id}/continue` | Chạy thử bản nháp với Spec đã xác nhận / sửa |
 | GET | `/runs`, `/runs/{id}` | Sổ bằng chứng |
 | GET | `/runs/{id}/compare` | So với bản đang chạy / bản trước, ảnh hưởng nếu duyệt |

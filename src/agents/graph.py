@@ -11,7 +11,8 @@
 | test_run  | P9–P12   | tất định  | chạy dlt + dbt trong sandbox, đối soát, RunReport        |
 
 Trạng thái kết thúc (mọi trạng thái ngoài DRAFT/GENERATING/VALIDATING) đi thẳng tới END.
-Sprint 1 chưa có cổng người xác nhận kế hoạch (P2) và chưa có optimizer (P13).
+Cổng người P2 (xác nhận kế hoạch) chia graph làm hai lượt: `stop_after_plan` dừng sau planner và cổng semantic,
+Engineer bấm xác nhận thì chạy tiếp với `entry="codegen"` (src/agents/service.py). Chưa có optimizer (P13).
 """
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -46,8 +47,16 @@ def _after_codegen(stop_after_spec: bool):
     return route
 
 
-def build_graph(deps: AgentDeps, stop_after_spec: bool = False, checkpointer: BaseCheckpointSaver | None = None):
+def build_graph(
+    deps: AgentDeps,
+    stop_after_spec: bool = False,
+    checkpointer: BaseCheckpointSaver | None = None,
+    stop_after_plan: bool = False,
+    entry: str = "planner",
+):
     """`stop_after_spec`: dừng khi Spec đã hợp lệ (bản nháp để Engineer xem và sửa mapping trước khi chạy).
+    `stop_after_plan`: dừng khi kế hoạch đã xong, chờ Engineer xác nhận (P2).
+    `entry`: "planner" cho run mới, "codegen" khi kế hoạch đã được xác nhận.
     `checkpointer`: Checkpointer của LangGraph (MemorySaver, SqliteSaver...) lưu trạng thái agent (phi trạng thái).
     """
     graph = StateGraph(AgentState)
@@ -58,9 +67,10 @@ def build_graph(deps: AgentDeps, stop_after_spec: bool = False, checkpointer: Ba
     graph.add_node("arbitrate", arbitrate_node(deps))
     graph.add_node("render", render_node(deps))
     graph.add_node("test_run", sandbox_run_node(deps))
-    graph.set_entry_point("planner")
+    graph.set_entry_point(entry)
     graph.add_conditional_edges("planner", _then("semantic"), ["semantic", END])
-    graph.add_conditional_edges("semantic", _then("codegen"), ["codegen", END])
+    # Cổng semantic chạy trước khi dừng chờ xác nhận (P2): từ hai nghĩa bị chặn trước khi người dùng phải xem kế hoạch.
+    graph.add_conditional_edges("semantic", _then(END if stop_after_plan else "codegen"), ["codegen", END])
     graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "budget", END])
     graph.add_conditional_edges("budget", _then("arbitrate"), ["arbitrate", END])
     graph.add_conditional_edges("arbitrate", _then("render"), ["render", END])

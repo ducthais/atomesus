@@ -4,7 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.agents.llm import openai_llm
 from src.agents.nodes.common import AgentDeps
 from src.agents.resolve import ResolveError
-from src.agents.service import SpecRejectedError, start_agent, start_continue
+from src.agents.service import (
+    PlanNotAwaitingError,
+    SpecRejectedError,
+    start_agent,
+    start_confirm,
+    start_continue,
+)
 from src.codegen.sandbox import SUPPORTED_KINDS
 from src.pipeline.auth import current_user, settings
 from src.pipeline.postgres import SourceUnavailableError
@@ -68,9 +74,9 @@ def create_agent_run(
     deps: AgentDeps = Depends(agent_deps),
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
-    """Yêu cầu → kế hoạch → Spec → sinh code → chạy thử trong sandbox.
+    """Yêu cầu → kế hoạch, dừng ở DRAFT / stage `confirm` chờ Engineer xác nhận (P2, FR-03).
 
-    Trả ngay run ở trạng thái GENERATING; các bước chạy nền, tiến độ đọc lại qua GET /runs/{run_id}.
+    Trả ngay run ở trạng thái GENERATING; lập kế hoạch chạy nền, tiến độ đọc lại qua GET /runs/{run_id}.
     """
     sources = _checked_sources(body, user, deps)
     started, job = start_agent(body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id)
@@ -78,22 +84,32 @@ def create_agent_run(
     return started
 
 
-@router.post("/drafts", status_code=201, response_model=RunReport)
-def create_draft(
-    body: AgentRunRequest,
+class ConfirmPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    review_mapping: bool = Field(
+        default=False, description="Dừng sau khi có Spec để xem và sửa mapping trước khi chạy thử"
+    )
+
+
+@router.post("/runs/{run_id}/confirm-plan", response_model=RunReport)
+def confirm_run_plan(
+    run_id: str,
+    body: ConfirmPlanRequest,
     background: BackgroundTasks,
     user: dict = Depends(current_user),
     deps: AgentDeps = Depends(agent_deps),
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
-    """Chỉ lập kế hoạch và viết Spec, dừng ở trạng thái DRAFT để Engineer xem và sửa mapping trước khi chạy thử.
-
-    Trả ngay run ở trạng thái GENERATING; lập kế hoạch và viết Spec chạy nền.
-    """
-    sources = _checked_sources(body, user, deps)
-    started, job = start_agent(
-        body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id, draft=True
-    )
+    """Cổng HITL 1 (P2): Engineer tạo run xác nhận kế hoạch; viết Spec, sinh code và chạy thử ở nền."""
+    report = get_run_report(config.store_path, run_id)
+    if report is None:
+        raise HTTPException(404, f"Không tìm thấy run {run_id}")
+    if user["role"] != "Engineer" or report.created_by != user["id"]:
+        raise HTTPException(403, "Chỉ Engineer tạo run được xác nhận kế hoạch.")
+    try:
+        started, job = start_confirm(report, user["id"], deps, config.store_path, body.review_mapping)
+    except PlanNotAwaitingError as exc:
+        raise HTTPException(409, str(exc)) from exc
     background.add_task(job)
     return started
 
@@ -118,8 +134,8 @@ def continue_draft(
         raise HTTPException(404, f"Không tìm thấy run {run_id}")
     if draft.created_by != user["id"]:
         raise HTTPException(403, "Chỉ người tạo bản nháp được chạy tiếp.")
-    if draft.status != "DRAFT":
-        raise HTTPException(409, f"Run đang ở trạng thái {draft.status}, chỉ bản nháp mới chạy tiếp được.")
+    if draft.status != "DRAFT" or draft.spec is None:
+        raise HTTPException(409, f"Run đang ở trạng thái {draft.status}, chỉ bản nháp đã có Spec mới chạy tiếp được.")
     try:
         started, job = start_continue(draft, body.spec, user["name"], deps, config.store_path)
     except SpecRejectedError as exc:

@@ -113,13 +113,14 @@ class Cost(_Contract):
     usd: float = Field(ge=0)
 
 
-TimelineEventName = Literal["submitted", "spec_ready", "mapping_submitted", "finished"]
+TimelineEventName = Literal["submitted", "plan_ready", "plan_confirmed", "spec_ready", "mapping_submitted", "finished"]
 
 
 class TimelineEvent(_Contract):
     """Mốc thời gian của một run, để đo công sức: máy chạy bao lâu, người (chỉnh mapping, duyệt) mất bao lâu.
 
-    submitted: Engineer gửi yêu cầu. spec_ready: agent viết xong Spec đã qua cổng. mapping_submitted: Engineer
+    submitted: Engineer gửi yêu cầu. plan_ready: agent lập xong kế hoạch, chờ xác nhận (P2). plan_confirmed: Engineer
+    xác nhận kế hoạch. spec_ready: agent viết xong Spec đã qua cổng. mapping_submitted: Engineer
     duyệt / sửa mapping xong và cho chạy thử. finished: agent dừng (chạy thử xong hoặc bị chặn). Thời điểm duyệt
     lấy từ approval.at.
     """

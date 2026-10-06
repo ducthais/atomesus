@@ -6,7 +6,7 @@ export const STAGE_IDS = [
   'budget', 'el_run', 'el_validate', 't_run', 't_validate', 'optimize', 'report',
 ] as const;
 export const STAGES = [
-  'Tiếp nhận yêu cầu', 'Lập kế hoạch', 'Xác nhận phạm vi', 'Phân giải ngữ cảnh',
+  'Tiếp nhận yêu cầu', 'Lập kế hoạch', 'Xác nhận kế hoạch', 'Phân giải ngữ cảnh',
   'Sinh đặc tả', 'Đối chiếu mục tiêu', 'Render mã nguồn', 'Kiểm tra đặc tả',
   'Ước tính ngân sách', 'Chạy ingestion', 'Đối soát dữ liệu', 'Chạy dbt',
   'Kiểm tra kết quả', 'Tối ưu hiệu năng', 'Tổng hợp báo cáo',
@@ -107,6 +107,7 @@ function toLogs(report: RunReport, stage: number): Log[] {
     message: item.question ? `Cần làm rõ: ${item.question}` : traceText(item).split('\n')[0].slice(0, 200),
     detail: [traceText(item), item.source_id && `Nguồn: ${item.source_id}`].filter(Boolean).join('\n'), at,
   }));
+  if (report.status === 'DRAFT' && report.stage_reached === 'confirm') logs.push({ id: `${report.run_id}-plan`, stage, level: 'info', message: 'Kế hoạch xong. Chờ Engineer xác nhận trước khi agent viết Spec.', at });
   if (report.status === 'READY_FOR_REVIEW') logs.push({ id: `${report.run_id}-ready`, stage, level: 'success', message: 'Mọi kiểm tra đạt. Chờ Reviewer duyệt.', at });
   return logs;
 }
@@ -153,7 +154,7 @@ export function pendingRun(request: string, owner: string): Run {
     id: `pending-${Date.now()}`, title: request.length > 60 ? request.slice(0, 57) + '…' : request, domain: '—', owner, request,
     version: 1, filesHash: '', status: 'GENERATING', stage: stageIndex('plan'), summary: '',
     plan: { sources: [], tables: [], primaryKey: '—', cursor: '—', metric: '—', schedule: '—', writeMode: '—', model: '—', filters: '' },
-    checks: [], logs: [{ id: 'pending', stage: stageIndex('plan'), level: 'info', message: 'Agent đang chạy: lập kế hoạch → viết Spec → sinh code → chạy thử trong sandbox (khoảng 30 giây).', at: now }],
+    checks: [], logs: [{ id: 'pending', stage: stageIndex('plan'), level: 'info', message: 'Agent đang lập kế hoạch; xong sẽ dừng chờ bạn xác nhận rồi mới viết Spec và chạy thử.', at: now }],
     specRetries: 0, sqlRetries: 0, llmCalls: 0, updatedAt: now, usd: 0, fileCount: 0, assets: [], approval: null, error: null, question: null, pending: true,
   };
 }

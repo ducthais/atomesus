@@ -135,7 +135,7 @@ export function RequestForm({ initial, canRun, examples, sources, initialTables,
     {parent && <input type="hidden" name="parent" value={parent} />}
     <SourcePicker sources={sources} selected={tables} onChange={setTables} disabled={pending} autoConnect={[...new Set([...connected, ...initialTables.map(t => t.split('.')[0])])].filter(ref => sources.some(s => s.ref === ref && s.supported))} />
     <label className="field">Mô tả nhu cầu dữ liệu<textarea name="request" rows={6} maxLength={2000} value={request} readOnly={pending} onChange={e => setRequest(e.target.value)} placeholder="Ví dụ: Tính doanh thu theo ngày từ bảng đơn hàng…" /></label>
-    <label className="review-toggle"><input type="checkbox" name="review" defaultChecked disabled={pending} /><span><strong>Xem & chỉnh mapping trước khi chạy thử</strong><small className="muted">Agent dừng sau khi viết Spec để bạn kiểm tra cột nguồn → cột đầu ra, kiểu dữ liệu, luật loại dòng</small></span></label>
+    <p className="muted small">Agent lập kế hoạch rồi dừng để bạn xác nhận; chưa xác nhận thì chưa viết Spec, chưa chạy gì trên nguồn.</p>
     <div className="examples"><span className="muted">Thử nhanh</span>{examples.map(x => <button type="button" key={x.label} className="chip" disabled={pending} onClick={() => setRequest(x.request)}>{x.label}</button>)}</div>
     <div className="form-actions">
       {!canRun ? <span className="muted">Chỉ Engineer gửi yêu cầu. Đổi người dùng ở góc trên bên phải.</span>

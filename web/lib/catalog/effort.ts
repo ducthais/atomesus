@@ -1,11 +1,11 @@
 /**
  * Công sức của một run tính từ các mốc thời gian backend ghi (RunReport.timeline) và lúc duyệt (approval.at):
- * máy chạy bao lâu, người (chỉnh mapping, duyệt) mất bao lâu. Hàm thuần, có test.
+ * máy chạy bao lâu, người (xác nhận kế hoạch, chỉnh mapping, duyệt) mất bao lâu. Hàm thuần, có test.
  * Thời gian của người là thời gian thực trôi qua giữa hai mốc, nên gồm cả lúc đọc, cân nhắc và chờ.
  */
 
 export type TimelineEvent = { event: string; at: string; actor?: string | null };
-export type Segment = { key: 'agent_spec' | 'mapping' | 'agent_test' | 'review'; label: string; who: 'agent' | 'human'; sec: number };
+export type Segment = { key: 'agent_plan' | 'plan' | 'agent_spec' | 'mapping' | 'agent_test' | 'review'; label: string; who: 'agent' | 'human'; sec: number };
 export type Effort = { segments: Segment[]; agentSec: number; humanSec: number; totalSec: number; approved: boolean };
 
 const at = (timeline: TimelineEvent[], name: string) => {
@@ -18,9 +18,15 @@ export function effort(timeline: TimelineEvent[], approvedAt: string | null): Ef
   const submitted = at(timeline, 'submitted');
   if (submitted === null) return null;
   const specReady = at(timeline, 'spec_ready'), mapping = at(timeline, 'mapping_submitted'), finished = at(timeline, 'finished');
+  // Cổng P2: run cũ (trước khi có cổng) không có hai mốc này, chặng đầu tính gộp như trước.
+  const planReady = at(timeline, 'plan_ready'), planConfirmed = at(timeline, 'plan_confirmed');
   const approved = approvedAt ? new Date(approvedAt).getTime() : null;
   const parts: (Segment | null)[] = [
-    toSegment('agent_spec', 'Agent lập kế hoạch và viết Spec', 'agent', span(submitted, specReady ?? finished)),
+    toSegment('agent_plan', 'Agent lập kế hoạch', 'agent', span(submitted, planReady)),
+    toSegment('plan', 'Engineer xem và xác nhận kế hoạch', 'human', span(planReady, planConfirmed)),
+    planReady === null
+      ? toSegment('agent_spec', 'Agent lập kế hoạch và viết Spec', 'agent', span(submitted, specReady ?? finished))
+      : toSegment('agent_spec', 'Agent viết Spec', 'agent', span(planConfirmed, specReady ?? finished)),
     toSegment('mapping', 'Engineer xem, chỉnh mapping và xác nhận Spec', 'human', span(specReady, mapping)),
     toSegment('agent_test', 'Agent sinh code và chạy thử', 'agent', specReady !== null ? span(mapping ?? specReady, finished) : null),
     toSegment('review', 'Reviewer xem bằng chứng và duyệt', 'human', span(finished, approved)),

@@ -38,7 +38,8 @@ export function isAgentSpec(spec: unknown): spec is AgentSpec {
 }
 export type AgentPlan = {
   summary?: string; model_name?: string; schedule?: string; question?: string | null;
-  sources: { id: string; source_ref: string; object: string }[]; metrics?: { name: string; definition?: string }[];
+  sources: { id: string; source_ref: string; object: string; purpose?: string }[]; metrics?: { name: string; definition?: string }[];
+  joins?: { left: string; right: string; type: 'left' | 'inner' }[]; grain?: string[]; filters?: string[];
 };
 export type Approval = { decision: string; reviewer: string; files_hash: string; version: number; at: string; comment: string };
 export type RunReport = {

@@ -77,6 +77,16 @@ def summary(report: RunReport) -> str:
 
 def created_reply(report: RunReport) -> str:
     """Câu trả lời sau khi chat tạo run mới."""
+    if report.status == "DRAFT" and report.stage_reached == "confirm" and report.plan:
+        plan = report.plan
+        tables = ", ".join(
+            f"{s['source_ref']}.{s['object']}" if isinstance(s, dict) else str(s) for s in plan.get("sources", [])
+        )
+        return (
+            f"{summary(report)}\nKế hoạch: {plan.get('summary') or '(không có tóm tắt)'} (plan.summary)\n"
+            f"Bảng đọc: {tables} (plan.sources)\n"
+            "Mở run và bấm **Xác nhận kế hoạch** để agent viết Spec và chạy thử; chat không xác nhận thay bạn."
+        )
     if report.status == "READY_FOR_REVIEW":
         return f"{summary(report)}\nMọi kiểm tra trong sandbox đều đạt, run đã vào hàng đợi duyệt."
     return f"{summary(report)}\n{_why(report)}"

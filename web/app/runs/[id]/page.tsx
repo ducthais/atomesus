@@ -6,6 +6,7 @@ import { STAGES, STAGE_IDS, canReview, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
 import { RunResultView } from '../../_components/run-result';
 import { MappingEditor } from '../../_components/mapping-editor';
+import { PlanConfirm } from '../../_components/plan-confirm';
 import { RunProgress } from '../../_components/run-progress';
 import { RunChat } from '../../_components/run-chat';
 import { EffortPanel } from '../../_components/effort';
@@ -39,10 +40,16 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const versions = result ? cat.runs.filter(r => r.domain === run.domain && r.result?.model === result.model && r.fileCount > 0)
     .map(r => ({ id: r.id, label: `${shortId(r.id)} · ${fmtDate(r.updatedAt)}${r.status === 'DEPLOYED' ? ' (đang chạy)' : ''}` })) : [];
   const comparable = versions.some(v => v.id !== run.id);
-  // Agent chạy nền: trang tự làm mới tới khi run dừng (DRAFT là nháp chờ người sửa, không phải đang chạy).
-  const inProgress = run.status === 'GENERATING' || run.status === 'VALIDATING';
+  // Agent chạy nền: trang tự làm mới tới khi run dừng (DRAFT là nháp chờ người xác nhận / sửa, không phải đang chạy).
+  const inProgress = run.status === 'PLAN_CONFIRMED' || run.status === 'GENERATING' || run.status === 'VALIDATING';
+  // Cổng P2: DRAFT ở stage `confirm` là kế hoạch chờ xác nhận; DRAFT có Spec là mapping chờ sửa.
+  const pendingPlan = run.status === 'DRAFT' && STAGE_IDS[run.stage] === 'confirm' && run.agentPlan ? run.agentPlan : null;
   const draftSpec = run.status === 'DRAFT' && isAgentSpec(run.spec) ? run.spec : null;
+  // Đồng hồ tiến độ tính từ lúc xác nhận kế hoạch, không cộng thời gian chờ người.
+  const progressFrom = run.timeline?.findLast(e => e.event === 'plan_confirmed')?.at ?? run.updatedAt;
+  const retryHref = `/runs/new?request=${encodeURIComponent(run.request)}&parent=${run.id}${run.retryTables?.length ? `&tables=${encodeURIComponent(run.retryTables.join(','))}` : ''}`;
   const tabs = [
+    ...(pendingPlan ? [{ id: 'plan', label: 'Kế hoạch' }] : []),
     ...(draftSpec ? [{ id: 'mapping', label: 'Mapping' }] : []),
     ...(result && !draftSpec && !inProgress ? [{ id: 'result', label: 'Kết quả' }] : []),
     { id: 'overview', label: 'Tổng quan' },
@@ -67,18 +74,22 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   return <>
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/runs">Hoạt động</Link><span>/</span><span className="mono">{shortId(run.id)}</span></nav>
     <PageHeader icon={<GitBranch size={22} />} kicker={<><StatusBadge status={run.status} /><span className="meta-tag">v{run.version}</span><span className="meta-tag">Phase {run.stage + 1}/{STAGES.length} · {STAGES[run.stage]}</span></>} title={run.title}
-      actions={<Link href={`/runs/new?request=${encodeURIComponent(run.request)}&parent=${run.id}${run.retryTables?.length ? `&tables=${encodeURIComponent(run.retryTables.join(','))}` : ''}`} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link>}>
+      actions={<Link href={retryHref} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link>}>
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
 
     {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Run dừng ở “{STAGES[run.stage]}”</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
 
-    {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={run.updatedAt} specRetries={run.specRetries} />}
+    {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={progressFrom} specRetries={run.specRetries} />}
 
     <Tabs base={base} active={tab} tabs={tabs} />
 
     {tab === 'result' && result && <RunResultView result={result} summary={run.summary} request={run.request}
       goldId={cat.datasets.find(d => d.name === result.goldTable && d.domain === run.domain)?.id ?? null} deployed={run.status === 'DEPLOYED'} />}
+
+    {tab === 'plan' && pendingPlan && <PlanConfirm runId={run.id} plan={pendingPlan} retryHref={retryHref}
+      canConfirm={user.role === 'Engineer' && user.id === run.owner}
+      reason={user.role !== 'Engineer' ? `Bạn đang là ${user.role}. Chỉ Engineer tạo run xác nhận kế hoạch.` : 'Chỉ người tạo run xác nhận kế hoạch.'} />}
 
     {tab === 'mapping' && draftSpec && <MappingEditor runId={run.id} spec={draftSpec} canEdit={user.role === 'Engineer' && user.id === run.owner}
       sourceColumns={Object.fromEntries(draftSpec.sources.map(s => {
