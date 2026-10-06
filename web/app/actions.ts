@@ -59,11 +59,10 @@ async function remember(ref: string, on: boolean) {
   else jar.delete(CONNECTIONS_COOKIE);
 }
 
-/** Engineer gửi yêu cầu bằng lời; backend ghi run và trả ngay, agent chạy nền, trang run hiện tiến độ. */
+/** Engineer gửi yêu cầu bằng lời; backend ghi run và trả ngay, agent lập kế hoạch ở nền rồi dừng chờ xác nhận (P2). */
 export async function submitRequest(_: ActionState, form: FormData): Promise<ActionState> {
   const request = String(form.get('request') ?? '').trim();
   const parent = String(form.get('parent') ?? '') || undefined;
-  const review = form.get('review') === 'on';
   if (!request) return { error: 'Nhập yêu cầu.' };
   // Mỗi ô chọn bảng gửi "<source_ref>.<bảng>"; gom theo nguồn thành [{source_ref, tables}].
   const bySource = new Map<string, string[]>();
@@ -75,8 +74,7 @@ export async function submitRequest(_: ActionState, form: FormData): Promise<Act
   const sources = [...bySource].map(([source_ref, tables]) => ({ source_ref, tables }));
   if (MOCK) return { message: `Mock: chưa gọi backend. Bản thật gửi POST /agent/runs với nguồn ${sources.map(s => `${s.source_ref} (${s.tables.join(', ')})`).join('; ')}.` };
   let report: RunReport;
-  // Xem & sửa mapping: agent chỉ lập nháp (DRAFT), Engineer duyệt mapping rồi mới chạy thử.
-  try { report = await backend<RunReport>(review ? '/agent/drafts' : '/agent/runs', { method: 'POST', body: JSON.stringify({ request, sources, parent_run_id: parent }) }); }
+  try { report = await backend<RunReport>('/agent/runs', { method: 'POST', body: JSON.stringify({ request, sources, parent_run_id: parent }) }); }
   catch (err) { return failure(err); }
   redirect(`/runs/${report.run_id.slice(0, 8)}`);
 }
@@ -147,6 +145,18 @@ export async function askRun(runId: string, message: string): Promise<ActionStat
   try { await backend<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify(payload) }); }
   catch (err) { return failure(err); }
   refresh(); // tải lại lịch sử chat (và bộ đếm câu hỏi) từ backend
+  return null;
+}
+
+/** Cổng P2: Engineer xác nhận kế hoạch; agent viết Spec rồi chạy thử ở nền (hoặc dừng sau Spec nếu muốn xem mapping). */
+export async function confirmPlan(runId: string, reviewMapping: boolean): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: chưa gọi backend.' };
+  try { await backend<RunReport>(`/agent/runs/${encodeURIComponent(runId)}/confirm-plan`, { method: 'POST', body: JSON.stringify({ review_mapping: reviewMapping }) }); }
+  catch (err) {
+    if (err instanceof BackendError && err.status === 409) refresh(); // run đã đổi (đã xác nhận ở tab khác): tải lại
+    return failure(err);
+  }
+  refresh(); // trang chuyển sang khung tiến độ
   return null;
 }
 

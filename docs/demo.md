@@ -64,7 +64,9 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
 |---|---|
 | Bấm **Yêu cầu pipeline** | |
 | Ở `sales_pg`: bấm **Kết nối** (nếu chưa hiện bảng), rồi tích **customers** và **orders**. `pagila_pg` tự hiện bảng vì đã kết nối ở bước 3 | Agent chỉ được dùng đúng các bảng mình chọn; nguồn đã kết nối được nhớ trong phiên. |
-| Nhập: **"Tổng doanh thu và số đơn hàng của từng khách hàng, kèm tên khách hàng"**, để nguyên ô **Xem & chỉnh mapping trước khi chạy thử** đã tích → **Gửi cho agent** | Trang run mở ngay, khung **Agent đang chạy** hiện từng bước (khoảng 15 giây): agent lập kế hoạch, đọc schema + 20 dòng mẫu thật, viết Spec, rồi **dừng lại ở bản nháp**. Agent chạy nền, rời trang cũng không sao. |
+| Nhập: **"Tổng doanh thu và số đơn hàng của từng khách hàng, kèm tên khách hàng"** → **Gửi cho agent** | Trang run mở ngay, agent lập kế hoạch (vài giây) rồi **dừng chờ xác nhận**. Agent chạy nền, rời trang cũng không sao. |
+| Trang run mở ở tab **Kế hoạch** | Agent định đọc bảng nào, ghép thế nào, gộp theo gì, tính chỉ số gì. Chưa xác nhận thì chưa viết Spec, chưa đọc dữ liệu nguồn. Xác nhận chỉ qua nút, chat không xác nhận thay. |
+| Để nguyên ô **Xem & chỉnh mapping trước khi chạy thử** đã tích → **Xác nhận kế hoạch** | Khung **Agent đang chạy** hiện từng bước (khoảng 10 giây): đọc schema + 20 dòng mẫu thật, viết Spec, rồi **dừng lại ở bản nháp**. |
 | Trang run mở ở tab **Mapping** | Engineer thấy agent định lấy cột nào, đặt tên gì, ép kiểu gì, loại dòng nào. Phần "Bảng kết quả sẽ tính" bên dưới cho biết gộp theo gì, tính chỉ số gì. Chưa có code nào chạy. |
 | Bấm **Chạy thử với mapping này** | Bây giờ mới sinh code dlt/dbt/Dagster **từ template** (không phải LLM viết tự do) rồi chạy thật trong sandbox: dlt tải dữ liệu thật, dbt build, khoảng 15–20 giây; trang hiện tiến độ và tự chuyển khi xong. |
 | Trang tự chuyển sang tab **Kết quả** | Diễn giải bằng lời: đọc bảng nào, làm sạch gì, mỗi dòng kết quả là gì; bên dưới là **dữ liệu kết quả thật**. |

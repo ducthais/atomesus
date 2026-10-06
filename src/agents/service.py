@@ -1,13 +1,15 @@
 """Chạy graph cho một yêu cầu và ghi kết quả vào sổ bằng chứng (RunReport + nội dung file sinh ra).
 
-Hai cách chạy:
-- `run_agent`: một mạch planner → codegen → render → test_run.
-- `draft_agent` rồi `continue_agent`: dừng sau khi có Spec (trạng thái DRAFT) để Engineer xem và sửa mapping,
-  sau đó kiểm tra lại Spec đã sửa bằng đúng các cổng của agent rồi mới render và chạy thử.
+Luồng của API (cổng người P2, FR-03: không sinh Spec khi kế hoạch chưa được xác nhận):
+- `start_agent`: chỉ lập kế hoạch, dừng ở DRAFT / stage `confirm` chờ Engineer xác nhận.
+- `start_confirm`: Engineer xác nhận → PLAN_CONFIRMED → codegen → render → test_run; chọn xem mapping trước thì
+  dừng sau khi có Spec (DRAFT / stage `static`).
+- `start_continue`: kiểm tra lại Spec Engineer đã xem / sửa bằng đúng các cổng của agent rồi render và chạy thử.
 
-Một run mất khoảng 15–30 giây (2 lần gọi LLM, dlt tải dữ liệu thật, dbt build). API dùng `start_agent` /
-`start_continue`: ghi run vào sổ bằng chứng ngay và trả về, phần còn lại chạy nền và ghi lại tiến độ sau mỗi
-bước để giao diện theo dõi.
+`run_agent` / `draft_agent` chạy một mạch không qua cổng P2, chỉ dùng cho test và kịch bản chấm điểm.
+
+Một run mất khoảng 15–30 giây (2 lần gọi LLM, dlt tải dữ liệu thật, dbt build). Các hàm `start_*` ghi run vào sổ
+bằng chứng ngay và trả về, phần còn lại chạy nền và ghi lại tiến độ sau mỗi bước để giao diện theo dõi.
 """
 
 import logging
@@ -29,6 +31,10 @@ from src.run_report.store import save_run_files
 log = logging.getLogger(__name__)
 Job = Callable[[], RunReport]
 DEFAULT_CHECKPOINTER = MemorySaver()
+
+
+class PlanNotAwaitingError(Exception):
+    """Run không ở bước chờ xác nhận kế hoạch (đã xác nhận, đã dừng, hoặc không phải run của agent)."""
 
 
 class SpecRejectedError(Exception):
@@ -93,13 +99,25 @@ def _event(name: str, actor: str | None = None) -> dict:
 
 
 def _invoke(
-    deps: AgentDeps, initial: AgentState, stop_after_spec: bool, progress: Callable[[AgentState], None] | None = None
+    deps: AgentDeps,
+    initial: AgentState,
+    stop_after_spec: bool,
+    progress: Callable[[AgentState], None] | None = None,
+    stop_after_plan: bool = False,
+    entry: str = "planner",
 ) -> AgentState:
     try:
         state = initial
         checkpointer = getattr(deps, "checkpointer", None) or DEFAULT_CHECKPOINTER
-        graph = build_graph(deps, stop_after_spec=stop_after_spec, checkpointer=checkpointer)
-        thread_id = initial.get("run_id") or str(uuid4())
+        graph = build_graph(
+            deps,
+            stop_after_spec=stop_after_spec,
+            checkpointer=checkpointer,
+            stop_after_plan=stop_after_plan,
+            entry=entry,
+        )
+        # Lượt sau xác nhận là một thread riêng: không kế thừa state cũ còn trong checkpointer.
+        thread_id = f"{initial.get('run_id') or uuid4()}:{entry}"
         config = {"configurable": {"thread_id": thread_id}}
         for state in graph.stream(initial, config=config, stream_mode="values"):
             if progress and state.get("status") in RUNNING:
@@ -134,9 +152,22 @@ class _Progress:
         save_run_report(self.store_path, _report({**state, "timeline": self.timeline}, self.created_at))
 
 
-def _run(initial: AgentState, created_at: datetime, deps: AgentDeps, store_path: str, draft: bool) -> RunReport:
+def _run(
+    initial: AgentState,
+    created_at: datetime,
+    deps: AgentDeps,
+    store_path: str,
+    draft: bool,
+    plan_gate: bool = False,
+    entry: str = "planner",
+) -> RunReport:
     progress = _Progress(initial.get("timeline", []), created_at, store_path)
-    state = _invoke(deps, initial, stop_after_spec=draft, progress=progress)
+    state = _invoke(deps, initial, stop_after_spec=draft, progress=progress, stop_after_plan=plan_gate, entry=entry)
+    if plan_gate and state.get("status") == "GENERATING":  # kế hoạch xong, chờ Engineer xác nhận (P2)
+        timeline = [*progress.timeline, _event("plan_ready")]
+        return _save(
+            {**state, "status": "DRAFT", "stage_reached": "confirm", "timeline": timeline}, created_at, store_path
+        )
     if draft and state.get("status") == "VALIDATING":  # Spec hợp lệ, dừng chờ Engineer
         return _save({**state, "status": "DRAFT", "timeline": progress.timeline}, created_at, store_path)
     return _save({**state, "timeline": [*progress.timeline, _event("finished")]}, created_at, store_path)
@@ -185,6 +216,19 @@ def draft_agent(
     return _run(initial, datetime.now(UTC), deps, store_path, draft=True)
 
 
+def plan_agent(
+    user_request: str,
+    created_by: str,
+    deps: AgentDeps,
+    store_path: str,
+    sources: list[dict] | None = None,
+    parent_run_id: str | None = None,
+) -> RunReport:
+    """Chỉ lập kế hoạch (đồng bộ, một lần gọi LLM rẻ), lưu ở DRAFT / stage `confirm` chờ Engineer xác nhận."""
+    initial = _initial(user_request, created_by, sources, parent_run_id)
+    return _run(initial, datetime.now(UTC), deps, store_path, draft=False, plan_gate=True)
+
+
 def start_agent(
     user_request: str,
     created_by: str,
@@ -192,12 +236,70 @@ def start_agent(
     store_path: str,
     sources: list[dict] | None = None,
     parent_run_id: str | None = None,
-    draft: bool = False,
 ) -> tuple[RunReport, Job]:
-    """Ghi run mới (GENERATING) vào sổ bằng chứng ngay; trả kèm việc cần chạy nền để đi hết các bước."""
+    """Ghi run mới (GENERATING) vào sổ bằng chứng ngay; việc chạy nền lập kế hoạch rồi dừng chờ xác nhận (P2)."""
     initial, created_at = _initial(user_request, created_by, sources, parent_run_id), datetime.now(UTC)
     started = _save(initial, created_at, store_path)
-    job = _guarded(lambda: _run(initial, created_at, deps, store_path, draft), initial, created_at, store_path)
+    job = _guarded(
+        lambda: _run(initial, created_at, deps, store_path, draft=False, plan_gate=True),
+        initial,
+        created_at,
+        store_path,
+    )
+    return started, job
+
+
+def awaiting_plan(report: RunReport) -> bool:
+    """Run đang dừng ở cổng P2: đã có kế hoạch, chưa có Spec."""
+    return report.status == "DRAFT" and report.stage_reached == "confirm" and report.plan is not None
+
+
+def confirm_plan(
+    report: RunReport, confirmed_by: str, deps: AgentDeps, store_path: str, review_mapping: bool = False
+) -> RunReport:
+    """Bản đồng bộ của `start_confirm` (test)."""
+    _started, job = start_confirm(report, confirmed_by, deps, store_path, review_mapping)
+    return job()
+
+
+def start_confirm(
+    report: RunReport, confirmed_by: str, deps: AgentDeps, store_path: str, review_mapping: bool = False
+) -> tuple[RunReport, Job]:
+    """Engineer xác nhận kế hoạch: ghi PLAN_CONFIRMED ngay, việc chạy nền viết Spec rồi render và chạy thử.
+
+    `review_mapping`: dừng sau khi Spec qua các cổng (DRAFT) để Engineer xem và sửa mapping trước khi chạy thử.
+    Run không ở bước chờ xác nhận → `PlanNotAwaitingError`.
+    """
+    if not awaiting_plan(report):
+        raise PlanNotAwaitingError(
+            f"Run đang ở trạng thái {report.status} ({report.stage_reached}), không chờ xác nhận kế hoạch."
+        )
+    timeline = [*(e.model_dump(mode="json") for e in report.timeline), _event("plan_confirmed", confirmed_by)]
+    state: AgentState = {
+        "run_id": report.run_id,
+        "version": report.version,
+        "created_by": report.created_by,
+        "trigger": report.trigger,
+        "parent_run_id": report.parent_run_id,
+        "source_scope": report.source_scope,
+        "user_request": report.user_request,
+        "domain": report.domain,
+        "plan": report.plan,
+        "attempts": report.attempts.model_dump(),
+        "llm_calls": report.llm_calls,
+        "error_trace": [],
+        "status": "PLAN_CONFIRMED",
+        "stage_reached": "confirm",
+        "timeline": timeline,
+    }
+    started = _save(state, report.created_at, store_path)
+    running: AgentState = {**state, "status": "GENERATING"}
+    job = _guarded(
+        lambda: _run(running, report.created_at, deps, store_path, draft=review_mapping, entry="codegen"),
+        state,
+        report.created_at,
+        store_path,
+    )
     return started, job
 
 

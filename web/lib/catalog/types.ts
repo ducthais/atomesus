@@ -4,6 +4,7 @@
  */
 import type { Limits, Run } from '../studio.ts';
 import type { RunResult } from './explain.ts';
+import type { AgentPlan } from '../postgres-api.ts';
 
 export type Layer = 'source' | 'bronze' | 'staging' | 'gold';
 export type Platform = 'postgres' | 'mongodb' | 'rest_api' | 'filesystem' | 'duckdb';
@@ -66,7 +67,7 @@ export type Activity = { id: string; at: string; actor: string; action: string; 
 export type PolicyFile = { name: string; description: string; content: string };
 
 /** `files`: đường dẫn → nội dung. Mock có sẵn; backend để trống, đọc nội dung qua `runFiles()` (GET /runs/{id}/files). */
-export type CatalogRun = Run & { files: Record<string, string>; result?: RunResult | null; spec?: unknown; timeline?: { event: string; at: string; actor?: string | null }[] };
+export type CatalogRun = Run & { files: Record<string, string>; result?: RunResult | null; spec?: unknown; agentPlan?: AgentPlan | null; timeline?: { event: string; at: string; actor?: string | null }[] };
 
 export type LineageGraph = { nodes: Dataset[]; edges: { from: string; to: string }[]; focus?: string };
 

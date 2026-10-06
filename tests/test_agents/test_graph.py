@@ -8,7 +8,7 @@ import pytest
 from src.agents import service
 from src.agents.graph import build_graph
 from src.agents.nodes.common import AgentDeps
-from src.agents.service import run_agent, start_agent
+from src.agents.service import confirm_plan, run_agent, start_agent
 from src.codegen.sandbox import SandboxResult
 from src.pipeline import auth
 from src.policy.loader import load_policy
@@ -73,6 +73,11 @@ class FakeLLM:
     def __call__(self, tier, system, user):
         self.calls.append({"tier": tier, "system": system, "user": json.loads(user)})
         return self.answers.pop(0)
+
+
+def tiered_llm(tier, system, user):
+    """Cho test API: mỗi request tạo deps mới, nên trả theo tier thay vì theo thứ tự (planner rẻ, codegen mạnh)."""
+    return json.dumps(PLAN if tier == "cheap" else SPEC)
 
 
 def passing_sandbox(spec, files, policy, settings):
@@ -416,12 +421,17 @@ def test_progress_is_saved_after_each_step_and_background_job_finishes(tmp_path,
         original(path, report)
 
     monkeypatch.setattr(service, "save_run_report", recording)
-    started, job = start_agent("Doanh thu theo ngày", "minh", deps(FakeLLM(PLAN, SPEC)), store)
+    agent = deps(FakeLLM(PLAN, SPEC))
+    started, job = start_agent("Doanh thu theo ngày", "minh", agent, store)
     assert started.status == "GENERATING" and get_run_report(store, started.run_id).status == "GENERATING"
-    done = job()
+    planned = job()
+    assert (planned.status, planned.stage_reached) == ("DRAFT", "confirm")
+    assert planned.spec is None and planned.llm_calls == 1, "chưa xác nhận thì chưa viết Spec (FR-03)"
+    done = confirm_plan(planned, "minh", agent, store)
     assert done.status == "READY_FOR_REVIEW" and get_run_report(store, started.run_id).status == "READY_FOR_REVIEW"
-    assert ("GENERATING", "plan") in seen and ("VALIDATING", "static") in seen, seen
-    assert [e.event for e in done.timeline] == ["submitted", "spec_ready", "finished"]
+    assert ("GENERATING", "plan") in seen and ("PLAN_CONFIRMED", "confirm") in seen, seen
+    assert ("VALIDATING", "static") in seen, seen
+    assert [e.event for e in done.timeline] == ["submitted", "plan_ready", "plan_confirmed", "spec_ready", "finished"]
 
 
 def test_background_crash_still_closes_the_run(tmp_path, monkeypatch):
@@ -465,7 +475,7 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
 
     config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
     app.dependency_overrides[auth.settings] = lambda: config
-    app.dependency_overrides[routes.agent_deps] = lambda: deps(FakeLLM(PLAN, SPEC))
+    app.dependency_overrides[routes.agent_deps] = lambda: deps(tiered_llm)
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         assert (await client.post("/api/v1/agent/runs", json={"request": "x"})).status_code == 401
@@ -490,10 +500,16 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
             "/api/v1/agent/runs", json={"request": "Doanh thu", "parent_run_id": scoped.json()["run_id"]}
         )
         assert child.status_code == 201 and child.json()["parent_run_id"] == scoped.json()["run_id"]
+        for started in (scoped, child):  # so sánh cần cả hai run đã sinh code
+            await client.post(f"/api/v1/agent/runs/{started.json()['run_id']}/confirm-plan", json={})
         compared = (await client.get(f"/api/v1/runs/{child.json()['run_id']}/compare")).json()
         assert compared["available"] is True and compared["base"]["run_id"] == scoped.json()["run_id"]
         response = await client.post("/api/v1/agent/runs", json={"request": "Doanh thu theo ngày"})
         assert response.status_code == 201 and response.json()["status"] == "GENERATING"
+        planned = (await client.get(f"/api/v1/runs/{response.json()['run_id']}")).json()
+        assert (planned["status"], planned["stage_reached"], planned["spec"]) == ("DRAFT", "confirm", None)
+        confirmed = await client.post(f"/api/v1/agent/runs/{planned['run_id']}/confirm-plan", json={})
+        assert confirmed.status_code == 200 and confirmed.json()["status"] == "PLAN_CONFIRMED"
         report = (await client.get(f"/api/v1/runs/{response.json()['run_id']}")).json()
         assert report["status"] == "READY_FOR_REVIEW" and report["created_by"] == "minh"
         files = (await client.get(f"/api/v1/runs/{report['run_id']}/files")).json()

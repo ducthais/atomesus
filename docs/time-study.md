@@ -12,7 +12,8 @@ Kết quả đúng để đối chiếu (tính thẳng trên Postgres): 50 ngày
 
 ## Phía agent (tự ghi)
 
-1. Engineer: **Yêu cầu pipeline** → chọn `pagila_pg.payment` → nhập yêu cầu, **để tích** "Xem & chỉnh mapping" → Gửi.
+1. Engineer: **Yêu cầu pipeline** → chọn `pagila_pg.payment` → nhập yêu cầu → Gửi. Tab **Kế hoạch**: **để tích**
+   "Xem & chỉnh mapping" → **Xác nhận kế hoạch**.
 2. Tab **Mapping**: xem, chỉnh nếu cần → **Chạy thử với mapping này**.
 3. Reviewer (đăng nhập An): mở run → xem Kết quả / Bằng chứng → **Phê duyệt**.
 4. Mở tab **Tổng quan** của run: khung "Thời gian & công sức" ghi Tổng / Máy / Người và từng chặng, cùng số dòng code agent đã sinh.

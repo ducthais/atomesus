@@ -211,6 +211,9 @@ test('effort: máy và người tách bạch, thời gian người tính tới l
   assert.deepEqual([e.agentSec, e.humanSec, e.totalSec, e.approved], [34, 210, 244, true]);
   const direct = effort([{ event: 'submitted', at: t(0) }, { event: 'spec_ready', at: t(10) }, { event: 'finished', at: t(30) }], null)!;
   assert.deepEqual(direct.segments.map(s => s.key), ['agent_spec', 'agent_test'], 'không xem mapping thì không có chặng của engineer');
+  const gated = effort([{ event: 'submitted', at: t(0) }, { event: 'plan_ready', at: t(4) }, { event: 'plan_confirmed', at: t(64) }, { event: 'spec_ready', at: t(74) }, { event: 'finished', at: t(94) }], null)!;
+  assert.deepEqual(gated.segments.map(s => [s.key, s.sec]), [['agent_plan', 4], ['plan', 60], ['agent_spec', 10], ['agent_test', 20]], 'cổng P2: thời gian chờ xác nhận là của engineer');
+  assert.deepEqual(effort([{ event: 'submitted', at: t(0) }, { event: 'plan_ready', at: t(4) }], null)!.segments.map(s => s.key), ['agent_plan'], 'đang chờ xác nhận');
   assert.equal(effort([], null), null);
   assert.equal(duration(244), '4 phút 4 giây');
   assert.deepEqual(codeVolume({ 'ingestion/x_pipeline.py': 'a\n\nb\n', 'dbt_project/models/gold/x.sql': 'select 1\n', 'dbt_project/models/gold/x.yml': 'v: 2\n' }).map(v => v.lines), [2, 1, 1]);

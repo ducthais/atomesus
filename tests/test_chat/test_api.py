@@ -50,16 +50,18 @@ async def test_chat_requires_session(client, env):
 
 
 @pytest.mark.asyncio
-async def test_new_request_runs_agent_as_session_user_and_logs_messages(client, env, monkeypatch):
+async def test_new_request_plans_as_session_user_and_waits_for_the_button(client, env, monkeypatch):
     calls = []
 
-    def fake_run_agent(request, created_by, deps, store_path):
+    def fake_plan_agent(request, created_by, deps, store_path):
         calls.append((request, created_by))
-        report = _fixture("ready_for_review.json").model_copy(update={"run_id": "new-run", "created_by": created_by})
+        report = _fixture("ready_for_review.json").model_copy(
+            update={"run_id": "new-run", "created_by": created_by, "status": "DRAFT", "stage_reached": "confirm"}
+        )
         save_run_report(store_path, report)
         return report
 
-    monkeypatch.setattr(chat_api, "run_agent", fake_run_agent)
+    monkeypatch.setattr(chat_api, "plan_agent", fake_plan_agent)
     await _login(client, "minh")
 
     response = await client.post("/api/v1/chat", json={"message": "  Doanh thu theo ngày  "})
@@ -68,7 +70,7 @@ async def test_new_request_runs_agent_as_session_user_and_logs_messages(client, 
     body = response.json()
     assert body["intent"] == "new_request"
     assert body["run_id"] == "new-run"
-    assert "READY_FOR_REVIEW" in body["reply"]
+    assert "Xác nhận kế hoạch" in body["reply"] and body["report"]["status"] == "DRAFT"
     assert calls == [("Doanh thu theo ngày", "minh")]
     messages = (await client.get("/api/v1/runs/new-run/messages")).json()
     assert [(m["role"], m["author"], m["intent"]) for m in messages] == [
@@ -79,7 +81,7 @@ async def test_new_request_runs_agent_as_session_user_and_logs_messages(client, 
 
 @pytest.mark.asyncio
 async def test_reviewer_cannot_create_run_from_chat(client, env, monkeypatch):
-    monkeypatch.setattr(chat_api, "run_agent", lambda *_: pytest.fail("không được chạy agent"))
+    monkeypatch.setattr(chat_api, "plan_agent", lambda *_: pytest.fail("không được chạy agent"))
     await _login(client, "an")
 
     assert (await client.post("/api/v1/chat", json={"message": "tạo pipeline"})).status_code == 403

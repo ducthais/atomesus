@@ -61,10 +61,11 @@ def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HI
 def abandon_unfinished(path: str) -> list[str]:
     """Run đang chạy nền lúc backend tắt sẽ không bao giờ xong: đánh dấu lỗi để giao diện không chờ mãi.
 
-    Chỉ gọi lúc backend khởi động (chưa có việc nền nào). DRAFT là nháp chờ người sửa, không phải đang chạy.
+    Chỉ gọi lúc backend khởi động (chưa có việc nền nào). DRAFT là nháp chờ người (xác nhận kế hoạch hoặc sửa
+    mapping), không phải đang chạy.
     """
     abandoned = []
-    for status in ("GENERATING", "VALIDATING"):
+    for status in ("PLAN_CONFIRMED", "GENERATING", "VALIDATING"):
         for report in list_run_reports(path, status, limit=1000):
             error = {
                 "stage": report.stage_reached,

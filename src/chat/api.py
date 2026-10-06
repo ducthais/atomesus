@@ -1,6 +1,6 @@
 """API chat bản Sprint 1 (SPEC §14.5, §15, FR-27).
 
-- `POST /chat` không có `run_id`: `new_request`, chạy graph như `POST /agent/runs` (chỉ Engineer).
+- `POST /chat` không có `run_id`: `new_request`, lập kế hoạch rồi dừng chờ xác nhận bằng nút (P2), chỉ Engineer.
 - `POST /chat` có `run_id`: `ask`, trả lời từ RunReport, không đổi trạng thái run, trần `max_chat_calls`.
 - `GET /runs/{run_id}/messages`: lịch sử chat của run.
 Chat không duyệt, không deploy: cổng người chỉ qua nút bấm.
@@ -9,7 +9,7 @@ Chat không duyệt, không deploy: cổng người chỉ qua nút bấm.
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.agents.nodes.common import AgentDeps
-from src.agents.service import run_agent
+from src.agents.service import plan_agent
 from src.api.routes import agent_deps
 from src.chat import answers, store
 from src.chat.models import ChatMessage, ChatRequest, ChatResponse
@@ -42,7 +42,7 @@ def post_chat(
     if body.run_id is None:
         if user["role"] != "Engineer":
             raise HTTPException(403, "Chỉ Engineer được tạo pipeline từ chat.")
-        report = run_agent(message, user["id"], deps, config.store_path)
+        report = plan_agent(message, user["id"], deps, config.store_path)
         intent, reply = "new_request", answers.created_reply(report)
     else:
         report = _existing_run(config.store_path, body.run_id)
