@@ -4,6 +4,7 @@
 - DAGSTER_HOME cố định (data/dagster_home) để lịch sử run, lịch chạy và backfill được giữ giữa các lần bật.
 - Một warehouse DuckDB chung (data/warehouse/warehouse.duckdb) cho bronze / staging / gold của mọi pipeline.
 - Credential nguồn lấy từ .env (PIPELINE_DATABASE_URL), không ghi ra file.
+- Mỗi `COLLECT_SECONDS` thu số đo các lần chạy theo lịch vừa xong (src/monitor/runs.py) cho phần theo dõi Day 2.
 - Tự khởi động lại khi workspace.yaml đổi: Reviewer duyệt một pipeline thì deploy ghi lại file này, và
   `dagster dev` chỉ đọc danh sách code location lúc khởi động (nút Reload không thêm được location mới).
 
@@ -28,6 +29,7 @@ from src.policy.loader import load_policy  # noqa: E402
 
 HOST, PORT = os.environ.get("DAGSTER_HOST", "127.0.0.1"), os.environ.get("DAGSTER_PORT", "3070")
 POLL_SECONDS = 3
+COLLECT_SECONDS = 60
 
 
 def start() -> tuple[subprocess.Popen, Path]:
@@ -71,14 +73,34 @@ def stop(process: subprocess.Popen) -> None:
         process.kill()
 
 
+def collect() -> None:
+    """Ghi số đo các lần chạy đã xong; Dagster chưa lên hoặc nguồn lỗi thì bỏ qua, lần sau thu tiếp."""
+    from src.monitor.runs import MonitorError
+    from src.monitor.runs import collect as collect_runs
+
+    try:
+        written = collect_runs(PipelineSettings(), load_policy())
+    except MonitorError:
+        return
+    except Exception as exc:  # không để lỗi thu số đo làm tắt Dagster
+        print(f"Thu số đo lỗi: {type(exc).__name__}: {exc}", flush=True)
+        return
+    if written:
+        print(f"Đã ghi số đo {len(written)} lần chạy: {', '.join(r['model'] for r in written)}", flush=True)
+
+
 def main() -> int:
     process, workspace = start()
     stamp = workspace.stat().st_mtime
+    collected = time.monotonic()
     try:
         while True:
             time.sleep(POLL_SECONDS)
             if process.poll() is not None:
                 return process.returncode
+            if time.monotonic() - collected >= COLLECT_SECONDS:
+                collect()
+                collected = time.monotonic()
             if workspace.stat().st_mtime != stamp:
                 print("workspace.yaml đổi (có pipeline vừa được duyệt): khởi động lại Dagster…", flush=True)
                 stop(process)
