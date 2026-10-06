@@ -192,3 +192,43 @@ def test_merge_dedupes_in_bronze_and_counts_distinct_keys_at_source(served):
     checks = {c.name: c.observed for c in result.checks}
     assert checks["row_reconcile"] == {"source": 120, "bronze": 120, "source_records": 122}
     assert (checks["staging_reconcile"]["duplicates"], checks["staging_reconcile"]["rejected"]) == (0, 1)
+
+
+def test_hash_and_idempotent_checks_pass_for_a_replace_load(served):
+    from src.codegen.render import render
+    from src.codegen.sandbox import run_in_sandbox
+    from src.spec.models import Spec
+
+    policy = load_policy()
+    spec = Spec.model_validate(SPEC)
+    result = run_in_sandbox(spec, render(spec, policy), policy, served)
+    checks = {c.name: c for c in result.checks}
+    hashed = checks["hash_reconcile"].observed
+    assert checks["hash_reconcile"].result == "pass" and hashed["source_keys"] == hashed["bronze_keys"] == 120
+    assert hashed["source_hash"] == hashed["bronze_hash"] and hashed["missing_in_bronze"] == []
+    again = checks["idempotent"].observed
+    assert checks["idempotent"].result == "pass" and again["first_rows"] == again["second_rows"] == 122
+
+
+def test_incremental_append_loads_nothing_new_on_the_second_run(served):
+    from src.codegen.render import render
+    from src.codegen.sandbox import run_in_sandbox
+    from src.spec.models import Spec
+
+    raw = {**SPEC, "sources": [{**SPEC["sources"][0], "write_disposition": "append", "cursor_field": "paid_at"}]}
+    policy = load_policy()
+    spec = Spec.model_validate(raw)
+    result = run_in_sandbox(spec, render(spec, policy), policy, served)
+    check = next(c for c in result.checks if c.name == "idempotent")
+    assert check.result == "pass" and check.observed["first_rows"] == check.observed["second_rows"]
+
+
+def test_a_second_run_that_changes_bronze_fails_idempotent():
+    from src.codegen.el_checks import Side, idempotent
+    from src.spec.models import Spec
+
+    source = Spec.model_validate(SPEC).sources[0]
+    first = Side(122, {(str(i),) for i in range(1, 121)})
+    check = idempotent(source, first, Side(244, first.keys))
+    assert check.result == "fail" and (check.observed["first_rows"], check.observed["second_rows"]) == (122, 244)
+    assert idempotent(source, first, Side(122, set(first.keys))).result == "pass"

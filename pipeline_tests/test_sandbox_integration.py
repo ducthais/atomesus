@@ -28,6 +28,8 @@ def test_seeded_orders_pass_every_check(spec):
     assert result.status == "READY_FOR_REVIEW", result.error_trace
     checks = {check.name: check for check in result.checks}
     assert checks["row_reconcile"].observed == {"source": 30, "bronze": 30}
+    assert checks["hash_reconcile"].result == "pass" and checks["hash_reconcile"].observed["source_keys"] == 30
+    assert checks["idempotent"].result == "pass" and checks["idempotent"].observed["second_rows"] == 30
     assert checks["staging_reconcile"].observed["staging"] == 30
     assert checks["dbt_test"].observed["failed"] == 0
     (post_run,) = result.gates

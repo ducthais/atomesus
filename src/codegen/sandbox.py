@@ -2,7 +2,7 @@
 
 Mỗi lần chạy có thư mục và file DuckDB riêng, xóa khi xong dù thành công hay lỗi (bất biến 1).
 - P9 `el_run`: chạy đúng file ingestion dlt đã sinh, đổ từng nguồn vào bronze.
-- P10 `el_validate`: `row_reconcile` từng nguồn (đếm ở nguồn và ở bronze; API đọc lại mọi trang để đếm).
+- P10 `el_validate`: `row_reconcile`, `hash_reconcile`, `idempotent` từng nguồn (src/codegen/el_checks.py).
 - P11/P12 `t_run`/`t_validate`: `dbt build` (model + test), rồi `staging_reconcile` từng nguồn và `dbt_test`.
 - `metric_reconcile`: tính lại gold thẳng trên Postgres nguồn bằng đường độc lập và so từng dòng (`reference.py`).
 Tiến trình con chỉ nhận các biến môi trường cần thiết, không nhận khóa LLM hay bí mật khác của backend.
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from src.codegen import reference
+from src.codegen import el_checks, reference
 from src.codegen.render import rejected_table, staging_model
 from src.pipeline import postgres, rest_api
 from src.pipeline.settings import PipelineSettings
@@ -156,41 +156,20 @@ def _el_run(
         raise
 
 
-def _row_reconcile(db, spec: Spec, policy: Policy, settings: PipelineSettings) -> list[Check]:
-    from psycopg import sql
+def _el_validate(sandbox: Path, spec: Spec, env: dict, timeout: int, policy: Policy, settings) -> list[Check]:
+    """P10: row / hash / idempotent cho từng nguồn (src/codegen/el_checks.py). Chạy ingestion lần hai để đo idempotent."""
+    import duckdb
 
     declared = policy.domains.domains[spec.domain].sources
-    checks = []
-    for source in spec.sources:
-        decl = declared[source.source_ref]
-        observed: dict = {}
-        if source.kind == "rest_api":
-            endpoint = {
-                "endpoint": source.endpoint,
-                "records_path": source.records_path,
-                "pagination": source.pagination,
-            }
-            rows = list(rest_api.records(decl, settings, endpoint))
-            # merge: dlt gộp bản ghi trùng khóa ngay ở bronze, nên phía nguồn đếm số khóa khác nhau.
-            keys = source.primary_key if source.write_disposition == "merge" else None
-            source_rows = rest_api.count(rows, keys)
-            observed["source_records"] = len(rows)
-        else:
-            with postgres.connection(settings) as conn:
-                source_rows = conn.execute(
-                    sql.SQL("SELECT count(*) FROM {}.{}").format(
-                        sql.Identifier(decl.schema_), sql.Identifier(source.table)
-                    )
-                ).fetchone()[0]
-        bronze_rows = db.execute(f'select count(*) from bronze."{source.target.table}"').fetchone()[0]
-        checks.append(
-            Check(
-                name="row_reconcile",
-                source_id=source.id,
-                result="pass" if source_rows == bronze_rows else "fail",
-                observed={"source": source_rows, "bronze": bronze_rows, **observed},
-            )
-        )
+    sources = {s.id: el_checks.read_source(s, declared[s.source_ref], settings) for s in spec.sources}
+    with duckdb.connect(env["WAREHOUSE_PATH"], read_only=True) as db:
+        first = {s.id: el_checks.read_bronze(db, s) for s in spec.sources}
+    _run([sys.executable, f"ingestion/{spec.transform.model_name}_pipeline.py"], sandbox, env, timeout, "el_validate")
+    with duckdb.connect(env["WAREHOUSE_PATH"], read_only=True) as db:
+        second = {s.id: el_checks.read_bronze(db, s) for s in spec.sources}
+    checks = [el_checks.row_reconcile(s, sources[s.id], first[s.id]) for s in spec.sources]
+    checks += [el_checks.hash_reconcile(s, sources[s.id], first[s.id]) for s in spec.sources]
+    checks += [el_checks.idempotent(s, first[s.id], second[s.id]) for s in spec.sources]
     return checks
 
 
@@ -363,8 +342,7 @@ def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: 
             _el_run(sandbox, spec, env, timeout, policy, settings)
             import duckdb
 
-            with duckdb.connect(env["WAREHOUSE_PATH"], read_only=True) as db:
-                result.checks += _row_reconcile(db, spec, policy, settings)
+            result.checks += _el_validate(sandbox, spec, env, timeout, policy, settings)
             results, test_error = _t_run(sandbox, env, timeout)
             with duckdb.connect(env["WAREHOUSE_PATH"], read_only=True) as db:
                 result.checks += _staging_reconcile(db, spec, max_reject_pct)
