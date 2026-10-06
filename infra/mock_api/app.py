@@ -12,7 +12,8 @@ Dữ liệu bẩn có chủ đích ở `payments` (122 bản ghi), giữ dưới
 - 2 khoản trả bằng USD (staging đổi về VND theo `currency.rates`),
 - 1 khoản có `amount = "N/A"` (ép kiểu thất bại → bảng rejected).
 
-Chạy: `make mock-api` (cổng 8100, khớp PIPELINE_MOCK_API_URL mặc định).
+Chạy: `make mock-api` (cổng 8100, khớp PIPELINE_MOCK_API_URL mặc định). `POST /sales/_admin/grow` (ẩn khỏi OpenAPI)
+thêm thanh toán cho đơn mới, dùng bởi scripts/grow_data.py để làm dữ liệu to dần.
 """
 
 from typing import Annotated
@@ -124,6 +125,27 @@ marketing = FastAPI(title="Mock API — marketing", version="1.0")
 @sales.get("/payments", response_model=PaymentPage)
 def payments(page: Page = 1, page_size: PageSize = PAGE_SIZE) -> dict:
     return _page(PAYMENTS, page, page_size)
+
+
+@sales.post("/_admin/grow", include_in_schema=False)
+def grow(first_order: Annotated[int, Query(ge=1)], orders: Annotated[int, Query(ge=1, le=1_000_000)]) -> dict:
+    """Thêm 4 khoản thanh toán cho mỗi đơn mới (scripts/grow_data.py). Chỉ trong bộ nhớ; ẩn khỏi OpenAPI."""
+    next_id = max(p["payment_id"] for p in PAYMENTS) + 1
+    added = []
+    for order in range(first_order, first_order + orders):
+        for part, share in ((1, 100), (2, 200), (3, 300), (4, 400)):
+            added.append(
+                {
+                    "payment_id": next_id + len(added),
+                    "order_id": order,
+                    "amount": str(order % 1000 * share),
+                    "currency": "VND",
+                    "paid_at": f"2026-03-{1 + order % 28:02d}T{8 + part:02d}:00:00Z",
+                    "method": "card" if part % 2 else "bank_transfer",
+                }
+            )
+    PAYMENTS.extend(added)
+    return {"payments": len(added), "total": len(PAYMENTS)}
 
 
 @marketing.get("/leads", response_model=LeadPage)
