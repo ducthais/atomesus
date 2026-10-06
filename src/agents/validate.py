@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
+from src.codegen import preaggregate
 from src.codegen.guard import expression_violations
 from src.policy.models import Policy
 from src.run_report.models import GateResult
@@ -173,7 +174,7 @@ def _schema_real(spec: Spec, snapshot: dict) -> list[str]:
     return errors
 
 
-def _currency_columns(item: dict, codes: set[str]) -> dict[str, list[str]]:
+def currency_columns(item: dict, codes: set[str]) -> dict[str, list[str]]:
     """Cột thô mà mọi giá trị khác rỗng trong dòng mẫu là mã tiền tệ có trong bảng tỷ giá → các mã đã thấy."""
     rows = item.get("sample_rows") or []
     found = {}
@@ -191,7 +192,7 @@ def _currency(spec: Spec, snapshot: dict, policy: Policy) -> list[str]:
     errors = []
     for source in spec.sources:
         item = by_table.get((source.source_ref, _object(source)))
-        code_columns = _currency_columns(item, codes) if item else {}
+        code_columns = currency_columns(item, codes) if item else {}
         if not code_columns:
             continue
         code, seen = next(iter(code_columns.items()))
@@ -208,16 +209,14 @@ def _currency(spec: Spec, snapshot: dict, policy: Policy) -> list[str]:
     return errors
 
 
-def _unique_on(source) -> set[str]:
-    """Cột đầu ra staging bảo đảm duy nhất mỗi dòng: khóa dedupe (mặc định là primary_key), theo tên sau staging."""
-    keys = (source.staging.dedupe.keys if source.staging.dedupe else None) or source.primary_key
-    renamed = {c.from_: c.as_ for c in source.staging.columns}
-    return {renamed.get(key, key) for key in keys}
+_unique_on = preaggregate.unique_keys
 
 
 def _multiplied(spec: Spec) -> dict[str, str]:
-    """Nguồn có dòng bị lặp sau các phép ghép → lý do. Ghép theo cột không chứa trọn khóa là ghép sang phía "nhiều"."""
+    """Nguồn có dòng bị lặp sau các phép ghép → lý do. Ghép theo cột không chứa trọn khóa là ghép sang phía "nhiều",
+    trừ khi bảng đó được gộp trước theo khóa ghép (src/codegen/preaggregate.py): khi đó mỗi khóa còn một dòng."""
     sources = {s.id: s for s in spec.sources}
+    preaggregated = preaggregate.plan(spec).preaggregated
     joined, multiplied = [spec.transform.from_], {}
     for join in spec.transform.joins:
         new, before = join.source, set(multiplied)  # bảng đã bị lặp trước phép ghép này
@@ -227,7 +226,7 @@ def _multiplied(spec: Spec) -> dict[str, str]:
                 owner, _, column = ref.partition(".")
                 sides.setdefault(owner, set()).add(column)
         keys = _unique_on(sources[new])
-        if not keys or not keys <= sides.get(new, set()):
+        if new not in preaggregated and (not keys or not keys <= sides.get(new, set())):
             reason = (
                 f"mỗi dòng đã ghép khớp nhiều dòng '{new}' (ghép theo {sorted(sides.get(new, set()))}, "
                 f"khóa của '{new}' là {sorted(keys)})"
@@ -269,8 +268,9 @@ def _join_fanout(spec: Spec) -> list[str]:
                 errors.append(
                     f"metrics '{metric.name}': {call} cộng trùng dòng của '{owner}' vì {multiplied[owner]}. "
                     f"Đếm '{owner}' thì dùng COUNT(DISTINCT {owner}.<khóa chính>); MIN/MAX không bị ảnh hưởng. "
-                    f"SUM/AVG trên cột của '{owner}' không tính đúng được khi ghép với bảng phía nhiều: bỏ join đó nếu "
-                    "chỉ số khác không cần, không được bỏ chỉ số người dùng yêu cầu"
+                    "Bảng phía nhiều chỉ được gộp trước tự động khi cột của nó chỉ nằm trong hàm gộp của metrics "
+                    "(không ở grain, không lẫn bộ lọc với bảng khác, không có bảng khác ghép qua nó); hoặc đặt "
+                    "transform.from là bảng phía một. Không được bỏ chỉ số người dùng yêu cầu"
                 )
     return errors
 
@@ -328,7 +328,7 @@ def validate_spec(raw: dict, snapshot: dict, policy: Policy, request: str | None
             name="join_fanout",
             result="fail" if fanout else "pass",
             detail="; ".join(fanout) or "Không chỉ số nào cộng trùng dòng do ghép bảng",
-            observed={"multiplied": _multiplied(spec)},
+            observed={"multiplied": _multiplied(spec), "preaggregated": sorted(preaggregate.plan(spec).preaggregated)},
         )
     )
     errors += fanout

@@ -85,10 +85,33 @@ def test_one_to_many_join_multiplies_every_table_joined_before():
     assert set(_multiplied(spec)) == {"customers", "orders"}, "payments không bị lặp: mỗi khoản khớp đúng một đơn"
 
 
-def test_sum_on_the_multiplied_side_is_rejected():
-    errors = _fanout([("total_order", "SUM(orders.amount)"), ("total_paid", "SUM(payments.amount)")])
-    assert len(errors) == 1 and "total_order" in errors[0] and "orders" in errors[0]
-    assert "không được bỏ chỉ số người dùng yêu cầu" in errors[0]
+def test_sum_on_the_one_side_passes_once_the_many_side_is_preaggregated():
+    # run b8d45355: SUM(orders.amount) cộng 4 lần; giờ payments được gộp trước theo order_id.
+    spec = Spec.model_validate(
+        _spec(
+            [CUSTOMERS, ORDERS, PAYMENTS],
+            CUSTOMER_JOINS,
+            [("total", "SUM(orders.amount)")],
+            ["customers.customer_name"],
+        )
+    )
+    assert _join_fanout(spec) == [] and set(_multiplied(spec)) == {"customers"}
+
+
+def test_sum_is_rejected_when_the_many_side_cannot_be_preaggregated():
+    # Gộp theo một cột của payments: mỗi đơn vẫn lặp theo từng phương thức, không gộp trước được.
+    payments = copy.deepcopy(PAYMENTS)
+    payments["staging"]["columns"].append({"from": "method", "as": "method", "type": "varchar"})
+    errors = _fanout(
+        [("total_order", "SUM(orders.amount)"), ("total_paid", "SUM(payments.amount)")],
+        (CUSTOMERS, ORDERS, payments),
+        grain=("payments.method",),
+    )
+    assert (
+        len(errors) == 1
+        and "total_order" in errors[0]
+        and "không được bỏ chỉ số người dùng yêu cầu" in errors[0].lower()
+    )
 
 
 @pytest.mark.parametrize(
@@ -187,3 +210,32 @@ def test_time_grain_column_follows_the_grain_spelling():
     raw = _payments_spec({"code_column": "currency", "to": "VND"})
     raw["transform"] |= {"grain": ["payments.paid_at"], "time_grain": {"column": "paid_at", "unit": "day"}}
     assert _add_key_columns(raw, _api_snapshot())["transform"]["time_grain"]["column"] == "payments.paid_at"
+
+
+def test_currency_is_moved_to_the_source_that_has_a_currency_code():
+    # run c6a290d8: LLM gắn currency cho orders (không có cột mã tiền), bị báo thì bỏ luôn ở payments.
+    from src.agents.nodes.codegen import _add_key_columns
+
+    orders, payments = copy.deepcopy(ORDERS), copy.deepcopy(PAYMENTS)
+    orders["staging"]["columns"][2]["currency"] = {"code_column": "currency", "to": "VND"}
+    raw = _spec(
+        [orders, payments],
+        [{"source": "payments", "type": "left", "on": [["orders.order_id", "payments.order_id"]]}],
+        [("t", "SUM(payments.amount)")],
+        ["orders.order_id"],
+    )
+    snapshot = {
+        **_api_snapshot(),
+        "orders": {
+            "source_ref": "sales_pg",
+            "kind": "postgres",
+            "table": "orders",
+            "columns": {"order_id": "integer", "customer_id": "integer", "amount": "text"},
+            "sample_rows": [],
+        },
+    }
+    fixed = _add_key_columns(raw, snapshot, load_policy())
+    by_id = {s["id"]: s["staging"]["columns"][2] for s in fixed["sources"]}
+    assert by_id["orders"]["currency"] is None
+    assert by_id["payments"]["currency"] == {"code_column": "currency", "to": "VND"}
+    assert not validate_spec(fixed, snapshot, load_policy()).errors

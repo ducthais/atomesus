@@ -1,4 +1,6 @@
-[#- Model gold: join các model staging đã sạch theo transform.joins, nhóm theo grain, tính metrics. -#]
+[#- Model gold: join các model staging đã sạch theo transform.joins, nhóm theo grain, tính metrics.
+    Bảng phía "nhiều" của ghép một-nhiều được gộp trước theo khóa ghép (gold.preaggregated, src/codegen/preaggregate.py)
+    để không cộng trùng; gold.metrics / gold.filters là bản đã viết lại tương ứng. -#]
 [%- set t = spec.transform -%]
 [%- set partition = t.grain | select("grain_named", t.partition_by) | first if t.partition_by else none -%]
 
@@ -20,17 +22,21 @@ select
 [%- endif %]
 [%- endfor %]
 [%- for metric in t.metrics %]
-    [[ metric.expr ]] as [[ metric.name | ident ]][% if not loop.last %],[% endif %]
+    [[ gold.metrics[metric.name] ]] as [[ metric.name | ident ]][% if not loop.last %],[% endif %]
 [%- endfor %]
 
 from {{ ref('[[ staging_models[t.from] ]]') }} as [[ t.from ]]
 [%- for join in t.joins %]
+[%- if join.source in gold.preaggregated %]
+[[ join.type ]] join [[ gold.preaggregated[join.source] ]] as [[ join.source ]]
+[%- else %]
 [[ join.type ]] join {{ ref('[[ staging_models[join.source] ]]') }} as [[ join.source ]]
+[%- endif %]
     on [% for left, right in join.on %][[ left ]] = [[ right ]][% if not loop.last %] and [% endif %][% endfor %]
 [%- endfor %]
 
 where true
-[%- for condition in t.filters %]
+[%- for condition in gold.filters %]
     and ([[ condition ]])
 [%- endfor %]
 [%- if t.materialization == "incremental" and partition %]

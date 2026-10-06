@@ -19,6 +19,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from src.codegen import preaggregate
 from src.policy.models import Policy
 from src.spec.models import Spec
 
@@ -179,13 +180,20 @@ def reference_sql(spec: Spec, policy: Policy, columns_of: Callable[[str], dict[s
         + f" AS {_ident(g.rpartition('.')[2])}"
         for g in t.grain
     ]
-    metrics = [f"{m.expr} AS {_ident(m.name)}" for m in t.metrics]
+    gold = preaggregate.plan(spec)  # gộp trước bảng phía "nhiều" giống model gold, để không cộng trùng
+    metrics = [f"{gold.metrics[m.name]} AS {_ident(m.name)}" for m in t.metrics]
     joins = "".join(
-        f" {j.type.upper()} JOIN {_ident('stg_' + j.source)} AS {_ident(j.source)} ON "
+        f" {j.type.upper()} JOIN "
+        + (
+            preaggregate.subquery(gold.preaggregated[j.source], _ident("stg_" + j.source))
+            if j.source in gold.preaggregated
+            else _ident("stg_" + j.source)
+        )
+        + f" AS {_ident(j.source)} ON "
         + " AND ".join(f"{left} = {right}" for left, right in j.on)
         for j in t.joins
     )
-    where = "".join(f" AND ({condition})" for condition in t.filters)
+    where = "".join(f" AND ({condition})" for condition in gold.filters)
     group = ", ".join(str(i + 1) for i in range(len(grains)))
     return (
         f"WITH {', '.join(ctes)}\nSELECT {', '.join(grains + metrics)}\n"

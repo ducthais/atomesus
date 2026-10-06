@@ -11,7 +11,7 @@ from src.agents.llm import LLMOutputError, parse_json
 from src.agents.nodes.common import AgentDeps, StopError, call_llm, prompt
 from src.agents.resolve import ResolveError
 from src.agents.state import AgentState
-from src.agents.validate import validate_spec
+from src.agents.validate import MONEY, NUMERIC_TYPES, currency_columns, validate_spec
 from src.pipeline.postgres import SourceUnavailableError
 from src.spec import SPEC_FIXTURES_DIR
 
@@ -38,12 +38,40 @@ PG_TYPES = {
 }
 
 
-def _add_key_columns(raw: object, snapshot: dict) -> object:
+def _fix_currency(sources: dict, snapshot: dict, policy, domain_name: object) -> None:
+    """Cột tiền của nguồn có cột mã tiền tệ (thấy trong dòng mẫu) phải quy đổi; `currency` trỏ tới cột không có thì bỏ.
+
+    LLM hay gắn nhầm `currency` sang nguồn khác có cột cùng tên `amount_vnd`, rồi khi bị báo thì bỏ luôn cả hai
+    (run c6a290d8). Mã tiền tệ và cột mã đọc từ dữ liệu thật nên sửa tất định được.
+    """
+    domains = getattr(getattr(policy, "domains", None), "domains", {})
+    for sid, source in sources.items():
+        found = snapshot.get(sid) or {}
+        staging = source.get("staging")
+        if not found or not isinstance(staging, dict) or not isinstance(staging.get("columns"), list):
+            continue
+        domain = domains.get(domain_name) if isinstance(domain_name, str) else None
+        rates = domain.currency if domain else None
+        codes = currency_columns(found, {c.upper() for c in rates.rates}) if rates else {}
+        for column in staging["columns"]:
+            if not isinstance(column, dict):
+                continue
+            current = column.get("currency")
+            if isinstance(current, dict) and current.get("code_column") not in (found.get("columns") or {}):
+                column["currency"] = current = None
+            money = MONEY.search(str(column.get("from", ""))) or MONEY.search(str(column.get("as", "")))
+            numeric = str(column.get("type", "")).startswith(NUMERIC_TYPES)
+            if codes and not current and money and numeric and column.get("from") not in codes:
+                column["currency"] = {"code_column": next(iter(codes)), "to": rates.base}
+
+
+def _add_key_columns(raw: object, snapshot: dict, policy=None) -> object:
     """Sửa tất định hai lỗi LLM lặp lại cả khi được báo, trước khi kiểm tra Spec.
 
     - Kiểu Postgres chép nguyên vào staging (`smallint`, `text`, `numeric`) → kiểu staging tương ứng.
     - Cột dùng để ghép hoặc gộp (`<id>.<cột>` trong joins/grain) mà LLM quên khai báo ở staging thì thêm vào.
     - Nguồn rest_api: `endpoint`, `records_path`, `pagination` chép từ schema_snapshot (đọc từ OpenAPI).
+    - Tiền tệ (có `policy`): cột tiền của nguồn có cột mã tiền tệ được gắn `currency`; `currency` sai cột thì bỏ.
     - `time_grain.column` viết thiếu / thừa tiền tố `<id>.` so với phần tử tương ứng của grain thì lấy đúng phần tử đó.
     - `date_formats` trên cột thô đã là ngày/giờ (không phải chuỗi) thì bỏ: staging ép thẳng kiểu. LLM hay thêm vì dòng
       mẫu hiện giá trị dạng chuỗi ISO, nhưng ở bronze cột đã là timestamp nên mọi dòng sẽ trượt định dạng và bị tách.
@@ -84,6 +112,8 @@ def _add_key_columns(raw: object, snapshot: dict) -> object:
                 column["type"] = PG_TYPES[str(column["type"]).lower()]
             if column.get("date_formats") and PG_TYPES.get(raw_columns.get(column.get("from"), "")) in TEMPORAL:
                 column["date_formats"] = None
+    if policy is not None:
+        _fix_currency(sources, snapshot, policy, raw.get("domain"))
     for ref in refs:
         source_id, dot, column = str(ref).partition(".")
         source, raw_columns = sources.get(source_id), (snapshot.get(source_id) or {}).get("columns") or {}
@@ -142,7 +172,7 @@ def codegen(deps: AgentDeps):
             return stop.update(state, llm_calls=calls, schema_snapshot=snapshot)
 
         try:
-            raw = _add_key_columns(parse_json(text), snapshot)
+            raw = _add_key_columns(parse_json(text), snapshot, deps.policy)
             result = validate_spec(raw, snapshot, deps.policy, state["user_request"])
             errors, gates = result.errors, [gate.model_dump() for gate in result.gates]
         except LLMOutputError as exc:

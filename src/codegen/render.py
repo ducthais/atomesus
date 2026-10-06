@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateError
 
+from src.codegen import preaggregate
 from src.policy.models import Policy
 from src.spec.models import Spec
 
@@ -111,8 +112,18 @@ def render(spec: Spec, policy: Policy) -> dict[str, str]:
         keys = dedupe.keys if dedupe and dedupe.keys else source.primary_key
         outputs = {column.from_: column.as_ for column in source.staging.columns}
         staging_keys[source.id] = [outputs[key] for key in keys if key in outputs]
+    gold = preaggregate.plan(spec)
     context = {
         "spec": data,
+        "gold": {
+            "metrics": gold.metrics,
+            "filters": gold.filters,
+            # Truy vấn con gộp trước, đọc model staging bằng ref() như mọi model khác.
+            "preaggregated": {
+                sid: preaggregate.subquery(pre, "{{ ref('" + staging_model(name, sid) + "') }}")
+                for sid, pre in gold.preaggregated.items()
+            },
+        },
         "model_name": name,
         "policy_sources": {ref: _namespace(decl.model_dump(by_alias=True)) for ref, decl in domain.sources.items()},
         "rates": domain.currency.rates,

@@ -101,7 +101,12 @@ def test_multi_source_pipeline_content(policy):
     assert "'%d/%m/%Y'" in payments and "order by _dedupe_order desc" in payments  # keep: latest
 
     gold = files["dbt_project/models/gold/fct_daily_revenue.sql"]
-    assert "left join {{ ref('stg_fct_daily_revenue__payments') }} as payments" in gold
+    # payments là phía "nhiều" của ghép theo order_id: gộp trước theo khóa ghép để revenue không cộng trùng.
+    assert (
+        "left join (SELECT payments.order_id, SUM(payments.amount_vnd) AS __m1 "
+        "FROM {{ ref('stg_fct_daily_revenue__payments') }} AS payments GROUP BY payments.order_id) as payments"
+    ) in gold
+    assert 'SUM(payments.__m1) as "revenue"' in gold and 'COUNT(DISTINCT orders.order_id) as "order_count"' in gold
     assert "on orders.order_id = payments.order_id" in gold
     assert "{% if is_incremental() %}" in gold and 'orders.order_date >= (select max("order_date")' in gold
     assert "unique_key=['order_date', 'channel']" in gold
