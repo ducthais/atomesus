@@ -243,7 +243,10 @@ def start_continue(
         "spec": checked,
         "spec_history": history,
         "schema_snapshot": snapshot,
-        "gates": [gate.model_dump() for gate in result.gates],
+        "gates": [
+            *(g.model_dump() for g in draft.gates if g.name == "semantic"),
+            *(g.model_dump() for g in result.gates),
+        ],
         "attempts": draft.attempts.model_dump(),
         "llm_calls": draft.llm_calls,
         "error_trace": [],

@@ -49,6 +49,8 @@ class Entity(_Policy):
     canonical: bool
     definition: str = Field(min_length=1)
     tables: list[str] = Field(min_length=1)
+    # Cách người dùng gọi thực thể trong yêu cầu (ví dụ "khách hàng"); cổng semantic dò theo tên và các bí danh này.
+    aliases: list[str] = Field(default_factory=list)
 
 
 class Domain(_Policy):

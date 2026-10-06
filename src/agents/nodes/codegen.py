@@ -151,7 +151,14 @@ def codegen(deps: AgentDeps):
             *state.get("spec_history", []),
             {"attempt": len(state.get("spec_history", [])) + 1, "spec": raw, "errors": errors},
         ]
-        update = {"schema_snapshot": snapshot, "llm_calls": calls, "spec_history": history, "gates": gates, "spec": raw}
+        kept = [g for g in state.get("gates", []) if g["name"] == "semantic"]  # cổng P3 đã chạy trước codegen
+        update = {
+            "schema_snapshot": snapshot,
+            "llm_calls": calls,
+            "spec_history": history,
+            "gates": [*kept, *gates],
+            "spec": raw,
+        }
 
         if result is not None and result.blocked:
             return StopError("BLOCKED_AST", "static", "; ".join(errors)).update(state, **update)

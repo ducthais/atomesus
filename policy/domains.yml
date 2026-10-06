@@ -15,6 +15,7 @@ domains:
         canonical: false
         definition: "tài khoản đã ký hợp đồng"
         tables: [sales_pg.customers, sales_pg.accounts]
+        aliases: [khách hàng, khách]
       order:
         canonical: true
         definition: "đơn hàng đã xác nhận"
@@ -40,6 +41,7 @@ domains:
         canonical: false
         definition: "người để lại email"
         tables: [mkt_api.leads, mkt_api.contacts]
+        aliases: [khách hàng, khách, lead]
   rental:                             # Pagila (bộ dữ liệu mẫu cho thuê DVD), schema pagila trong cùng Postgres
     datasets: [pagila]
     steward: steward@company.vn       # TODO: đổi thành steward thật của domain
@@ -69,6 +71,7 @@ domains:
         canonical: false
         definition: "khách có tài khoản thuê DVD tại một cửa hàng"
         tables: [pagila_pg.customer]
+        aliases: [khách hàng, khách]
       store:
         canonical: true
         definition: "cửa hàng cho thuê DVD"

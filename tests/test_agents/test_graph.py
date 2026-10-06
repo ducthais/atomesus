@@ -128,6 +128,7 @@ def test_happy_path_runs_four_steps():
     assert len(state["generated_files"]) == 5 and set(state["files"]) == set(state["generated_files"])
     assert state["files_hash"].startswith("sha256:")
     assert [g["name"] for g in state["gates"]] == [
+        "semantic",
         "spec_schema",
         "schema_real",
         "currency",
