@@ -1,5 +1,6 @@
 """Nguồn rest_api chạy thật: mock API (uvicorn) → connector, resolve, rồi dlt + dbt trong sandbox (P9–P12)."""
 
+import os
 import socket
 import threading
 import time
@@ -95,7 +96,9 @@ def served():
     deadline = time.monotonic() + 10
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.05)
-    yield PipelineSettings(_env_file=None, mock_api_url=f"http://127.0.0.1:{port}")
+    # Đối chiếu độc lập tính lại trên Postgres: có PIPELINE_TEST_DATABASE_URL thì chạy thật, không thì bỏ qua kèm lý do.
+    database_url = os.environ.get("PIPELINE_TEST_DATABASE_URL", "")
+    yield PipelineSettings(_env_file=None, mock_api_url=f"http://127.0.0.1:{port}", database_url=database_url)
     server.should_exit = True
     thread.join(timeout=5)
 
@@ -176,7 +179,15 @@ def test_sandbox_loads_api_into_bronze_and_cleans_it(served):
     assert gold["gold_rows"] == 30
     total = next(c for c in gold["gold_profile"] if c["name"] == "total_paid")
     assert float(total["sum"]) == EXPECTED_TOTAL_VND
-    assert "rest_api" in gold["reconcile_skipped"], "chưa có đường đối chiếu độc lập cho API: ghi rõ, không im lặng"
+    if not served.database_url.get_secret_value():
+        assert "Postgres" in gold["reconcile_skipped"], "không có Postgres để tính lại: ghi rõ, không im lặng"
+        return
+    reconciled = checks["metric_reconcile"]
+    assert reconciled.result == "pass", reconciled.observed
+    assert reconciled.observed["matched"] == 30 and reconciled.observed["totals"]["total_paid"] == {
+        "gold": "549600.00",
+        "source": "549600.00",
+    }
 
 
 def test_merge_dedupes_in_bronze_and_counts_distinct_keys_at_source(served):

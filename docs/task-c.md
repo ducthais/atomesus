@@ -73,7 +73,7 @@ PIPELINE_TEST_DATABASE_URL=... pytest pipeline_tests/test_sandbox_integration.py
 ## Giới hạn hiện tại
 
 - Chạy đồng bộ (~25–30 giây/run), chưa có SSE và hủy run.
-- Chạy thử được nguồn `postgres` và `rest_api` (mock API, `make mock-api`); `filesystem` dừng ở `NEEDS_HUMAN` với lý do rõ. Nguồn `rest_api` chưa có đối chiếu độc lập (`metric_reconcile`), RunReport ghi rõ `reconcile_skipped`.
+- Chạy thử được nguồn `postgres` và `rest_api` (mock API, `make mock-api`); `filesystem` dừng ở `NEEDS_HUMAN` với lý do rõ. Đối chiếu độc lập (`metric_reconcile`) của nguồn `rest_api` đọc lại API và nhúng bản ghi vào câu SQL Postgres (`VALUES`).
 - Lỗi sau khi render (dbt lỗi, test fail, gold rỗng) dừng ở `NEEDS_HUMAN`; vòng tự sửa SQL/Spec sau chạy thử là Sprint 3.
 - `ast_guard` là bản tạm bằng regex; bản sqlglot thuộc Sprint 2-B.
 - Với `gpt-4o-mini` cho cả hai bậc, LLM đôi khi viết lọc sai nghĩa (ví dụ `status <> 'paid'`); cổng `post_run` chặn trường hợp làm gold rỗng, đối soát tổng chỉ số (`metric_reconcile`) ở Sprint 3.

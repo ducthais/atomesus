@@ -10,11 +10,16 @@ vẫn khớp. Spec có đúng nhu cầu nghiệp vụ hay không do Engineer xá
 
 Quy tắc làm sạch phải giống staging (templates/dbt_staging.sql.j2): ép kiểu lỗi hoặc thỏa `reject_if` thì loại,
 rồi khử trùng theo khóa. Thời gian có múi giờ quy về UTC.
+
+Nguồn không phải bảng Postgres (REST API) được đọc độc lập lần nữa (gọi lại API, không qua dlt / DuckDB) rồi nhúng vào
+câu SQL dưới dạng `VALUES`, mỗi giá trị ép đúng kiểu đọc từ OpenAPI. Nhờ vậy cùng một đường làm sạch / gộp chạy được cho
+pipeline ghép Postgres với API. Tối đa `MAX_INLINE_ROWS` bản ghi mỗi nguồn.
 """
 
 import re
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -24,6 +29,7 @@ from src.policy.models import Policy
 from src.spec.models import Spec
 
 MAX_GROUPS = 100_000
+MAX_INLINE_ROWS = 50_000
 MAX_SHOWN = 10
 # Hàm chỉ DuckDB có (hoặc khác nghĩa ở Postgres): gặp thì không đối chiếu, nói rõ lý do.
 DUCKDB_ONLY = ("try_cast", "median", "any_value")
@@ -124,12 +130,40 @@ def _typed(raw: str, pg_type: str, column, rates: dict[str, float], code: str | 
     raise UnsupportedError(f"kiểu {kind}")
 
 
-def _staging_cte(source, schema: str, pg_types: dict[str, str], rates: dict[str, float]) -> str:
+@dataclass
+class Inline:
+    """Bản ghi của một nguồn không phải bảng Postgres, đọc độc lập, kèm kiểu Postgres của từng trường."""
+
+    types: dict[str, str]
+    rows: list[dict]
+
+
+def _inline_relation(inline: Inline) -> str:
+    """`(VALUES ...) AS src(<cột>..., _ord)`: mỗi giá trị ép kiểu tường minh; `_ord` giữ thứ tự đọc (thay cho ctid)."""
+    if not inline.rows:
+        raise UnsupportedError("nguồn không có bản ghi nào để tính lại")
+    if len(inline.rows) > MAX_INLINE_ROWS:
+        raise UnsupportedError(f"nguồn hơn {MAX_INLINE_ROWS:,} bản ghi, chỉ đối chiếu nguồn nhỏ hơn")
+    names = list(inline.types)
+
+    def value(row: dict, name: str) -> str:
+        raw = row.get(name)
+        text = "NULL" if raw is None else _literal(str(raw).lower() if isinstance(raw, bool) else str(raw))
+        return f"CAST({text} AS {inline.types[name]})"
+
+    rows = ", ".join(
+        "(" + ", ".join([*(value(row, n) for n in names), str(i)]) + ")" for i, row in enumerate(inline.rows)
+    )
+    return f"(VALUES {rows}) AS src({', '.join([*map(_ident, names), '_ord'])})"
+
+
+def _staging_cte(source, relation: str, order: str, pg_types: dict[str, str], rates: dict[str, float]) -> str:
+    """`relation` là `<schema>.<bảng> AS src` hoặc `(VALUES ...) AS src(...)`; `order` là cột giữ thứ tự đọc."""
     columns = source.staging.columns
     typed, raws = [], []
     for i, column in enumerate(columns):
         if column.from_ not in pg_types:
-            raise UnsupportedError(f"cột {source.table}.{column.from_} không còn ở nguồn")
+            raise UnsupportedError(f"cột {source.id}.{column.from_} không còn ở nguồn")
         raw = f"src.{_ident(column.from_)}"
         code = f"src.{_ident(column.currency.code_column)}" if column.currency else None
         typed.append(f"{_typed(raw, pg_types[column.from_], column, rates, code)} AS {_ident(column.as_)}")
@@ -142,8 +176,8 @@ def _staging_cte(source, schema: str, pg_types: dict[str, str], rates: dict[str,
     broken = [f"(_raw_{i} IS NOT NULL AND {_ident(c.as_)} IS NULL)" for i, c in enumerate(columns)]
     rejected = broken + [f"({condition}) IS TRUE" for condition in source.staging.reject_if]
     clean = (
-        f"SELECT * FROM (SELECT {', '.join(typed + raws + extra)}, src.ctid AS _ctid "
-        f"FROM {_ident(schema)}.{_ident(source.table)} AS src) AS typed WHERE NOT ({' OR '.join(rejected)})"
+        f"SELECT * FROM (SELECT {', '.join(typed + raws + extra)}, src.{order} AS _ctid "
+        f"FROM {relation}) AS typed WHERE NOT ({' OR '.join(rejected)})"
     )
     output = ", ".join(_ident(c.as_) for c in columns)
     if not keys:
@@ -155,8 +189,15 @@ def _staging_cte(source, schema: str, pg_types: dict[str, str], rates: dict[str,
     return f"SELECT {output} FROM ({ranked}) AS ranked WHERE _rank = 1"
 
 
-def reference_sql(spec: Spec, policy: Policy, columns_of: Callable[[str], dict[str, dict[str, str]]]) -> str:
-    """Spec → một câu SQL Postgres tính lại bảng gold. `columns_of(schema)` → {bảng: {cột: kiểu Postgres}}."""
+def reference_sql(
+    spec: Spec,
+    policy: Policy,
+    columns_of: Callable[[str], dict[str, dict[str, str]]],
+    inline: dict[str, Inline] | None = None,
+) -> str:
+    """Spec → một câu SQL Postgres tính lại bảng gold. `columns_of(schema)` → {bảng: {cột: kiểu Postgres}};
+    `inline` → bản ghi đọc độc lập của các nguồn không phải bảng Postgres, theo `sources[].id`."""
+    inline = inline or {}
     t = spec.transform
     expressions = [m.expr for m in t.metrics] + t.filters + [r for s in spec.sources for r in s.staging.reject_if]
     for expression in expressions:
@@ -166,13 +207,19 @@ def reference_sql(spec: Spec, policy: Policy, columns_of: Callable[[str], dict[s
     domain = policy.domains.domains[spec.domain]
     ctes = []
     for source in spec.sources:
+        if source.id in inline:
+            data = inline[source.id]
+            cte = _staging_cte(source, _inline_relation(data), "_ord", data.types, domain.currency.rates)
+            ctes.append(f"{_ident('stg_' + source.id)} AS ({cte})")
+            continue
         if source.kind != "postgres":
             raise UnsupportedError(f"nguồn loại {source.kind}")
         schema = domain.sources[source.source_ref].schema_
         tables = columns_of(schema)
         if source.table not in tables:
             raise UnsupportedError(f"bảng {schema}.{source.table} không còn ở nguồn")
-        cte = _staging_cte(source, schema, tables[source.table], domain.currency.rates)
+        relation = f"{_ident(schema)}.{_ident(source.table)} AS src"
+        cte = _staging_cte(source, relation, "ctid", tables[source.table], domain.currency.rates)
         ctes.append(f"{_ident('stg_' + source.id)} AS ({cte})")
     period = t.time_grain
     grains = [
@@ -314,13 +361,30 @@ def source_rows(spec: Spec, policy: Policy, settings) -> tuple[str, list[dict]]:
     """Chạy SQL tính lại trên Postgres nguồn (tài khoản chỉ đọc). Lỗi SQL → UnsupportedError kèm thông báo của Postgres."""
     import psycopg
 
-    from src.pipeline import connectors, postgres
+    from src.pipeline import connectors, postgres, rest_api
 
     def columns_of(schema: str) -> dict[str, dict[str, str]]:
         tables = connectors.postgres_columns(settings, schema)
         return {table: {c["name"]: c["type"] for c in columns} for table, columns in tables.items()}
 
-    query = reference_sql(spec, policy, columns_of)
+    declared = policy.domains.domains[spec.domain].sources
+    inline = {}
+    for source in spec.sources:
+        if source.kind == "rest_api":
+            decl = declared[source.source_ref]
+            described = rest_api.endpoints(decl, settings).get(source.endpoint.strip("/"))
+            if described is None:
+                raise UnsupportedError(f"API không còn endpoint {source.endpoint}")
+            rows = list(rest_api.records(decl, settings, described, limit=MAX_INLINE_ROWS + 1))
+            inline[source.id] = Inline({c["name"]: c["type"] for c in described["columns"]}, rows)
+    query = reference_sql(spec, policy, columns_of, inline)
+    if all(source.kind != "postgres" for source in spec.sources):
+        # Chỉ dùng Postgres làm máy tính: không mở được thì bỏ qua đối chiếu, không làm hỏng run của nguồn API.
+        try:
+            with postgres.connection(settings):
+                pass
+        except postgres.SourceUnavailableError as exc:
+            raise UnsupportedError(f"cần Postgres để tính lại nhưng không mở được: {exc}") from exc
     with postgres.connection(settings) as conn:
         try:
             cursor = conn.execute(f"SELECT * FROM ({query}) AS reference LIMIT {MAX_GROUPS + 1}")  # noqa: S608
