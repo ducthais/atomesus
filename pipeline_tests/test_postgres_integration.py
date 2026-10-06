@@ -43,6 +43,13 @@ def test_seed_schema_counts_and_golden_output(config):
     assert sum(Decimal(row["amount"]) for row in report["output"]) == Decimal("300000.00")
     assert report["output"][0] == {"id": "1", "amount": "1000.00", "ordered_at": "2026-01-01"}
     assert {"id": "4", "amount": "4000.00", "ordered_at": "2026-01-04"} in report["output"]
+    # Khai báo đủ ba định dạng ngày thì không tách dòng nào: ra đúng golden result.
+    formats = ["%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"]
+    dated = [*rules[:2], rules[2].model_copy(update={"date_formats": formats})]
+    parsed = clean_rows(rows, dated)
+    assert (parsed["rows_written"], parsed["rows_rejected"]) == (30, 0)
+    assert sum(Decimal(row["amount"]) for row in parsed["output"]) == Decimal("465000.00")
+    assert {"id": "3", "amount": "3000.00", "ordered_at": "2026-01-03"} in parsed["output"]
     assert clean_rows(rows, rules)["output"] == report["output"]
 
 

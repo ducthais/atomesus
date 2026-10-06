@@ -69,8 +69,9 @@ Frontend proxy `/api/v1/*` sang backend `http://127.0.0.1:8000`, nên cookie cù
 
 1. Đăng nhập `engineer` / `Engineer@123` (**Minh · Engineer**); phải đọc được 5 cột từ Postgres.
 2. Giữ mapping mặc định: `amount_text → amount / decimal(18,2)`, `ordered_at_text → ordered_at / date`.
-3. Bấm **Chạy pipeline**: 30 dòng đọc, 20 hợp lệ, 10 bị tách (ngày dạng `DD/MM/YYYY`, màn này chỉ ép kiểu, không có
-   định dạng ngày); dòng đầu có `amount = "1000.00"`.
+3. Cột `ordered_at` đã được gợi ý sẵn định dạng ngày đọc từ dòng mẫu (`%Y-%m-%d, %d/%m/%Y, %Y/%m/%d`). Bấm **Chạy
+   pipeline**: 30 dòng đọc, 30 hợp lệ, 0 bị tách; dòng đầu có `amount = "1000.00"`. Xóa ô định dạng ngày rồi chạy lại:
+   ép kiểu nghiêm, 10 đơn ghi `DD/MM/YYYY` bị tách.
 4. Đổi tên đầu ra `amount` thành `revenue_vnd`, chạy lại: kết quả dùng tên mới.
 5. Đổi kiểu của `amount_text` thành `date`, chạy: 30 dòng lỗi được tách; trạng thái **Cần kiểm tra**.
 6. Refresh trình duyệt: phiên đăng nhập và lịch sử vẫn còn. Chọn run để xem lại kết quả.

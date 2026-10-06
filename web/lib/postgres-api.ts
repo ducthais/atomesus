@@ -1,6 +1,31 @@
 export type User = { id: string; name: string; role: 'Engineer' | 'Reviewer' };
 export const COLUMN_TYPES = ['bigint', 'integer', 'decimal(18,2)', 'double', 'varchar', 'boolean', 'date', 'timestamp'] as const;
-export type ColumnRule = { from: string; as: string; type: typeof COLUMN_TYPES[number] };
+/** `date_formats`: định dạng strptime thử lần lượt cho cột ngày ghi nhiều kiểu; không có thì ép kiểu nghiêm. */
+export type ColumnRule = { from: string; as: string; type: typeof COLUMN_TYPES[number]; date_formats?: string[] };
+
+/** Định dạng ngày gợi ý từ dòng mẫu. DD/MM trước MM/DD theo cách ghi ở Việt Nam (MM/DD không gợi ý). */
+export const DATE_FORMATS = ['%Y-%m-%d', '%d/%m/%Y', '%Y/%m/%d', '%d-%m-%Y', '%Y-%m-%d %H:%M:%S'] as const;
+const DATE_FORMAT_TEXT = /^[%A-Za-z0-9 :/\-.,T_]{2,40}$/;
+
+/** Giá trị có đọc được theo định dạng strptime không (%Y %m %d %H %M %S), cùng luật với backend: bỏ khoảng trắng hai đầu. */
+export function matchesDateFormat(value: string, format: string): boolean {
+  const parts: string[] = [];
+  const pattern = format.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/%([YmdHMS])/g, (_, d: string) => { parts.push(d); return d === 'Y' ? '(\\d{4})' : '(\\d{1,2})'; });
+  const match = new RegExp(`^${pattern}$`).exec(value.trim());
+  if (!match) return false;
+  const get = (d: string, missing: number) => { const i = parts.indexOf(d); return i < 0 ? missing : Number(match[i + 1]); };
+  const [y, m, d] = [get('Y', 2000), get('m', 1), get('d', 1)];
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+    && get('H', 0) < 24 && get('M', 0) < 60 && get('S', 0) < 60;
+}
+
+/** Các định dạng trong DATE_FORMATS khớp ít nhất một giá trị mẫu, theo thứ tự gợi ý. */
+export function detectDateFormats(values: (string | null | undefined)[]): string[] {
+  const present = values.filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+  return DATE_FORMATS.filter(format => present.some(value => matchesDateFormat(value, format)));
+}
 export type Source = { table: 'sales_raw.orders'; columns: { name: string; type: string }[]; max_rows: number };
 export type RunRequest = { title: string; table: 'sales_raw.orders'; columns: ColumnRule[] };
 /** Bản rút gọn của `RunReport` (src/run_report/models.py) — hợp đồng của sổ bằng chứng. */
@@ -109,5 +134,11 @@ export function validateColumns(columns: ColumnRule[]): string | null {
   if (columns.some(column => !/^[a-z][a-z0-9_]{0,62}$/.test(column.as)))
     return 'Tên cột phải bắt đầu bằng chữ thường, chỉ gồm chữ thường, số và dấu gạch dưới (tối đa 63 ký tự).';
   if (new Set(columns.map(column => column.as)).size !== columns.length) return 'Tên cột đầu ra không được trùng.';
+  for (const column of columns) {
+    if (!column.date_formats?.length) continue;
+    if (column.type !== 'date' && column.type !== 'timestamp') return `Cột ${column.as}: định dạng ngày chỉ dùng cho date / timestamp.`;
+    if (column.date_formats.some(f => !f.includes('%') || !DATE_FORMAT_TEXT.test(f)))
+      return `Cột ${column.as}: định dạng ngày phải có chỉ thị như %Y, %m, %d và chỉ gồm chữ, số, dấu cách / - . : ,`;
+  }
   return null;
 }

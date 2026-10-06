@@ -52,6 +52,29 @@ def test_rejected_rows_are_accounted_for_and_nulls_are_preserved():
     assert rows[1]["amount_text"] == "bad"
 
 
+def test_date_formats_parse_mixed_dates_and_still_reject_garbage():
+    rules = [
+        ColumnRule.model_validate({"from": "d", "as": "d", "type": "date", "date_formats": ["%Y-%m-%d", "%d/%m/%Y"]}),
+    ]
+    rows = [{"d": "2026-01-05"}, {"d": " 06/01/2026 "}, {"d": "2026/01/07"}, {"d": None}]
+    report = clean_rows(rows, rules)
+    assert [r["d"] for r in report["output"]] == ["2026-01-05", "2026-01-06", None]
+    assert [r["values"]["d"] for r in report["rejected"]] == ["2026/01/07"]
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"from": "d", "as": "d", "type": "varchar", "date_formats": ["%Y-%m-%d"]},  # không phải cột ngày
+        {"from": "d", "as": "d", "type": "date", "date_formats": ["%Y'); DROP TABLE x; --"]},  # chèn SQL
+        {"from": "d", "as": "d", "type": "date", "date_formats": ["2026-01-01"]},  # không có chỉ thị %
+    ],
+)
+def test_date_formats_are_validated(rule):
+    with pytest.raises(ValueError):
+        ColumnRule.model_validate(rule)
+
+
 def test_empty_input_and_sql_like_values():
     assert clean_rows([], rules())["rows_written"] == 0
     value = "'); DROP TABLE bronze; --"
@@ -200,16 +223,15 @@ def test_expired_session_and_production_login(client, monkeypatch):
         conn.execute("UPDATE sessions SET expires = 0")
     assert browser.get("/api/v1/runs").status_code == 401
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="production"))
-    assert browser.post(
-        "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
-    ).status_code == 403
+    assert (
+        browser.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}).status_code
+        == 403
+    )
 
 
 def test_login_rejects_invalid_credentials(client):
     browser, _ = client
-    response = browser.post(
-        "/api/v1/pipeline/session", json={"username": "engineer", "password": "wrong-password"}
-    )
+    response = browser.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "wrong-password"})
     assert response.status_code == 401
     assert response.json()["detail"] == "Tên đăng nhập hoặc mật khẩu không đúng."
 

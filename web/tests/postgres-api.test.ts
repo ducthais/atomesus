@@ -55,3 +55,19 @@ test('run history comes from the shared evidence ledger and reads RunReport stag
   assert.equal(stagingOf({ ...report, checks: [] }), null);
   assert.equal(runError({ ...report, error_trace: [] }), null);
 });
+
+test('định dạng ngày: đọc ngày ghi nhiều kiểu, gợi ý từ dòng mẫu, kiểm tra khai báo', async () => {
+  const { matchesDateFormat, detectDateFormats, validateColumns } = await import('../lib/postgres-api.ts');
+  assert.equal(matchesDateFormat(' 05/01/2026 ', '%d/%m/%Y'), true);
+  assert.equal(matchesDateFormat('2026/01/07', '%Y/%m/%d'), true);
+  assert.equal(matchesDateFormat('31/02/2026', '%d/%m/%Y'), false, 'không có ngày 31/02');
+  assert.equal(matchesDateFormat('2026-01-05', '%d/%m/%Y'), false);
+  assert.equal(matchesDateFormat('2026-01-05 09:30:00', '%Y-%m-%d %H:%M:%S'), true);
+  // Seed sales_raw.orders: ba kiểu ghi ngày trong 20 dòng mẫu.
+  assert.deepEqual(detectDateFormats(['2026-01-01', '03/01/2026', '2026/01/05', null]), ['%Y-%m-%d', '%d/%m/%Y', '%Y/%m/%d']);
+  assert.deepEqual(detectDateFormats(['abc', '']), []);
+  const column = { from: 'ordered_at_text', as: 'ordered_at', type: 'date' as const };
+  assert.equal(validateColumns([{ ...column, date_formats: ['%d/%m/%Y'] }]), null);
+  assert.match(validateColumns([{ ...column, date_formats: ["%Y'); drop"] }]) ?? '', /định dạng ngày/);
+  assert.match(validateColumns([{ ...column, type: 'varchar', date_formats: ['%Y'] }]) ?? '', /chỉ dùng cho date/);
+});

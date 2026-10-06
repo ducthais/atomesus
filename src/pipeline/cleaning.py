@@ -6,6 +6,14 @@ from tempfile import TemporaryDirectory
 from src.pipeline.models import ColumnRule
 
 
+def _cast(column: ColumnRule) -> str:
+    """Ép kiểu nghiêm bằng TRY_CAST; cột ngày có `date_formats` thì thử lần lượt từng định dạng (bỏ khoảng trắng hai đầu)."""
+    if not column.date_formats:
+        return f'TRY_CAST("{column.source}" AS {column.type})'
+    attempts = ", ".join(f"TRY_STRPTIME(TRIM(\"{column.source}\"), '{fmt}')" for fmt in column.date_formats)
+    return f"CAST(COALESCE({attempts}) AS {column.type})"
+
+
 def clean_rows(rows: list[dict], columns: list[ColumnRule]) -> dict:
     import duckdb
 
@@ -22,7 +30,7 @@ def clean_rows(rows: list[dict], columns: list[ColumnRule]) -> dict:
                 db.executemany(
                     f"INSERT INTO bronze VALUES ({placeholders})", [[row[name] for name in names] for row in rows]
                 )
-            expressions = ", ".join(f'TRY_CAST("{col.source}" AS {col.type}) AS "{col.target}"' for col in columns)
+            expressions = ", ".join(f'{_cast(col)} AS "{col.target}"' for col in columns)
             cast_rows = db.execute(f"SELECT {expressions} FROM bronze").fetchall()
             output, rejected = [], []
             for index, (source, cast_row) in enumerate(zip(rows, cast_rows, strict=True), start=1):
