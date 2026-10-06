@@ -56,7 +56,7 @@ def read_catalog(config: PipelineSettings = Depends(settings)) -> dict:
                 entry["foreign_keys"] = found["foreign_keys"]
                 entry["available"] = True
             except connectors.UnsupportedSourceError:
-                entry["reason"] = f"Nguồn {decl.kind} chưa hỗ trợ ở Sprint 1"
+                entry["reason"] = f"Chưa có connector cho nguồn {decl.kind}"
             except postgres.SourceUnavailableError as exc:
                 entry["reason"] = str(exc)
             sources[ref] = entry

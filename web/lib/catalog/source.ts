@@ -101,7 +101,7 @@ export async function listDeclaredSources(): Promise<DeclaredSource[]> {
 
 type ObjectsResponse = {
   discovered_at: string;
-  objects: { name: string; kind: 'table' | 'collection'; columns: { name: string; type: string }[]; primary_key: string[]; row_estimate: number | null }[];
+  objects: { name: string; kind: 'table' | 'collection' | 'endpoint'; columns: { name: string; type: string }[]; primary_key: string[]; row_estimate: number | null }[];
   foreign_keys: { name: string; table: string; columns: string[]; ref_schema: string; ref_table: string; ref_columns: string[] }[];
 };
 

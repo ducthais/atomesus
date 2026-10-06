@@ -475,7 +475,7 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
         assert (await client.post("/api/v1/agent/runs", json={"request": ""})).status_code == 422
         for sources, message in [
             ([{"source_ref": "nope"}], "không có trong domains.yml"),
-            ([{"source_ref": "sales_api"}], "chưa hỗ trợ"),
+            ([{"source_ref": "landing_sales"}], "chưa hỗ trợ"),
         ]:
             bad = await client.post("/api/v1/agent/runs", json={"request": "x", "sources": sources})
             assert bad.status_code == 422 and message in bad.json()["detail"]

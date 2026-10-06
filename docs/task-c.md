@@ -39,7 +39,7 @@ Khung dbt dùng chung ở `dbt_project/` (profile DuckDB theo `WAREHOUSE_PATH`, 
 
 Staging: mỗi dòng bronze đi đúng một đường — staging sạch, loại vì trùng (`dedupe`, đếm), hoặc `stg_{model}__{id}__rejected` kèm `_reject_reason` (`cast:`, `date_format:`, `unknown_currency:`, `reject_if:`) và `_raw_values` (JSON giá trị thô). Tỷ giá đọc từ `policy/domains.yml`.
 
-Đã kiểm chứng: render đúng cú pháp cho cả 2 Spec mẫu; dbt chạy thật trên bronze bẩn có chủ đích (`tests/test_codegen/test_staging_dbt.py`); dlt + dbt chạy thật trên Postgres seed; file Dagster nạp được bằng Dagster thật với đúng lineage và lịch (`tests/test_codegen/test_dagster_asset.py`). Macro `rest_api` và `filesystem` mới kiểm cú pháp — chạy thật khi có mock API và thư mục file (Sprint 2/4).
+Đã kiểm chứng: render đúng cú pháp cho cả 2 Spec mẫu; dbt chạy thật trên bronze bẩn có chủ đích (`tests/test_codegen/test_staging_dbt.py`); dlt + dbt chạy thật trên Postgres seed; file Dagster nạp được bằng Dagster thật với đúng lineage và lịch (`tests/test_codegen/test_dagster_asset.py`). Macro `rest_api` chạy thật với mock API (`tests/test_codegen/test_rest_api_sandbox.py`: dlt đọc mọi trang, dbt làm sạch, tổng tiền khớp kết quả tính tay); `filesystem` mới kiểm cú pháp (Sprint 4).
 
 ## Sandbox (`src/codegen/sandbox.py`)
 
@@ -73,7 +73,7 @@ PIPELINE_TEST_DATABASE_URL=... pytest pipeline_tests/test_sandbox_integration.py
 ## Giới hạn hiện tại
 
 - Chạy đồng bộ (~25–30 giây/run), chưa có SSE và hủy run.
-- Chỉ chạy thử được nguồn `postgres`; `rest_api`/`filesystem` dừng ở `NEEDS_HUMAN` với lý do rõ.
+- Chạy thử được nguồn `postgres` và `rest_api` (mock API, `make mock-api`); `filesystem` dừng ở `NEEDS_HUMAN` với lý do rõ. Nguồn `rest_api` chưa có đối chiếu độc lập (`metric_reconcile`), RunReport ghi rõ `reconcile_skipped`.
 - Lỗi sau khi render (dbt lỗi, test fail, gold rỗng) dừng ở `NEEDS_HUMAN`; vòng tự sửa SQL/Spec sau chạy thử là Sprint 3.
 - `ast_guard` là bản tạm bằng regex; bản sqlglot thuộc Sprint 2-B.
 - Với `gpt-4o-mini` cho cả hai bậc, LLM đôi khi viết lọc sai nghĩa (ví dụ `status <> 'paid'`); cổng `post_run` chặn trường hợp làm gold rỗng, đối soát tổng chỉ số (`metric_reconcile`) ở Sprint 3.

@@ -91,7 +91,8 @@ async def test_catalog_lists_declared_sources_with_real_columns_and_entities(cli
     assert sales["sources"]["sales_pg"]["tables"]["orders"] == [{"name": "order_id", "type": "integer"}]
     assert sales["sources"]["sales_pg"]["primary_keys"] == {"orders": ["order_id"]}
     assert sales["sources"]["sales_pg"]["foreign_keys"] == [FK]
-    assert sales["sources"]["sales_api"]["available"] is False and sales["sources"]["sales_api"]["foreign_keys"] == []
+    landing = sales["sources"]["landing_sales"]
+    assert landing["available"] is False and landing["reason"] == "Chưa có connector cho nguồn filesystem"
     assert sales["entities"]["order"]["tables"] == ["sales_pg.orders"]
 
     monkeypatch.setattr(catalog_api, "postgres_columns", _down)
@@ -106,7 +107,7 @@ async def test_source_discovery_connects_on_request(client, catalog_api, monkeyp
     sources = {s["ref"]: s for s in (await client.get("/api/v1/catalog/sources")).json()}
     assert sources["sales_pg"]["supported"] is True
     assert sources["sales_pg"]["kind"] == "postgres" and sources["sales_pg"]["location"] == "sales_raw"
-    assert sources["sales_api"]["supported"] is False
+    assert sources["sales_api"]["supported"] is True and sources["landing_sales"]["supported"] is False
 
     found = (await client.get("/api/v1/catalog/sources/sales_pg/objects")).json()
     assert found["domain"] == "sales" and found["foreign_keys"] == [FK] and found["discovered_at"]
@@ -121,8 +122,19 @@ async def test_source_discovery_connects_on_request(client, catalog_api, monkeyp
     ]
     missing = await client.get("/api/v1/catalog/sources/khong_co/objects")
     assert missing.status_code == 404
-    unsupported = await client.get("/api/v1/catalog/sources/sales_api/objects")
+    unsupported = await client.get("/api/v1/catalog/sources/landing_sales/objects")
     assert unsupported.status_code == 422 and "Chưa có connector" in unsupported.json()["detail"]
+    from fastapi.testclient import TestClient
+
+    from infra.mock_api.app import app as mock_api
+    from src.pipeline import rest_api
+
+    monkeypatch.setattr(rest_api, "client", lambda url: TestClient(mock_api, base_url=url))
+    api = (await client.get("/api/v1/catalog/sources/sales_api/objects")).json()
+    assert api["kind"] == "rest_api" and [o["name"] for o in api["objects"]] == ["payments"]
+    monkeypatch.setattr(rest_api, "client", lambda url: TestClient(mock_api, base_url="http://x/khong-co"))
+    api_down = await client.get("/api/v1/catalog/sources/sales_api/objects")
+    assert api_down.status_code == 503 and "mock_api" in api_down.json()["detail"]
     monkeypatch.setattr(catalog_api, "postgres_columns", _down)
     down = await client.get("/api/v1/catalog/sources/sales_pg/objects")
     assert down.status_code == 503 and down.json()["detail"] == "Không đọc được Postgres."

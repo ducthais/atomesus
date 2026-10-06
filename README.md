@@ -174,6 +174,16 @@ python scripts/load_pagila.py            # thêm --replace để nạp lại
 
 Bấm **Kết nối** `pagila_pg` mà báo "Schema 'pagila' chưa có trong Postgres nguồn" là trường hợp này.
 
+Nguồn REST API (`sales_api`, `mkt_api`) là mock API trong repo (`infra/mock_api/`): `/sales/payments` là 122 khoản thanh
+toán cho 30 đơn của `sales_raw.orders`, có dữ liệu bẩn có chủ đích (bản ghi gửi lặp, khoản trả bằng USD, số tiền
+`N/A`). Chạy cùng backend:
+
+```bash
+make mock-api                            # cổng 8100, khớp PIPELINE_MOCK_API_URL mặc định
+```
+
+Schema, cách phân trang và khóa chính đọc từ mô tả OpenAPI của từng domain (`openapi` trong `policy/domains.yml`).
+
 ## Luồng sử dụng
 
 1. **Yêu cầu pipeline** → chọn nguồn và bảng (kết nối trực tiếp lúc bấm) → nhập yêu cầu bằng lời, ví dụ "Tính doanh

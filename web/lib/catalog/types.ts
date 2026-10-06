@@ -90,7 +90,7 @@ export type Snapshot = {
 /** Kết nối khai báo trong domains.yml (GET /catalog/sources). `supported` = backend có connector cho loại nguồn này. */
 export type DeclaredSource = { ref: string; domain: string; kind: Platform; location: string | null; supported: boolean };
 /** Một bảng (Postgres) hoặc collection (MongoDB) đọc được lúc kết nối tới nguồn. */
-export type SourceObject = { name: string; kind: 'table' | 'collection'; columns: { name: string; type: string }[]; primaryKey: string[]; rowEstimate: number | null };
+export type SourceObject = { name: string; kind: 'table' | 'collection' | 'endpoint'; columns: { name: string; type: string }[]; primaryKey: string[]; rowEstimate: number | null };
 /** Khóa ngoại đọc được lúc kết nối: `table.columns` → `refSchema.refTable.refColumns`. */
 export type DiscoveredForeignKey = { name: string; table: string; columns: string[]; refSchema: string; refTable: string; refColumns: string[] };
 export type Discovery = { objects: SourceObject[]; foreignKeys: DiscoveredForeignKey[]; discoveredAt: string } | { error: string };

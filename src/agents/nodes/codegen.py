@@ -42,6 +42,7 @@ def _add_key_columns(raw: object, snapshot: dict) -> object:
 
     - Kiểu Postgres chép nguyên vào staging (`smallint`, `text`, `numeric`) → kiểu staging tương ứng.
     - Cột dùng để ghép hoặc gộp (`<id>.<cột>` trong joins/grain) mà LLM quên khai báo ở staging thì thêm vào.
+    - Nguồn rest_api: `endpoint`, `records_path`, `pagination` chép từ schema_snapshot (đọc từ OpenAPI).
 
     LLM hay bỏ khóa ghép (ví dụ `address.city_id`) khỏi staging.columns và lặp lại lỗi đó cả khi được báo. Chỉ thêm cột
     thô có thật trong schema_snapshot, chưa được khai báo dưới tên nào, giữ nguyên tên và ép kiểu theo kiểu nguồn.
@@ -49,6 +50,16 @@ def _add_key_columns(raw: object, snapshot: dict) -> object:
     if not isinstance(raw, dict) or not isinstance(raw.get("transform"), dict):
         return raw
     transform = raw["transform"]
+    for source in raw.get("sources") or []:  # trường riêng của rest_api lấy từ OpenAPI, không để LLM đoán
+        found = snapshot.get(source.get("id")) if isinstance(source, dict) else None
+        if found and found.get("kind") == "rest_api":
+            source.pop("table", None)
+            source.update(
+                kind="rest_api",
+                endpoint=found["endpoint"],
+                records_path=found["records_path"],
+                pagination=found["pagination"],
+            )
     refs = [side for j in transform.get("joins") or [] for pair in j.get("on") or [] for side in pair]
     refs += [g for g in transform.get("grain") or [] if isinstance(g, str)]
     sources = {s.get("id"): s for s in raw.get("sources") or [] if isinstance(s, dict)}

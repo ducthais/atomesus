@@ -8,7 +8,7 @@ domains:
       rates: { VND: 1, USD: 25400 }   # tỷ giá cố định, steward cập nhật
     sources:                          # mọi nguồn domain này được phép đọc
       sales_pg:      { kind: postgres,   connection_ref: sandbox_pg,    schema: sales_raw }
-      sales_api:     { kind: rest_api,   connection_ref: mock_api,      openapi: /openapi.json }
+      sales_api:     { kind: rest_api,   connection_ref: mock_api,      openapi: /sales/openapi.json }
       landing_sales: { kind: filesystem, connection_ref: landing_sales, root: infra/landing/sales }
     entities:
       customer:
@@ -34,7 +34,7 @@ domains:
       base: VND
       rates: { VND: 1, USD: 25400 }
     sources:
-      mkt_api: { kind: rest_api, connection_ref: mock_api, openapi: /openapi.json }
+      mkt_api: { kind: rest_api, connection_ref: mock_api, openapi: /marketing/openapi.json }
     entities:
       customer:
         canonical: false

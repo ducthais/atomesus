@@ -2,7 +2,7 @@
 
 Mỗi lần chạy có thư mục và file DuckDB riêng, xóa khi xong dù thành công hay lỗi (bất biến 1).
 - P9 `el_run`: chạy đúng file ingestion dlt đã sinh, đổ từng nguồn vào bronze.
-- P10 `el_validate`: `row_reconcile` từng nguồn (đếm ở nguồn và ở bronze).
+- P10 `el_validate`: `row_reconcile` từng nguồn (đếm ở nguồn và ở bronze; API đọc lại mọi trang để đếm).
 - P11/P12 `t_run`/`t_validate`: `dbt build` (model + test), rồi `staging_reconcile` từng nguồn và `dbt_test`.
 - `metric_reconcile`: tính lại gold thẳng trên Postgres nguồn bằng đường độc lập và so từng dòng (`reference.py`).
 Tiến trình con chỉ nhận các biến môi trường cần thiết, không nhận khóa LLM hay bí mật khác của backend.
@@ -20,7 +20,7 @@ from tempfile import TemporaryDirectory
 
 from src.codegen import reference
 from src.codegen.render import rejected_table, staging_model
-from src.pipeline import postgres
+from src.pipeline import postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report.models import Check, GateResult
@@ -28,8 +28,15 @@ from src.spec.models import Spec
 
 DBT_SCAFFOLD = Path(__file__).resolve().parents[2] / "dbt_project"
 SAMPLE_ROWS = 20
-SUPPORTED_KINDS = {"postgres"}
-CONNECTION_ERRORS = ("OperationalError", "ConnectionTimeout", "could not connect", "Connection refused")
+SUPPORTED_KINDS = {"postgres", "rest_api"}
+CONNECTION_ERRORS = (
+    "OperationalError",
+    "ConnectionTimeout",
+    "could not connect",
+    "Connection refused",
+    "ConnectionError",
+    "Max retries exceeded",
+)
 PASSTHROUGH_ENV = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA")
 
 
@@ -60,13 +67,23 @@ def _connection_url(connection_ref: str, settings: PipelineSettings) -> str:
     return url + ("&" if "?" in url else "?") + "connect_timeout=10"
 
 
+def _source_env(ref: str, decl, settings: PipelineSettings) -> dict[str, str]:
+    """Biến môi trường dlt cho một nguồn: chuỗi kết nối Postgres, hoặc địa chỉ gốc của API."""
+    if decl.kind == "rest_api":
+        try:
+            return {f"SOURCES__{ref.upper()}__BASE_URL": rest_api.base_url(decl, settings)}
+        except rest_api.ApiUnavailableError as exc:
+            raise _StopError("INFRA_ERROR", "el_run", str(exc)) from exc
+    return {f"SOURCES__{ref.upper()}__CREDENTIALS": _connection_url(decl.connection_ref, settings)}
+
+
 def credentials_env(policy: Policy, settings: PipelineSettings) -> dict[str, str]:
-    """SOURCES__<REF>__CREDENTIALS cho mọi nguồn trong domains.yml đã có kết nối (dùng khi chạy project đã deploy)."""
+    """Biến kết nối dlt cho mọi nguồn trong domains.yml đã có kết nối (dùng khi chạy project đã deploy)."""
     env = {}
     for domain in policy.domains.domains.values():
         for ref, decl in domain.sources.items():
             try:
-                env[f"SOURCES__{ref.upper()}__CREDENTIALS"] = _connection_url(decl.connection_ref, settings)
+                env.update(_source_env(ref, decl, settings))
             except _StopError:
                 continue
     return env
@@ -85,8 +102,7 @@ def _env(sandbox: Path, spec: Spec, policy: Policy, settings: PipelineSettings) 
     )
     declared = policy.domains.domains[spec.domain].sources
     for source in spec.sources:
-        decl = declared[source.source_ref]
-        env[f"SOURCES__{source.source_ref.upper()}__CREDENTIALS"] = _connection_url(decl.connection_ref, settings)
+        env.update(_source_env(source.source_ref, declared[source.source_ref], settings))
     return env
 
 
@@ -114,12 +130,18 @@ def prepare_project(sandbox: Path, files: dict[str, str]) -> None:
         target.write_text(content, encoding="utf-8")
 
 
-def _el_run(sandbox: Path, spec: Spec, env: dict[str, str], timeout: int, settings: PipelineSettings) -> None:
+def _el_run(
+    sandbox: Path, spec: Spec, env: dict[str, str], timeout: int, policy: Policy, settings: PipelineSettings
+) -> None:
     # Thử kết nối từng nguồn trước, để lỗi kết nối ra INFRA_ERROR kèm đúng source_id (SPEC §11.2, P9).
+    declared = policy.domains.domains[spec.domain].sources
     for source in spec.sources:
         try:
-            with postgres.connection(settings):
-                pass
+            if source.kind == "rest_api":
+                rest_api.endpoints(declared[source.source_ref], settings)
+            else:
+                with postgres.connection(settings):
+                    pass
         except postgres.SourceUnavailableError as exc:
             raise _StopError("INFRA_ERROR", "el_run", str(exc), source_id=source.id) from exc
     ingestion = f"ingestion/{spec.transform.model_name}_pipeline.py"
@@ -140,18 +162,33 @@ def _row_reconcile(db, spec: Spec, policy: Policy, settings: PipelineSettings) -
     declared = policy.domains.domains[spec.domain].sources
     checks = []
     for source in spec.sources:
-        schema = declared[source.source_ref].schema_
-        with postgres.connection(settings) as conn:
-            source_rows = conn.execute(
-                sql.SQL("SELECT count(*) FROM {}.{}").format(sql.Identifier(schema), sql.Identifier(source.table))
-            ).fetchone()[0]
+        decl = declared[source.source_ref]
+        observed: dict = {}
+        if source.kind == "rest_api":
+            endpoint = {
+                "endpoint": source.endpoint,
+                "records_path": source.records_path,
+                "pagination": source.pagination,
+            }
+            rows = list(rest_api.records(decl, settings, endpoint))
+            # merge: dlt gộp bản ghi trùng khóa ngay ở bronze, nên phía nguồn đếm số khóa khác nhau.
+            keys = source.primary_key if source.write_disposition == "merge" else None
+            source_rows = rest_api.count(rows, keys)
+            observed["source_records"] = len(rows)
+        else:
+            with postgres.connection(settings) as conn:
+                source_rows = conn.execute(
+                    sql.SQL("SELECT count(*) FROM {}.{}").format(
+                        sql.Identifier(decl.schema_), sql.Identifier(source.table)
+                    )
+                ).fetchone()[0]
         bronze_rows = db.execute(f'select count(*) from bronze."{source.target.table}"').fetchone()[0]
         checks.append(
             Check(
                 name="row_reconcile",
                 source_id=source.id,
                 result="pass" if source_rows == bronze_rows else "fail",
-                observed={"source": source_rows, "bronze": bronze_rows},
+                observed={"source": source_rows, "bronze": bronze_rows, **observed},
             )
         )
     return checks
@@ -312,7 +349,7 @@ def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: 
         return SandboxResult(
             "NEEDS_HUMAN",
             "el_run",
-            error_trace=[{"stage": "el_run", "error": f"Chưa hỗ trợ chạy thử nguồn loại {unsupported} (Sprint 2)."}],
+            error_trace=[{"stage": "el_run", "error": f"Chưa hỗ trợ chạy thử nguồn loại {unsupported}."}],
         )
     timeout = policy.budgets.per_run.phase_timeout_sec
     max_reject_pct = policy.objectives[spec.domain].quality.max_reject_pct
@@ -323,7 +360,7 @@ def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: 
         try:
             prepare_project(sandbox, files)
             env = _env(sandbox, spec, policy, settings)
-            _el_run(sandbox, spec, env, timeout, settings)
+            _el_run(sandbox, spec, env, timeout, policy, settings)
             import duckdb
 
             with duckdb.connect(env["WAREHOUSE_PATH"], read_only=True) as db:

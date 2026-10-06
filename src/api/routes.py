@@ -5,6 +5,7 @@ from src.agents.llm import openai_llm
 from src.agents.nodes.common import AgentDeps
 from src.agents.resolve import ResolveError
 from src.agents.service import SpecRejectedError, start_agent, start_continue
+from src.codegen.sandbox import SUPPORTED_KINDS
 from src.pipeline.auth import current_user, settings
 from src.pipeline.postgres import SourceUnavailableError
 from src.pipeline.settings import PipelineSettings
@@ -42,7 +43,7 @@ def agent_deps(config: PipelineSettings = Depends(settings)) -> AgentDeps:
 
 
 def _checked_sources(body: AgentRunRequest, user: dict, deps: AgentDeps) -> list[dict] | None:
-    """Chỉ Engineer tạo pipeline; nguồn chọn phải có trong domains.yml và là Postgres (Sprint 1)."""
+    """Chỉ Engineer tạo pipeline; nguồn chọn phải có trong domains.yml và đã có connector chạy thử được."""
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được tạo pipeline.")
     if not body.sources:
@@ -52,9 +53,9 @@ def _checked_sources(body: AgentRunRequest, user: dict, deps: AgentDeps) -> list
         decl = declared.get(choice.source_ref)
         if decl is None:
             raise HTTPException(422, f"Nguồn '{choice.source_ref}' không có trong domains.yml.")
-        if decl.kind != "postgres":
+        if decl.kind not in SUPPORTED_KINDS:
             raise HTTPException(
-                422, f"Nguồn '{choice.source_ref}' ({decl.kind}) chưa hỗ trợ ở Sprint 1; chọn nguồn Postgres."
+                422, f"Nguồn '{choice.source_ref}' ({decl.kind}) chưa hỗ trợ; chọn nguồn Postgres hoặc REST API."
             )
     return [choice.model_dump() for choice in body.sources]
 

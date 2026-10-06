@@ -110,14 +110,21 @@ def _join_coverage(raw: object) -> list[str]:
     ]
 
 
+def _object(source) -> str | None:
+    """Tên đối tượng nguồn như trong schema_snapshot: bảng (postgres) hoặc endpoint bỏ dấu `/` (rest_api)."""
+    if source.kind == "rest_api":
+        return source.endpoint.strip("/")
+    return getattr(source, "table", None)
+
+
 def _schema_real(spec: Spec, snapshot: dict) -> list[str]:
     by_table = {(item["source_ref"], item["table"]): item for item in snapshot.values()}
     errors = []
     for source in spec.sources:
-        item = by_table.get((source.source_ref, getattr(source, "table", None)))
+        item = by_table.get((source.source_ref, _object(source)))
         if item is None:
             errors.append(
-                f"nguồn '{source.id}': ({source.source_ref}, {getattr(source, 'table', '?')}) không có trong kế hoạch"
+                f"nguồn '{source.id}': ({source.source_ref}, {_object(source) or '?'}) không có trong kế hoạch"
             )
             continue
         columns = item["columns"]
@@ -162,7 +169,7 @@ def _used_columns(spec: Spec, snapshot: dict) -> dict[str, dict[str, str]]:
     by_table = {(item["source_ref"], item["table"]): item["columns"] for item in snapshot.values()}
     result = {}
     for source in spec.sources:
-        columns = by_table.get((source.source_ref, getattr(source, "table", None)), {})
+        columns = by_table.get((source.source_ref, _object(source)), {})
         used = {c.from_ for c in source.staging.columns} | set(source.primary_key)
         if source.cursor_field:
             used.add(source.cursor_field)

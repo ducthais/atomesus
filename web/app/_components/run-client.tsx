@@ -89,7 +89,7 @@ function SourcePicker({ sources, selected, onChange, disabled, autoConnect }: { 
     <legend>Nguồn dữ liệu <span className="muted">· kết nối để xem nguồn đang có bảng nào, rồi chọn bảng cho agent</span></legend>
     {sources.map(src => {
       const conn = connections[src.ref];
-      const noun = src.kind === 'mongodb' ? 'collection' : 'bảng';
+      const noun = src.kind === 'mongodb' ? 'collection' : src.kind === 'rest_api' ? 'endpoint' : 'bảng';
       const keys = conn?.status === 'ready' ? conn.objects.map(o => `${src.ref}.${o.name}`) : [];
       const picked = keys.filter(k => selected.includes(k)).length;
       return <div key={src.ref} className={`source-option ${src.supported ? '' : 'locked'} ${picked ? 'active' : ''}`}>

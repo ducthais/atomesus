@@ -8,7 +8,7 @@ trả về `objects` (mỗi collection một object, `kind: "collection"`), đă
 
 from collections.abc import Callable
 
-from src.pipeline import postgres
+from src.pipeline import postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import SourceDecl
 
@@ -165,7 +165,22 @@ def _postgres(decl: SourceDecl, config: PipelineSettings) -> dict:
     return {"objects": objects, "foreign_keys": foreign}
 
 
-CONNECTORS: dict[str, Callable[[SourceDecl, PipelineSettings], dict]] = {"postgres": _postgres}
+def _rest_api(decl: SourceDecl, config: PipelineSettings) -> dict:
+    """Mỗi endpoint trả danh sách là một đối tượng; schema đọc từ mô tả OpenAPI, không gọi endpoint dữ liệu."""
+    objects = [
+        {
+            "name": name,
+            "kind": "endpoint",
+            "columns": found["columns"],
+            "primary_key": found["primary_key"],
+            "row_estimate": None,
+        }
+        for name, found in rest_api.endpoints(decl, config).items()
+    ]
+    return {"objects": objects, "foreign_keys": []}
+
+
+CONNECTORS: dict[str, Callable[[SourceDecl, PipelineSettings], dict]] = {"postgres": _postgres, "rest_api": _rest_api}
 
 
 def supported(kind: str) -> bool:
@@ -175,7 +190,7 @@ def supported(kind: str) -> bool:
 def discover(decl: SourceDecl, config: PipelineSettings) -> dict:
     """Kết nối tới nguồn ngay lúc gọi, trả {objects, foreign_keys}.
 
-    Lỗi kết nối: `postgres.SourceUnavailableError` (thông báo chung, không lộ credential).
+    Lỗi kết nối: `postgres.SourceUnavailableError` (thông báo chung, không lộ credential; lỗi API là lớp con).
     Loại nguồn chưa có connector: `UnsupportedSourceError`.
     """
     connector = CONNECTORS.get(decl.kind)
