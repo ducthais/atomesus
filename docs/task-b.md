@@ -2,7 +2,9 @@
 
 ## Phần đã triển khai
 
-- Postgres 16 riêng, 10 khách hàng và 30 đơn hàng giả lập; tổng tiền `465000.00`.
+- Postgres 16 riêng, 10 khách hàng và 30 đơn hàng giả lập; tổng tiền `465000.00`. Từ Sprint 2 dữ liệu bẩn có chủ đích về
+  cách ghi: ngày trộn `YYYY-MM-DD`, `DD/MM/YYYY`, `YYYY/MM/DD`; số tiền có khoảng trắng hoặc đuôi `.00`. Agent đọc
+  đủ ba định dạng ngày (`date_formats`) nên vẫn ra 30 đơn, `465000.00`.
 - Seed chạy lại không nhân đôi ID. Image chứa seed để chạy được cả khi Docker Desktop không mount được ổ ngoài.
 - Tài khoản `pipeline_reader` chỉ có quyền đọc nguồn.
 - API đọc schema thật, nhận cấu hình đổi tên/ép kiểu, chạy DuckDB mới cho mỗi lần thực thi.
@@ -67,7 +69,8 @@ Frontend proxy `/api/v1/*` sang backend `http://127.0.0.1:8000`, nên cookie cù
 
 1. Đăng nhập `engineer` / `Engineer@123` (**Minh · Engineer**); phải đọc được 5 cột từ Postgres.
 2. Giữ mapping mặc định: `amount_text → amount / decimal(18,2)`, `ordered_at_text → ordered_at / date`.
-3. Bấm **Chạy pipeline**: 30 dòng đọc, 30 hợp lệ, 0 bị tách; dòng đầu có `amount = "1000.00"`.
+3. Bấm **Chạy pipeline**: 30 dòng đọc, 20 hợp lệ, 10 bị tách (ngày dạng `DD/MM/YYYY`, màn này chỉ ép kiểu, không có
+   định dạng ngày); dòng đầu có `amount = "1000.00"`.
 4. Đổi tên đầu ra `amount` thành `revenue_vnd`, chạy lại: kết quả dùng tên mới.
 5. Đổi kiểu của `amount_text` thành `date`, chạy: 30 dòng lỗi được tách; trạng thái **Cần kiểm tra**.
 6. Refresh trình duyệt: phiên đăng nhập và lịch sử vẫn còn. Chọn run để xem lại kết quả.

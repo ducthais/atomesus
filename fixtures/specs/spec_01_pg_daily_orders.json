@@ -17,7 +17,7 @@
           { "from": "customer_id",     "as": "customer_id", "type": "bigint" },
           { "from": "amount_text",     "as": "amount_vnd",  "type": "decimal(18,2)" },
           { "from": "ordered_at_text", "as": "order_date",  "type": "date",
-            "date_formats": ["%Y-%m-%d"] },
+            "date_formats": ["%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"] },
           { "from": "status",          "as": "status",      "type": "varchar" }
         ],
         "dedupe": { "keys": ["order_id"], "keep": "first", "order_by": "order_id" },

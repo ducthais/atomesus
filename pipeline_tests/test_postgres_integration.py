@@ -36,10 +36,13 @@ def test_seed_schema_counts_and_golden_output(config):
         ColumnRule.model_validate({"from": "ordered_at_text", "as": "ordered_at", "type": "date"}),
     ]
     report = clean_rows(rows, rules)
-    assert report["rows_read"] == report["rows_written"] == 30
-    assert report["rows_rejected"] == 0
-    assert sum(Decimal(row["amount"]) for row in report["output"]) == Decimal("465000.00")
+    # Seed bẩn có chủ đích: TRY_CAST không đọc được ngày DD/MM/YYYY (đơn chia hết cho 3) nên 10 đơn bị tách.
+    # Khoảng trắng / đuôi ".00" ở số tiền và ngày YYYY/MM/DD thì ép kiểu vẫn được.
+    assert (report["rows_read"], report["rows_written"], report["rows_rejected"]) == (30, 20, 10)
+    assert {r["values"]["order_id"] for r in report["rejected"]} == {str(i) for i in range(3, 31, 3)}
+    assert sum(Decimal(row["amount"]) for row in report["output"]) == Decimal("300000.00")
     assert report["output"][0] == {"id": "1", "amount": "1000.00", "ordered_at": "2026-01-01"}
+    assert {"id": "4", "amount": "4000.00", "ordered_at": "2026-01-04"} in report["output"]
     assert clean_rows(rows, rules)["output"] == report["output"]
 
 
