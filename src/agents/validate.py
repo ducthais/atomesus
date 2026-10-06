@@ -3,11 +3,17 @@
 - `spec_schema`: đúng hợp đồng `Spec` và chính sách `policy/*.yml`.
 - `schema_real`: mọi cột Spec dùng có thật trong schema đã đọc ở P3; cột chuỗi ép sang ngày phải có
   `date_formats`; khóa join cùng kiểu sau staging.
+- `currency`: nguồn có cột mã tiền tệ (thấy trong dòng mẫu) thì cột tiền phải khai báo `currency` để quy đổi về tiền
+  gốc của domain; quên khai báo thì 1,50 USD bị cộng như 1,50 VND.
+- `join_fanout`: ghép sang bảng phía "nhiều" (khóa ghép không phải khóa chính) làm lặp dòng của các bảng đã ghép
+  trước đó; SUM/AVG/COUNT không DISTINCT trên cột của bảng bị lặp sẽ cộng trùng. Đối chiếu độc lập dựng lại cùng
+  phép ghép nên không bắt được lỗi này, phải chặn ở đây.
 - `time_grain`: yêu cầu nói "theo ngày / tuần / tháng / quý / năm" thì cột thời gian của grain phải gộp đúng kỳ đó,
   không gộp theo từng thời điểm chính xác (mỗi giao dịch một dòng). Chỉ chạy khi yêu cầu có nói kỳ.
 - `ast_guard` (tạm): biểu thức không chứa lệnh/hàm nguy hiểm, xem `src/codegen/guard.py`.
 
-Lỗi `spec_schema`/`schema_real` quay lại codegen kèm thông báo cụ thể (vòng spec); lỗi `ast_guard` dừng hẳn.
+Lỗi `spec_schema`/`schema_real`/`currency`/`join_fanout`/`time_grain` quay lại codegen kèm thông báo cụ thể
+(vòng spec); lỗi `ast_guard` dừng hẳn.
 """
 
 import re
@@ -22,6 +28,12 @@ from src.spec.models import Spec
 from src.spec.policy_check import policy_violations
 
 TEXT_TYPES = {"text", "character varying", "varchar", "character", "char"}
+NUMERIC_TYPES = ("bigint", "integer", "double", "decimal")
+# Tên cột tiền (nguồn hoặc staging). Chỉ dùng khi nguồn có cột mã tiền tệ, nên khớp rộng cũng ít báo nhầm.
+MONEY = re.compile(r"amount|price|total|revenue|cost|fee|paid|money|tien|gia|vnd|usd", re.IGNORECASE)
+_AGGREGATE = re.compile(r"\b(sum|avg|count)\s*\(\s*(distinct\s+)?([^()]*)\)", re.IGNORECASE)
+_REF = re.compile(r"\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b", re.IGNORECASE)
+_NAME = re.compile(r"\b[a-z_][a-z0-9_]*\b", re.IGNORECASE)
 
 PERIODS = {"ngày": "day", "tuần": "week", "tháng": "month", "quý": "quarter", "năm": "year"}
 PERIOD_LABEL = {unit: word for word, unit in PERIODS.items()}
@@ -161,6 +173,108 @@ def _schema_real(spec: Spec, snapshot: dict) -> list[str]:
     return errors
 
 
+def _currency_columns(item: dict, codes: set[str]) -> dict[str, list[str]]:
+    """Cột thô mà mọi giá trị khác rỗng trong dòng mẫu là mã tiền tệ có trong bảng tỷ giá → các mã đã thấy."""
+    rows = item.get("sample_rows") or []
+    found = {}
+    for name in item["columns"]:
+        values = {str(row[name]).strip().upper() for row in rows if row.get(name) not in (None, "")}
+        if values and values <= codes:
+            found[name] = sorted(values)
+    return found
+
+
+def _currency(spec: Spec, snapshot: dict, policy: Policy) -> list[str]:
+    domain = policy.domains.domains[spec.domain].currency
+    codes = {code.upper() for code in domain.rates}
+    by_table = {(item["source_ref"], item["table"]): item for item in snapshot.values()}
+    errors = []
+    for source in spec.sources:
+        item = by_table.get((source.source_ref, _object(source)))
+        code_columns = _currency_columns(item, codes) if item else {}
+        if not code_columns:
+            continue
+        code, seen = next(iter(code_columns.items()))
+        for column in source.staging.columns:
+            money = MONEY.search(column.from_) or MONEY.search(column.as_)
+            if column.currency or column.from_ in code_columns or not column.type.startswith(NUMERIC_TYPES):
+                continue
+            if money:
+                errors.append(
+                    f"nguồn '{source.id}', cột '{column.as_}': nguồn có cột mã tiền tệ '{code}' (dòng mẫu: {seen}) "
+                    f"nhưng cột tiền '{column.from_}' chưa khai báo currency; thêm "
+                    f'"currency": {{"code_column": "{code}", "to": "{domain.base}"}} để quy đổi theo tỷ giá domains.yml'
+                )
+    return errors
+
+
+def _unique_on(source) -> set[str]:
+    """Cột đầu ra staging bảo đảm duy nhất mỗi dòng: khóa dedupe (mặc định là primary_key), theo tên sau staging."""
+    keys = (source.staging.dedupe.keys if source.staging.dedupe else None) or source.primary_key
+    renamed = {c.from_: c.as_ for c in source.staging.columns}
+    return {renamed.get(key, key) for key in keys}
+
+
+def _multiplied(spec: Spec) -> dict[str, str]:
+    """Nguồn có dòng bị lặp sau các phép ghép → lý do. Ghép theo cột không chứa trọn khóa là ghép sang phía "nhiều"."""
+    sources = {s.id: s for s in spec.sources}
+    joined, multiplied = [spec.transform.from_], {}
+    for join in spec.transform.joins:
+        new, before = join.source, set(multiplied)  # bảng đã bị lặp trước phép ghép này
+        sides: dict[str, set[str]] = {}
+        for pair in join.on:
+            for ref in pair:
+                owner, _, column = ref.partition(".")
+                sides.setdefault(owner, set()).add(column)
+        keys = _unique_on(sources[new])
+        if not keys or not keys <= sides.get(new, set()):
+            reason = (
+                f"mỗi dòng đã ghép khớp nhiều dòng '{new}' (ghép theo {sorted(sides.get(new, set()))}, "
+                f"khóa của '{new}' là {sorted(keys)})"
+            )
+            for done in joined:
+                multiplied.setdefault(done, reason)
+        for owner, columns in sides.items():
+            if owner == new or owner not in sources:
+                continue
+            owner_keys = _unique_on(sources[owner])
+            if owner in before or not owner_keys or not owner_keys <= columns:
+                multiplied.setdefault(new, f"mỗi dòng '{new}' khớp nhiều dòng '{owner}' đã ghép trước đó")
+        joined.append(new)
+    return multiplied
+
+
+def _join_fanout(spec: Spec) -> list[str]:
+    multiplied = _multiplied(spec)
+    if not multiplied:
+        return []
+    outputs = {s.id: s.outputs for s in spec.sources}
+    errors = []
+    for metric in spec.transform.metrics:
+        for function, distinct, inner in _AGGREGATE.findall(metric.expr):
+            if distinct:
+                continue
+            call = f"{function.upper()}({inner.strip()})"
+            if inner.strip() == "*" and function.lower() == "count":
+                errors.append(
+                    f"metrics '{metric.name}': {call} đếm số dòng sau khi ghép, mà {next(iter(multiplied.values()))}; "
+                    "đếm thực thể thì dùng COUNT(DISTINCT <id>.<khóa chính>)"
+                )
+                continue
+            refs = {owner for owner, _ in _REF.findall(inner)}
+            if not refs:  # tên cột không kèm <id>: nguồn nào có cột đầu ra đó
+                names = set(_NAME.findall(inner))
+                refs = {sid for sid, cols in outputs.items() if names & set(cols)}
+            for owner in sorted(refs & multiplied.keys()):
+                errors.append(
+                    f"metrics '{metric.name}': {call} cộng trùng dòng của '{owner}' vì {multiplied[owner]}. "
+                    f"Đếm '{owner}' thì dùng COUNT(DISTINCT {owner}.<khóa chính>); MIN/MAX không bị ảnh hưởng. "
+                    f"SUM/AVG trên cột của '{owner}' không tính đúng được khi ghép với bảng phía nhiều: bỏ join đó nếu "
+                    "chỉ số khác không cần, không được bỏ chỉ số người dùng yêu cầu"
+                )
+    return errors
+
+
 def _used_columns(spec: Spec, snapshot: dict) -> dict[str, dict[str, str]]:
     """Mốc schema của pipeline: với mỗi nguồn, các cột Spec đọc và kiểu của chúng lúc kiểm tra.
 
@@ -198,6 +312,26 @@ def validate_spec(raw: dict, snapshot: dict, policy: Policy, request: str | None
             observed={"sources": len(spec.sources), "columns": _used_columns(spec, snapshot)},
         )
     )
+    if errors:
+        return Validation(spec, gates, errors)
+    errors = _currency(spec, snapshot, policy)
+    gates.append(
+        GateResult(
+            name="currency",
+            result="fail" if errors else "pass",
+            detail="; ".join(errors) or "Cột tiền có mã tiền tệ ở nguồn đều được quy đổi về tiền gốc của domain",
+        )
+    )
+    fanout = _join_fanout(spec)
+    gates.append(
+        GateResult(
+            name="join_fanout",
+            result="fail" if fanout else "pass",
+            detail="; ".join(fanout) or "Không chỉ số nào cộng trùng dòng do ghép bảng",
+            observed={"multiplied": _multiplied(spec)},
+        )
+    )
+    errors += fanout
     if errors:
         return Validation(spec, gates, errors)
     if unit := requested_period(request):

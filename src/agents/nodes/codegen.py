@@ -16,6 +16,7 @@ from src.pipeline.postgres import SourceUnavailableError
 from src.spec import SPEC_FIXTURES_DIR
 
 EXAMPLE_SPEC = SPEC_FIXTURES_DIR / "spec_02_sales_multi_source.json"
+TEMPORAL = {"date", "timestamp"}
 
 # Kiểu Postgres (information_schema.data_type) → kiểu staging cho phép (src/spec/models.py COLUMN_TYPE).
 PG_TYPES = {
@@ -43,6 +44,9 @@ def _add_key_columns(raw: object, snapshot: dict) -> object:
     - Kiểu Postgres chép nguyên vào staging (`smallint`, `text`, `numeric`) → kiểu staging tương ứng.
     - Cột dùng để ghép hoặc gộp (`<id>.<cột>` trong joins/grain) mà LLM quên khai báo ở staging thì thêm vào.
     - Nguồn rest_api: `endpoint`, `records_path`, `pagination` chép từ schema_snapshot (đọc từ OpenAPI).
+    - `time_grain.column` viết thiếu / thừa tiền tố `<id>.` so với phần tử tương ứng của grain thì lấy đúng phần tử đó.
+    - `date_formats` trên cột thô đã là ngày/giờ (không phải chuỗi) thì bỏ: staging ép thẳng kiểu. LLM hay thêm vì dòng
+      mẫu hiện giá trị dạng chuỗi ISO, nhưng ở bronze cột đã là timestamp nên mọi dòng sẽ trượt định dạng và bị tách.
 
     LLM hay bỏ khóa ghép (ví dụ `address.city_id`) khỏi staging.columns và lặp lại lỗi đó cả khi được báo. Chỉ thêm cột
     thô có thật trong schema_snapshot, chưa được khai báo dưới tên nào, giữ nguyên tên và ép kiểu theo kiểu nguồn.
@@ -60,14 +64,26 @@ def _add_key_columns(raw: object, snapshot: dict) -> object:
                 records_path=found["records_path"],
                 pagination=found["pagination"],
             )
+    grain = [g for g in transform.get("grain") or [] if isinstance(g, str)]
+    time_grain = transform.get("time_grain")
+    if isinstance(time_grain, dict) and time_grain.get("column") not in grain:
+        name = str(time_grain.get("column")).rpartition(".")[2]
+        same = [g for g in grain if g.rpartition(".")[2] == name]
+        if len(same) == 1:
+            time_grain["column"] = same[0]
     refs = [side for j in transform.get("joins") or [] for pair in j.get("on") or [] for side in pair]
     refs += [g for g in transform.get("grain") or [] if isinstance(g, str)]
     sources = {s.get("id"): s for s in raw.get("sources") or [] if isinstance(s, dict)}
-    for source in sources.values():  # LLM hay chép nguyên kiểu Postgres (smallint, text, numeric) vào staging
+    for sid, source in sources.items():  # LLM hay chép nguyên kiểu Postgres (smallint, text, numeric) vào staging
         staging = source.get("staging")
+        raw_columns = (snapshot.get(sid) or {}).get("columns") or {}
         for column in staging.get("columns") or [] if isinstance(staging, dict) else []:
-            if isinstance(column, dict) and str(column.get("type", "")).lower() in PG_TYPES:
+            if not isinstance(column, dict):
+                continue
+            if str(column.get("type", "")).lower() in PG_TYPES:
                 column["type"] = PG_TYPES[str(column["type"]).lower()]
+            if column.get("date_formats") and PG_TYPES.get(raw_columns.get(column.get("from"), "")) in TEMPORAL:
+                column["date_formats"] = None
     for ref in refs:
         source_id, dot, column = str(ref).partition(".")
         source, raw_columns = sources.get(source_id), (snapshot.get(source_id) or {}).get("columns") or {}

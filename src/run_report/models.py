@@ -52,7 +52,17 @@ Stage = Literal[
     "persist",
 ]
 
-GateName = Literal["spec_schema", "schema_real", "time_grain", "semantic", "ast_guard", "budget", "post_run"]
+GateName = Literal[
+    "spec_schema",
+    "schema_real",
+    "currency",
+    "join_fanout",
+    "time_grain",
+    "semantic",
+    "ast_guard",
+    "budget",
+    "post_run",
+]
 CheckName = Literal[
     "row_reconcile",
     "hash_reconcile",

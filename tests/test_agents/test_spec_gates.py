@@ -1,0 +1,189 @@
+"""Cổng `currency` và `join_fanout`: hai lỗi làm sai số liệu gold mà mọi kiểm tra sau chạy thử đều cho qua.
+
+Tái hiện từ hai run thật với nguồn API (2026-10-06): 81048089 cộng 1,50 USD như 1,50 VND; b8d45355 cộng tổng tiền
+đơn hàng 4 lần vì mỗi đơn có 4 khoản thanh toán.
+"""
+
+import copy
+
+import pytest
+
+from src.agents.validate import _join_fanout, _multiplied, validate_spec
+from src.policy.loader import load_policy
+from src.spec.models import Spec
+
+
+def _source(sid, kind, columns, key, **extra):
+    base = {
+        "id": sid,
+        "kind": kind,
+        "source_ref": "sales_api" if kind == "rest_api" else "sales_pg",
+        "primary_key": [key],
+        "cursor_field": None,
+        "write_disposition": "replace",
+        "target": {"dataset": "bronze", "table": f"raw_{sid}"},
+        "staging": {
+            "columns": [{"from": c, "as": c, "type": t} for c, t in columns],
+            "dedupe": {"keys": [key], "keep": "first", "order_by": key},
+            "reject_if": [],
+        },
+    }
+    if kind == "rest_api":
+        base |= {"endpoint": f"/{sid}", "records_path": "data", "pagination": "page"}
+    else:
+        base["table"] = sid
+    return base | extra
+
+
+CUSTOMERS = _source("customers", "postgres", [("customer_id", "integer"), ("customer_name", "varchar")], "customer_id")
+ORDERS = _source(
+    "orders", "postgres", [("order_id", "integer"), ("customer_id", "integer"), ("amount", "decimal(18,2)")], "order_id"
+)
+PAYMENTS = _source(
+    "payments",
+    "rest_api",
+    [("payment_id", "integer"), ("order_id", "integer"), ("amount", "decimal(18,2)")],
+    "payment_id",
+)
+
+
+def _spec(sources, joins, metrics, grain):
+    return {
+        "spec_version": "1.2",
+        "domain": "sales",
+        "sources": copy.deepcopy(sources),
+        "transform": {
+            "model_name": "fct_test",
+            "from": sources[0]["id"],
+            "joins": joins,
+            "materialization": "table",
+            "unique_key": [],
+            "grain": grain,
+            "metrics": [{"name": name, "expr": expr} for name, expr in metrics],
+            "filters": [],
+            "tests": [],
+        },
+        "schedule": {"cron": "0 2 * * *"},
+        "estimates": {"bytes_scanned": 0, "usd": 0.0, "latency_sec": 0},
+    }
+
+
+CUSTOMER_JOINS = [
+    {"source": "orders", "type": "inner", "on": [["customers.customer_id", "orders.customer_id"]]},
+    {"source": "payments", "type": "left", "on": [["orders.order_id", "payments.order_id"]]},
+]
+
+
+def _fanout(metrics, sources=(CUSTOMERS, ORDERS, PAYMENTS), joins=CUSTOMER_JOINS, grain=("customers.customer_name",)):
+    return _join_fanout(Spec.model_validate(_spec(list(sources), joins, metrics, list(grain))))
+
+
+def test_one_to_many_join_multiplies_every_table_joined_before():
+    spec = Spec.model_validate(
+        _spec([CUSTOMERS, ORDERS, PAYMENTS], CUSTOMER_JOINS, [("x", "COUNT(*)")], ["customers.customer_name"])
+    )
+    assert set(_multiplied(spec)) == {"customers", "orders"}, "payments không bị lặp: mỗi khoản khớp đúng một đơn"
+
+
+def test_sum_on_the_multiplied_side_is_rejected():
+    errors = _fanout([("total_order", "SUM(orders.amount)"), ("total_paid", "SUM(payments.amount)")])
+    assert len(errors) == 1 and "total_order" in errors[0] and "orders" in errors[0]
+    assert "không được bỏ chỉ số người dùng yêu cầu" in errors[0]
+
+
+@pytest.mark.parametrize(
+    "expr",
+    ["SUM(payments.amount)", "COUNT(DISTINCT orders.order_id)", "MAX(orders.amount)", "COUNT(payments.payment_id)"],
+)
+def test_safe_aggregates_pass(expr):
+    assert _fanout([("m", expr)]) == []
+
+
+def test_count_star_after_fanout_is_rejected():
+    (error,) = _fanout([("n", "COUNT(*)")])
+    assert "COUNT(DISTINCT" in error
+
+
+def test_many_to_one_join_only_multiplies_the_lookup_side():
+    joins = [{"source": "customers", "type": "left", "on": [["orders.customer_id", "customers.customer_id"]]}]
+    assert _fanout([("revenue", "SUM(orders.amount)")], (ORDERS, CUSTOMERS), joins, ("customers.customer_name",)) == []
+    assert _fanout([("n", "COUNT(customers.customer_id)")], (ORDERS, CUSTOMERS), joins, ("orders.order_id",))
+
+
+def test_single_source_has_no_fanout():
+    assert _fanout([("n", "COUNT(*)"), ("s", "SUM(amount)")], (PAYMENTS,), [], ("order_id",)) == []
+
+
+SNAPSHOT_ROWS = [
+    {"payment_id": "1", "order_id": "1", "amount": "100", "currency": "VND", "paid_at": "2026-01-01T09:00:00Z"},
+    {"payment_id": "7", "order_id": "2", "amount": "1.50", "currency": "USD", "paid_at": "2026-01-02T14:00:00Z"},
+]
+
+
+def _api_snapshot(rows=SNAPSHOT_ROWS):
+    columns = {"payment_id": "integer", "order_id": "integer", "amount": "text", "currency": "text"}
+    columns["paid_at"] = "timestamp with time zone"
+    return {
+        "payments": {
+            "source_ref": "sales_api",
+            "kind": "rest_api",
+            "table": "payments",
+            "endpoint": "/payments",
+            "records_path": "data",
+            "pagination": "page",
+            "columns": columns,
+            "sample_rows": rows,
+        }
+    }
+
+
+def _payments_spec(currency=None):
+    source = copy.deepcopy(PAYMENTS)
+    if currency:
+        source["staging"]["columns"][2]["currency"] = currency
+    return _spec([source], [], [("total", "SUM(amount)")], ["order_id"])
+
+
+def test_money_column_must_convert_when_the_source_has_a_currency_code():
+    result = validate_spec(_payments_spec(), _api_snapshot(), load_policy())
+    gate = next(g for g in result.gates if g.name == "currency")
+    assert gate.result == "fail" and "'currency'" in result.errors[0] and "['USD', 'VND']" in result.errors[0]
+    assert '"to": "VND"' in result.errors[0]
+
+    fixed = validate_spec(_payments_spec({"code_column": "currency", "to": "VND"}), _api_snapshot(), load_policy())
+    assert not fixed.errors and next(g for g in fixed.gates if g.name == "currency").result == "pass"
+
+
+def test_no_currency_column_means_nothing_to_convert():
+    rows = [{k: v for k, v in row.items() if k != "currency"} for row in SNAPSHOT_ROWS]
+    snapshot = _api_snapshot(rows)
+    snapshot["payments"]["columns"].pop("currency")
+    assert not validate_spec(_payments_spec(), snapshot, load_policy()).errors
+
+
+def test_date_formats_dropped_when_the_raw_column_is_already_a_timestamp():
+    # run fbb052d9: dlt đổ chuỗi ISO thành timestamp ở bronze; date_formats khiến 121/122 dòng bị tách.
+    from src.agents.nodes.codegen import _add_key_columns
+
+    raw = _payments_spec({"code_column": "currency", "to": "VND"})
+    columns = raw["sources"][0]["staging"]["columns"]
+    columns.append({"from": "paid_at", "as": "paid_date", "type": "date", "date_formats": ["%Y-%m-%dT%H:%M:%SZ"]})
+    columns.append({"from": "amount", "as": "amount_text", "type": "varchar", "date_formats": None})
+    fixed = _add_key_columns(raw, _api_snapshot())
+    paid = next(c for c in fixed["sources"][0]["staging"]["columns"] if c["as"] == "paid_date")
+    assert paid["date_formats"] is None and paid["type"] == "date"
+
+    text = _api_snapshot()
+    text["payments"]["columns"]["paid_at"] = "text"  # cột chuỗi thật thì giữ nguyên định dạng
+    columns[-2]["date_formats"] = ["%Y-%m-%dT%H:%M:%SZ"]
+    kept = _add_key_columns(raw, text)
+    assert next(c for c in kept["sources"][0]["staging"]["columns"] if c["as"] == "paid_date")["date_formats"]
+
+
+def test_time_grain_column_follows_the_grain_spelling():
+    # run e308aa64: grain ['payments.paid_date'] nhưng time_grain.column 'paid_date', LLM lặp lỗi 3 lần.
+    from src.agents.nodes.codegen import _add_key_columns
+
+    raw = _payments_spec({"code_column": "currency", "to": "VND"})
+    raw["transform"] |= {"grain": ["payments.paid_at"], "time_grain": {"column": "paid_at", "unit": "day"}}
+    assert _add_key_columns(raw, _api_snapshot())["transform"]["time_grain"]["column"] == "payments.paid_at"
