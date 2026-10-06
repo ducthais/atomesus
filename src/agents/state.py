@@ -27,6 +27,7 @@ class AgentState(TypedDict, total=False):
     checks: list[dict]
     attempts: dict[str, int]
     llm_calls: int
+    llm_usage: list[dict]  # mỗi lần gọi LLM: {stage, tier, model, input_tokens, output_tokens, usd}
     cost: dict  # {estimated_bytes, actual_bytes, usd} từ cổng budget (P8)
     duration_sec: float
     error_trace: list[dict]

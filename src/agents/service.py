@@ -28,6 +28,7 @@ from src.agents.nodes.sandbox_run import sandbox_run_node
 from src.agents.state import AgentState
 from src.agents.validate import validate_spec
 from src.run_report import Attempts, Check, Cost, GateResult, RunReport, Timing, save_run_report
+from src.run_report.models import LlmCall
 from src.run_report.store import save_run_files
 
 log = logging.getLogger(__name__)
@@ -69,7 +70,14 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
         gates=[GateResult.model_validate(gate) for gate in state.get("gates", [])],
         checks=[Check.model_validate(check) for check in state.get("checks", [])],
         # Ước tính ở cổng budget (P8); DuckDB local không có chi phí thật nên actual = ước tính (SPEC §12).
-        cost=Cost.model_validate(state.get("cost") or {"estimated_bytes": 0, "actual_bytes": 0, "usd": 0}),
+        # Tiền LLM cộng từ từng lần gọi; lần gọi chưa có giá (usd None) không cộng.
+        cost=Cost.model_validate(
+            {
+                **(state.get("cost") or {"estimated_bytes": 0, "actual_bytes": 0, "usd": 0}),
+                "llm_usd": sum(call.get("usd") or 0 for call in state.get("llm_usage", [])),
+            }
+        ),
+        llm_usage=[LlmCall.model_validate(call) for call in state.get("llm_usage", [])],
         timing=Timing(baseline_sec=state.get("duration_sec")),
         attempts=Attempts.model_validate(state.get("attempts") or {}),
         llm_calls=state.get("llm_calls", 0),
@@ -290,6 +298,7 @@ def start_confirm(
         "gates": [gate.model_dump() for gate in report.gates],  # cổng semantic đã chạy trước khi dừng chờ xác nhận
         "attempts": report.attempts.model_dump(),
         "llm_calls": report.llm_calls,
+        "llm_usage": [call.model_dump() for call in report.llm_usage],
         "error_trace": [],
         "status": "PLAN_CONFIRMED",
         "stage_reached": "confirm",
@@ -353,6 +362,7 @@ def start_continue(
         ],
         "attempts": draft.attempts.model_dump(),
         "llm_calls": draft.llm_calls,
+        "llm_usage": [call.model_dump() for call in draft.llm_usage],
         "error_trace": [],
         "status": "VALIDATING",
         "stage_reached": "static",

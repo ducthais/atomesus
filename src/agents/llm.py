@@ -14,6 +14,21 @@ JsonLLM = Callable[[Tier, str, str], str]
 FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")
 
 
+class LLMReply(str):
+    """Nội dung model trả về, kèm model và số token nhà cung cấp báo (để tính chi phí). Dùng như `str` ở mọi chỗ khác."""
+
+    model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+
+    def __new__(
+        cls, text: str, model: str | None = None, input_tokens: int | None = None, output_tokens: int | None = None
+    ):
+        reply = super().__new__(cls, text)
+        reply.model, reply.input_tokens, reply.output_tokens = model, input_tokens, output_tokens
+        return reply
+
+
 class LLMOutputError(ValueError):
     """Model không trả về một object JSON."""
 
@@ -47,6 +62,8 @@ def openai_llm() -> JsonLLM:
             timeout=120,
             model_kwargs={"response_format": {"type": "json_object"}},
         )
-        return model.invoke([("system", system), ("user", user)]).content
+        message = model.invoke([("system", system), ("user", user)])
+        usage = message.usage_metadata or {}
+        return LLMReply(message.content, models[tier], usage.get("input_tokens"), usage.get("output_tokens"))
 
     return call

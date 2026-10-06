@@ -27,6 +27,8 @@ export type Run = {
   id: string; title: string; domain: string; owner: string; request: string; version: number;
   filesHash: string; status: Status; stage: number; plan: Plan; summary: string; checks: Check[]; logs: Log[];
   specRetries: number; sqlRetries: number; llmCalls: number; updatedAt: string; usd: number;
+  /** Tiền gọi LLM (USD), tổng token, và số lần gọi chưa tính được tiền (model chưa có giá trong budgets.yml). */
+  llmUsd: number; llmTokens: number; llmUnpriced: number;
   fileCount: number; assets: Asset[]; approval: Approval | null; error: string | null; question: string | null;
   /** Bảng `nguồn.bảng` tích sẵn khi bấm "Sửa & chạy lại": phạm vi đã chọn + bảng kế hoạch cần mà chưa chọn. */
   retryTables?: string[];
@@ -141,6 +143,9 @@ export function toStudioRun(report: RunReport): Run {
     checks: [...report.checks.map(toCheck), ...report.gates.map(g => ({ id: `gate:${g.name}`, name: GATE_LABEL[g.name] ?? g.name, state: g.result, value: g.result === 'pass' ? 'Đạt' : 'Không đạt', detail: g.detail }))],
     logs: toLogs(report, stage), specRetries: report.attempts?.spec ?? 0, sqlRetries: report.attempts?.sql ?? 0,
     llmCalls: report.llm_calls ?? 0, updatedAt: report.created_at, usd: report.cost?.usd ?? 0,
+    llmUsd: report.cost?.llm_usd ?? 0,
+    llmTokens: (report.llm_usage ?? []).reduce((n, c) => n + (c.input_tokens ?? 0) + (c.output_tokens ?? 0), 0),
+    llmUnpriced: (report.llm_usage ?? []).filter(c => c.usd === null).length,
     fileCount: Object.keys(report.files ?? {}).length, assets: toAssets(report), approval: report.approval,
     error: last ? (last.question ? `Cần làm rõ: ${last.question}` : traceText(last)) : null, question: last?.question ?? null,
     retryTables: [...new Set([...(report.source_scope ?? []).flatMap(s => s.tables.map(t => `${s.source_ref}.${t}`)), ...(last?.need_tables ?? [])])],
@@ -155,7 +160,7 @@ export function pendingRun(request: string, owner: string): Run {
     version: 1, filesHash: '', status: 'GENERATING', stage: stageIndex('plan'), summary: '',
     plan: { sources: [], tables: [], primaryKey: '—', cursor: '—', metric: '—', schedule: '—', writeMode: '—', model: '—', filters: '' },
     checks: [], logs: [{ id: 'pending', stage: stageIndex('plan'), level: 'info', message: 'Agent đang lập kế hoạch; xong sẽ dừng chờ bạn xác nhận rồi mới viết Spec và chạy thử.', at: now }],
-    specRetries: 0, sqlRetries: 0, llmCalls: 0, updatedAt: now, usd: 0, fileCount: 0, assets: [], approval: null, error: null, question: null, pending: true,
+    specRetries: 0, sqlRetries: 0, llmCalls: 0, updatedAt: now, usd: 0, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 0, assets: [], approval: null, error: null, question: null, pending: true,
   };
 }
 

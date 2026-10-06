@@ -95,8 +95,14 @@ class Domains(_Policy):
 # ---------- budgets.yml ----------
 
 
+class LlmPrice(_Policy):
+    input_usd_per_mtok: float = Field(ge=0)
+    output_usd_per_mtok: float = Field(ge=0)
+
+
 class Pricing(_Policy):
     usd_per_tb: float = Field(gt=0)
+    llm: dict[str, LlmPrice] = Field(default_factory=dict)  # tên model → giá cho 1 triệu token
 
 
 class PerRun(_Policy):

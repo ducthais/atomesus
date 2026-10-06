@@ -121,7 +121,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
           <div className="counters">
             {[['Sửa Spec', run.specRetries, limits.max_spec_attempts], ['Sửa SQL', run.sqlRetries, limits.max_sql_attempts], ['Gọi LLM', run.llmCalls, limits.max_llm_calls]].map(([label, used, max]) =>
               <div key={label}><span>{label}</span><strong className="mono">{used}/{max}</strong><div className="meter"><span style={{ width: `${Math.min(100, Number(used) / Number(max) * 100)}%` }} /></div></div>)}
-            <div><span>Chi phí</span><strong className="mono">${run.usd.toFixed(4)}</strong><small className="muted">ước tính</small></div>
+            <div><span>Gọi LLM</span><strong className="mono">${run.llmUsd.toFixed(4)}</strong><small className="muted">{run.llmTokens.toLocaleString('vi-VN')} token{run.llmUnpriced ? ` · ${run.llmUnpriced} lần chưa có giá` : ''}</small></div>
+            <div><span>Quét dữ liệu</span><strong className="mono">${run.usd.toFixed(6)}</strong><small className="muted">ước tính</small></div>
           </div>
           <p className="muted small">Trần đọc từ budgets.yml.</p>
         </Panel>

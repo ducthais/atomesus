@@ -277,7 +277,7 @@ export const RUNS: CatalogRun[] = [
       log('l5', 11, 'success', 'dbt build: 6 model/test đạt', '2026-10-01T07:58:30Z'),
       log('l6', 14, 'success', 'Lan Phạm duyệt; ghi project Dagster vào data/dagster_local/fct_daily_revenue', '2026-10-01T10:20:00Z'),
     ],
-    specRetries: 1, sqlRetries: 0, llmCalls: 3, updatedAt: '2026-10-01T10:20:00Z', usd: 0.0031, fileCount: 5,
+    specRetries: 1, sqlRetries: 0, llmCalls: 3, updatedAt: '2026-10-01T10:20:00Z', usd: 0.0031, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 5,
     assets: [
       { name: 'bronze.raw_orders', layer: 'Bronze', kind: 'postgres · sales_pg', rows: '12.480', state: 'Khớp nguồn' },
       { name: 'staging.stg_daily_revenue__orders', layer: 'Staging', kind: 'Model dbt', rows: '12.391', state: '89 dòng rác' },
@@ -337,7 +337,7 @@ models:
       log('m3', 9, 'success', 'dlt nạp 12.480 + 3.150 dòng', '2026-10-01T09:12:05Z'),
       log('m4', 14, 'success', 'Mọi kiểm tra đạt. Chờ Reviewer duyệt.', '2026-10-01T09:13:02Z'),
     ],
-    specRetries: 0, sqlRetries: 0, llmCalls: 2, updatedAt: '2026-10-01T09:13:02Z', usd: 0.0044, fileCount: 4,
+    specRetries: 0, sqlRetries: 0, llmCalls: 2, updatedAt: '2026-10-01T09:13:02Z', usd: 0.0044, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 4,
     assets: [
       { name: 'bronze.raw_orders', layer: 'Bronze', kind: 'postgres · sales_pg', rows: '12.480', state: 'Khớp nguồn' },
       { name: 'bronze.raw_customers', layer: 'Bronze', kind: 'postgres · sales_pg', rows: '3.150', state: 'Khớp nguồn' },
@@ -370,7 +370,7 @@ group by c.customer_id, c.full_name
       log('n1', 1, 'info', 'Kế hoạch: 2 nguồn (sales_pg.orders, sales_api.payments)', '2026-10-02T03:40:10Z'),
       log('n2', 3, 'error', 'chưa hỗ trợ đọc nguồn rest_api \'sales_api\' ở Sprint 1', '2026-10-02T03:40:12Z', 'Nguồn: sales_api'),
     ],
-    specRetries: 0, sqlRetries: 0, llmCalls: 1, updatedAt: '2026-10-02T03:40:12Z', usd: 0, fileCount: 0, assets: [], approval: null,
+    specRetries: 0, sqlRetries: 0, llmCalls: 1, updatedAt: '2026-10-02T03:40:12Z', usd: 0, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 0, assets: [], approval: null,
     error: "chưa hỗ trợ đọc nguồn rest_api 'sales_api' ở Sprint 1", question: null, files: {},
   },
   {
@@ -380,7 +380,7 @@ group by c.customer_id, c.full_name
     summary: 'Gộp thực thể customer ở hai domain.',
     checks: [check('gate:semantic', 'Ngữ nghĩa', 'fail', 'Không đạt', "'customer' có định nghĩa khác nhau ở sales và marketing; conformed_dimensions rỗng")],
     logs: [log('p1', 5, 'error', "Thực thể 'customer' trùng tên ở sales và marketing", '2026-10-02T04:05:31Z', 'sales: tài khoản đã ký hợp đồng\nmarketing: người để lại email')],
-    specRetries: 0, sqlRetries: 0, llmCalls: 2, updatedAt: '2026-10-02T04:05:31Z', usd: 0, fileCount: 0, assets: [], approval: null,
+    specRetries: 0, sqlRetries: 0, llmCalls: 2, updatedAt: '2026-10-02T04:05:31Z', usd: 0, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 0, assets: [], approval: null,
     error: "Thực thể 'customer' trùng tên ở sales (tài khoản đã ký hợp đồng) và marketing (người để lại email); conformed_dimensions chưa công nhận.", question: null, files: {},
   },
   {
@@ -390,7 +390,7 @@ group by c.customer_id, c.full_name
     summary: 'Run làm sạch thủ công: đổi tên cột và ép kiểu, không dùng LLM.',
     checks: [check('staging_reconcile:orders', 'Làm sạch staging · orders', 'fail', '11.951 sạch · 529 rác', '4,24% rác (ngưỡng 1%)')],
     logs: [log('c1', 10, 'warning', '529 dòng ép kiểu lỗi (amount_text dạng "1.250.000")', '2026-09-30T15:22:10Z', 'decimal(18,2): 529 dòng\ndate: 0 dòng')],
-    specRetries: 0, sqlRetries: 0, llmCalls: 0, updatedAt: '2026-09-30T15:22:10Z', usd: 0, fileCount: 0, assets: [], approval: null,
+    specRetries: 0, sqlRetries: 0, llmCalls: 0, updatedAt: '2026-09-30T15:22:10Z', usd: 0, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 0, assets: [], approval: null,
     error: 'Tỷ lệ dòng bị tách 4,24% vượt ngưỡng 1% (objectives.yml sales.quality.max_reject_pct).', question: null, files: {},
   },
 ];

@@ -1,6 +1,9 @@
 # Trần chi phí và số lần thử (SPEC §8.4). Mọi trần trong code đọc từ đây, không hardcode (NFR-04).
 pricing:
   usd_per_tb: 6.25          # đơn giá BigQuery on-demand; DuckDB quy đổi ước tính theo số này
+  llm:                      # USD cho 1 triệu token theo bảng giá OpenAI; model không có ở đây thì không tính được tiền
+    gpt-4o-mini: { input_usd_per_mtok: 0.15, output_usd_per_mtok: 0.60 }
+    gpt-4o:      { input_usd_per_mtok: 2.50, output_usd_per_mtok: 10.00 }
 per_run:
   max_bytes_scanned: 5_000_000_000
   max_usd: 0.05
@@ -10,7 +13,7 @@ per_run:
   max_sql_attempts: 2       # vòng SQL
   phase_timeout_sec: 300    # một phase chạy quá thời gian này thì dừng (NFR-05)
 per_day:
-  max_usd: 2.00             # tổng chi phí mọi run trong ngày; cổng budget cộng dồn
+  max_usd: 2.00             # tổng chi phí mọi run trong ngày (quét dữ liệu + LLM); cổng budget cộng dồn
 rules:
   - require_partition_filter_on: [sales_pg.orders]
   - forbid_select_star_in: [gold]

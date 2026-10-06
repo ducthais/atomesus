@@ -46,6 +46,28 @@ def prompt(name: str) -> str:
     return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
 
 
+def llm_usage(reply: str, stage: str, tier: str, policy: Policy) -> dict:
+    """Một lần gọi LLM → {stage, tier, model, input_tokens, output_tokens, usd}.
+
+    Giá đọc từ `budgets.yml: pricing.llm` theo tên model. Model không có trong bảng giá hoặc nhà cung cấp không báo số
+    token thì `usd` là None (không đoán giá).
+    """
+    model = getattr(reply, "model", None)
+    tokens_in, tokens_out = getattr(reply, "input_tokens", None), getattr(reply, "output_tokens", None)
+    price = policy.budgets.pricing.llm.get(model) if model else None
+    usd = None
+    if price is not None and tokens_in is not None and tokens_out is not None:
+        usd = (tokens_in * price.input_usd_per_mtok + tokens_out * price.output_usd_per_mtok) / 1_000_000
+    return {
+        "stage": stage,
+        "tier": tier,
+        "model": model,
+        "input_tokens": tokens_in,
+        "output_tokens": tokens_out,
+        "usd": usd,
+    }
+
+
 def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: str, user: str) -> str:
     """Gọi LLM nếu còn trong trần `budgets.yml: per_run.max_llm_calls`; chạm trần → NEEDS_HUMAN (SPEC §11.4)."""
     limit = deps.policy.budgets.per_run.max_llm_calls

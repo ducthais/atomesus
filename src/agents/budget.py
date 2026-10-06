@@ -8,8 +8,8 @@ Sandbox chạy DuckDB local nên không có `dry_run` thật như BigQuery. Ư�
 USD = byte / 10^12 × `budgets.yml: pricing.usd_per_tb`, luôn gắn nhãn ước tính (`estimated: true`).
 
 Chặn `BLOCKED_BUDGET` khi tổng vượt `per_run.max_bytes_scanned` hoặc `per_run.max_usd`, hoặc chi phí các run đã
-ghi trong ngày (UTC, sổ bằng chứng) cộng ước tính vượt `per_day.max_usd`. Chi phí ở đây là chi phí quét kho dữ liệu,
-chưa gồm tiền gọi LLM.
+ghi trong ngày (UTC, sổ bằng chứng, gồm cả tiền gọi LLM `cost.llm_usd`) cộng ước tính vượt `per_day.max_usd`.
+Trần một run (`per_run.max_usd`) chỉ áp cho chi phí quét dữ liệu, như `dry_run` của SPEC.
 """
 
 import json
@@ -68,13 +68,13 @@ def estimate(spec: Spec, policy: Policy, settings: PipelineSettings) -> dict:
 
 
 def spent_today(settings: PipelineSettings) -> float:
-    """Tổng chi phí (cost.usd) của các run tạo trong ngày hôm nay, theo giờ UTC."""
+    """Tổng chi phí (quét dữ liệu + LLM) của các run tạo trong ngày hôm nay, theo giờ UTC."""
     today = datetime.now(UTC).date()
     spent = 0.0
     for report in list_run_reports(settings.store_path, limit=DAY_SCAN_LIMIT):  # mới nhất trước
         if report.created_at.astimezone(UTC).date() != today:
             break
-        spent += report.cost.usd
+        spent += report.cost.usd + report.cost.llm_usd
     return spent
 
 

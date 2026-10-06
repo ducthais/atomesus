@@ -77,7 +77,9 @@ export type RunReport = {
   files?: Record<string, string>; files_hash?: string | null;
   gates: { name: string; result: 'pass' | 'fail'; detail: string; observed: Record<string, unknown> }[];
   checks: { name: string; source_id: string | null; result: 'pass' | 'fail'; observed: Record<string, unknown> }[];
-  cost?: { usd: number }; attempts?: { spec: number; sql: number }; llm_calls?: number;
+  cost?: { usd: number; llm_usd?: number }; attempts?: { spec: number; sql: number }; llm_calls?: number;
+  // Mỗi lần gọi LLM: token nhà cung cấp báo, usd theo budgets.yml (null = model chưa có giá).
+  llm_usage?: { stage: string; tier: string; model: string | null; input_tokens: number | null; output_tokens: number | null; usd: number | null }[];
   timing: { baseline_sec: number | null; optimized_sec: number | null };
   // error_trace là dict tự do trong hợp đồng: agent ghi `error`, run mẫu cũ ghi `message`.
   error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string; need_tables?: string[] }[];

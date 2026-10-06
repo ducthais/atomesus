@@ -108,9 +108,23 @@ class Check(_Contract):
 
 
 class Cost(_Contract):
+    """`usd`: chi phí quét kho dữ liệu (ước tính ở cổng budget). `llm_usd`: tổng tiền gọi LLM của run (`llm_usage`)."""
+
     estimated_bytes: int = Field(ge=0)
     actual_bytes: int = Field(ge=0)
     usd: float = Field(ge=0)
+    llm_usd: float = Field(default=0, ge=0)
+
+
+class LlmCall(_Contract):
+    """Một lần gọi LLM. Token do nhà cung cấp báo; `usd` tính theo `budgets.yml: pricing.llm`, None nếu chưa có giá."""
+
+    stage: str
+    tier: str
+    model: str | None = None
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    usd: float | None = Field(default=None, ge=0)
 
 
 TimelineEventName = Literal["submitted", "plan_ready", "plan_confirmed", "spec_ready", "mapping_submitted", "finished"]
@@ -188,6 +202,7 @@ class RunReport(_Contract):
     optimizer: list[OptimizerStep] = Field(default_factory=list)
     attempts: Attempts = Field(default_factory=Attempts)
     llm_calls: int = Field(ge=0)
+    llm_usage: list[LlmCall] = Field(default_factory=list)
     error_trace: list[dict[str, Any]] = Field(default_factory=list)
     approval: Approval | None = None
     timeline: list[TimelineEvent] = Field(default_factory=list)

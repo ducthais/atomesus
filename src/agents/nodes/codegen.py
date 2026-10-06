@@ -8,7 +8,7 @@ Biểu thức nguy hiểm → BLOCKED_AST, không thử lại.
 import json
 
 from src.agents.llm import LLMOutputError, parse_json
-from src.agents.nodes.common import AgentDeps, StopError, call_llm, prompt
+from src.agents.nodes.common import AgentDeps, StopError, call_llm, llm_usage, prompt
 from src.agents.resolve import ResolveError
 from src.agents.state import AgentState
 from src.agents.validate import MONEY, NUMERIC_TYPES, currency_columns, validate_spec
@@ -162,7 +162,7 @@ def _user_message(state: AgentState, deps: AgentDeps, snapshot: dict) -> str:
 
 def codegen(deps: AgentDeps):
     def node(state: AgentState) -> dict:
-        calls = state.get("llm_calls", 0)
+        calls, usage = state.get("llm_calls", 0), list(state.get("llm_usage", []))
         attempts = dict(state.get("attempts") or {"spec": 0, "sql": 0})
         snapshot = state.get("schema_snapshot")
         try:
@@ -170,12 +170,13 @@ def codegen(deps: AgentDeps):
                 snapshot = deps.snapshot(state["plan"], deps.policy, deps.settings)
             text = call_llm(state, deps, "propose", "strong", _system_prompt(), _user_message(state, deps, snapshot))
             calls += 1
+            usage.append(llm_usage(text, "propose", "strong", deps.policy))
         except ResolveError as exc:
             return StopError("NEEDS_HUMAN", "resolve", str(exc)).update(state)
         except SourceUnavailableError as exc:
             return StopError("INFRA_ERROR", "resolve", str(exc)).update(state)
         except StopError as stop:
-            return stop.update(state, llm_calls=calls, schema_snapshot=snapshot)
+            return stop.update(state, llm_calls=calls, llm_usage=usage, schema_snapshot=snapshot)
 
         try:
             raw = _add_key_columns(parse_json(text), snapshot, deps.policy)
@@ -191,6 +192,7 @@ def codegen(deps: AgentDeps):
         update = {
             "schema_snapshot": snapshot,
             "llm_calls": calls,
+            "llm_usage": usage,
             "spec_history": history,
             "gates": [*kept, *gates],
             "spec": raw,

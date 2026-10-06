@@ -13,7 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from src.agents.llm import LLMOutputError, parse_json
-from src.agents.nodes.common import AgentDeps, StopError, call_llm, prompt
+from src.agents.nodes.common import AgentDeps, StopError, call_llm, llm_usage, prompt
 from src.agents.state import AgentState
 from src.pipeline.postgres import SourceUnavailableError
 
@@ -235,7 +235,7 @@ def _narrow(catalog: dict, scope: list[dict] | None) -> tuple[dict, list[str]]:
 
 def planner(deps: AgentDeps):
     def node(state: AgentState) -> dict:
-        calls = state.get("llm_calls", 0)
+        calls, usage = state.get("llm_calls", 0), list(state.get("llm_usage", []))
         try:
             full = deps.catalog(deps.policy, deps.settings)
             catalog, missing = _narrow(full, state.get("source_scope"))
@@ -252,6 +252,7 @@ def planner(deps: AgentDeps):
                     json.dumps(message, ensure_ascii=False),
                 )
                 calls += 1
+                usage.append(llm_usage(text, "plan", "cheap", deps.policy))
                 try:
                     plan = Plan.model_validate(parse_json(text))
                 except (LLMOutputError, ValidationError) as exc:
@@ -279,9 +280,9 @@ def planner(deps: AgentDeps):
                     )
                 message = {**message, "kế_hoạch_lần_trước": plan.model_dump(), "lỗi_lần_trước": errors}
         except SourceUnavailableError as exc:
-            return StopError("INFRA_ERROR", "plan", str(exc)).update(state, llm_calls=calls)
+            return StopError("INFRA_ERROR", "plan", str(exc)).update(state, llm_calls=calls, llm_usage=usage)
         except StopError as stop:
-            return stop.update(state, llm_calls=calls)
+            return stop.update(state, llm_calls=calls, llm_usage=usage)
         unmapped = [c.term for c in plan.concepts if not c.column]
         if unmapped and not plan.question:  # LLM không được lặng lẽ thay khái niệm thiếu cột bằng phép tính khác
             plan = plan.model_copy(
@@ -290,7 +291,13 @@ def planner(deps: AgentDeps):
                     "Cần thêm bảng nào (hoặc nói rõ dùng cột nào)?"
                 }
             )
-        update = {"plan": plan.model_dump(), "domain": plan.domain, "llm_calls": calls, "catalog": catalog}
+        update = {
+            "plan": plan.model_dump(),
+            "domain": plan.domain,
+            "llm_calls": calls,
+            "llm_usage": usage,
+            "catalog": catalog,
+        }
         if plan.question:
             return StopError("NEEDS_HUMAN", "plan", "Cần làm rõ yêu cầu", question=plan.question).update(
                 state, **update
