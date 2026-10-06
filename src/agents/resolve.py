@@ -1,12 +1,12 @@
 """Đọc nguồn thật cho agent: catalog cho planner (P1) và schema + 20 dòng mẫu cho codegen (P3, SPEC §9).
 
 Tất định, không gọi LLM. Prompt luôn kèm dữ liệu từ đây để LLM không bao giờ tự nghĩ tên cột (SPEC §14.3).
-Đọc được nguồn `postgres` và `rest_api`; nguồn khác (và API không trả lời) hiện trong catalog với `available: false`.
+Đọc được nguồn `postgres`, `rest_api` và `filesystem` (CSV); nguồn không đọc được hiện với `available: false`.
 """
 
 from concurrent.futures import ThreadPoolExecutor
 
-from src.pipeline import connectors, postgres, rest_api
+from src.pipeline import connectors, files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 
@@ -47,6 +47,37 @@ def _api_entry(decl, settings: PipelineSettings) -> dict:
     }
 
 
+def _files_entry(decl) -> dict:
+    """Thư mục → tên cột (dòng tiêu đề CSV). Thư mục không đọc được thì chỉ nguồn này `available: false`."""
+    try:
+        found = files.objects(decl)
+    except postgres.SourceUnavailableError as exc:
+        return {"kind": decl.kind, "available": False, "reason": str(exc)}
+    return {
+        "kind": decl.kind,
+        "available": True,
+        "objects": {name: [c["name"] for c in item["columns"]] for name, item in found.items()},
+    }
+
+
+def _files_snapshot(decl, source_ref: str, name: str) -> dict:
+    found = files.objects(decl)
+    if name not in found:
+        raise ResolveError(f"nguồn file '{source_ref}' không có thư mục {name}/ chứa file CSV")
+    item = found[name]
+    return {
+        "source_ref": source_ref,
+        "kind": decl.kind,
+        "table": name,
+        # Spec chép nguyên hai trường này (codegen điền tất định).
+        "path_pattern": item["path_pattern"],
+        "format": item["format"],
+        "primary_key": item["primary_key"],
+        "columns": {c["name"]: c["type"] for c in item["columns"]},
+        "sample_rows": files.sample(decl, name, SAMPLE_ROWS),
+    }
+
+
 def _api_snapshot(decl, settings: PipelineSettings, source_ref: str, name: str) -> dict:
     found = rest_api.endpoints(decl, settings)
     if name not in found:
@@ -81,6 +112,8 @@ def catalog(policy: Policy, settings: PipelineSettings) -> dict:
                 }
             elif decl.kind == "rest_api":
                 sources[ref] = _api_entry(decl, settings)
+            elif decl.kind == "filesystem":
+                sources[ref] = _files_entry(decl)
             else:
                 sources[ref] = {"kind": decl.kind, "available": False, "reason": "chưa hỗ trợ"}
         result[domain_name] = {
@@ -110,6 +143,8 @@ def _snapshot_one(decl, item: dict, settings: PipelineSettings) -> dict:
 
     if decl.kind == "rest_api":
         return _api_snapshot(decl, settings, item["source_ref"], item["object"])
+    if decl.kind == "filesystem":
+        return _files_snapshot(decl, item["source_ref"], item["object"])
     if decl.kind != "postgres":
         raise ResolveError(f"chưa hỗ trợ đọc nguồn {decl.kind} '{item['source_ref']}'")
     table = sql.Identifier(decl.schema_, item["object"])

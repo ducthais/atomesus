@@ -11,7 +11,7 @@ vẫn khớp. Spec có đúng nhu cầu nghiệp vụ hay không do Engineer xá
 Quy tắc làm sạch phải giống staging (templates/dbt_staging.sql.j2): ép kiểu lỗi hoặc thỏa `reject_if` thì loại,
 rồi khử trùng theo khóa. Thời gian có múi giờ quy về UTC.
 
-Nguồn không phải bảng Postgres (REST API) được đọc độc lập lần nữa (gọi lại API, không qua dlt / DuckDB) rồi nhúng vào
+Nguồn không phải bảng Postgres (REST API, file CSV) được đọc độc lập lần nữa (không qua dlt / DuckDB) rồi nhúng vào
 câu SQL dưới dạng `VALUES`, mỗi giá trị ép đúng kiểu đọc từ OpenAPI. Nhờ vậy cùng một đường làm sạch / gộp chạy được cho
 pipeline ghép Postgres với API. Tối đa `MAX_INLINE_ROWS` bản ghi mỗi nguồn.
 """
@@ -361,7 +361,8 @@ def source_rows(spec: Spec, policy: Policy, settings) -> tuple[str, list[dict]]:
     """Chạy SQL tính lại trên Postgres nguồn (tài khoản chỉ đọc). Lỗi SQL → UnsupportedError kèm thông báo của Postgres."""
     import psycopg
 
-    from src.pipeline import connectors, postgres, rest_api
+    from src.codegen.el_checks import source_records
+    from src.pipeline import connectors, files, postgres, rest_api
 
     def columns_of(schema: str) -> dict[str, dict[str, str]]:
         tables = connectors.postgres_columns(settings, schema)
@@ -376,6 +377,18 @@ def source_rows(spec: Spec, policy: Policy, settings) -> tuple[str, list[dict]]:
             if described is None:
                 raise UnsupportedError(f"API không còn endpoint {source.endpoint}")
             rows = list(rest_api.records(decl, settings, described, limit=MAX_INLINE_ROWS + 1))
+            inline[source.id] = Inline({c["name"]: c["type"] for c in described["columns"]}, rows)
+        elif source.kind == "filesystem":
+            decl = declared[source.source_ref]
+            folder = source.path_pattern.split("/", 1)[0]
+            described = files.objects(decl).get(folder)
+            if described is None:
+                raise UnsupportedError(f"không còn thư mục {folder}/ ở nguồn file")
+            rows = []
+            for row in source_records(source, decl, settings):
+                rows.append(row)
+                if len(rows) > MAX_INLINE_ROWS:
+                    break
             inline[source.id] = Inline({c["name"]: c["type"] for c in described["columns"]}, rows)
     query = reference_sql(spec, policy, columns_of, inline)
     if all(source.kind != "postgres" for source in spec.sources):

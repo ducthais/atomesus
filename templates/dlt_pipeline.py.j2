@@ -19,7 +19,7 @@ from dlt.sources.sql_database import sql_table
 from dlt.sources.rest_api import rest_api_source
 [%- endif %]
 [%- if "filesystem" in kinds %]
-from dlt.sources.filesystem import filesystem, read_csv, read_jsonl, read_parquet
+from dlt.sources.filesystem import filesystem, read_csv_duckdb, read_jsonl, read_parquet
 [%- endif %]
 
 PIPELINE_NAME = [[ model_name | pystr ]]

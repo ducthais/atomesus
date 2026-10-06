@@ -124,9 +124,11 @@ def _join_coverage(raw: object) -> list[str]:
 
 
 def _object(source) -> str | None:
-    """Tên đối tượng nguồn như trong schema_snapshot: bảng (postgres) hoặc endpoint bỏ dấu `/` (rest_api)."""
+    """Tên đối tượng nguồn như trong schema_snapshot: bảng (postgres), endpoint bỏ `/` (rest_api), thư mục (filesystem)."""
     if source.kind == "rest_api":
         return source.endpoint.strip("/")
+    if source.kind == "filesystem":
+        return source.path_pattern.split("/", 1)[0]
     return getattr(source, "table", None)
 
 

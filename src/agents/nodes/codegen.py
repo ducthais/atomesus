@@ -71,6 +71,7 @@ def _add_key_columns(raw: object, snapshot: dict, policy=None) -> object:
     - Kiểu Postgres chép nguyên vào staging (`smallint`, `text`, `numeric`) → kiểu staging tương ứng.
     - Cột dùng để ghép hoặc gộp (`<id>.<cột>` trong joins/grain) mà LLM quên khai báo ở staging thì thêm vào.
     - Nguồn rest_api: `endpoint`, `records_path`, `pagination` chép từ schema_snapshot (đọc từ OpenAPI).
+    - Nguồn filesystem: `path_pattern`, `format` chép từ schema_snapshot; cursor chỉ có thể là `modification_date`.
     - Tiền tệ (có `policy`): cột tiền của nguồn có cột mã tiền tệ được gắn `currency`; `currency` sai cột thì bỏ.
     - `time_grain.column` viết thiếu / thừa tiền tố `<id>.` so với phần tử tương ứng của grain thì lấy đúng phần tử đó.
     - `date_formats` trên cột thô đã là ngày/giờ (không phải chuỗi) thì bỏ: staging ép thẳng kiểu. LLM hay thêm vì dòng
@@ -82,7 +83,7 @@ def _add_key_columns(raw: object, snapshot: dict, policy=None) -> object:
     if not isinstance(raw, dict) or not isinstance(raw.get("transform"), dict):
         return raw
     transform = raw["transform"]
-    for source in raw.get("sources") or []:  # trường riêng của rest_api lấy từ OpenAPI, không để LLM đoán
+    for source in raw.get("sources") or []:  # trường riêng của API / file lấy từ nguồn thật, không để LLM đoán
         found = snapshot.get(source.get("id")) if isinstance(source, dict) else None
         if found and found.get("kind") == "rest_api":
             source.pop("table", None)
@@ -92,6 +93,11 @@ def _add_key_columns(raw: object, snapshot: dict, policy=None) -> object:
                 records_path=found["records_path"],
                 pagination=found["pagination"],
             )
+        elif found and found.get("kind") == "filesystem":
+            source.pop("table", None)
+            source.update(kind="filesystem", path_pattern=found["path_pattern"], format=found["format"])
+            if source.get("cursor_field") not in (None, "modification_date"):
+                source["cursor_field"] = None  # file chỉ tăng dần theo thời điểm sửa file
     grain = [g for g in transform.get("grain") or [] if isinstance(g, str)]
     time_grain = transform.get("time_grain")
     if isinstance(time_grain, dict) and time_grain.get("column") not in grain:

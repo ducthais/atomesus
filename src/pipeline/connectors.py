@@ -8,7 +8,7 @@ trả về `objects` (mỗi collection một object, `kind: "collection"`), đă
 
 from collections.abc import Callable
 
-from src.pipeline import postgres, rest_api
+from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import SourceDecl
 
@@ -180,7 +180,26 @@ def _rest_api(decl: SourceDecl, config: PipelineSettings) -> dict:
     return {"objects": objects, "foreign_keys": []}
 
 
-CONNECTORS: dict[str, Callable[[SourceDecl, PipelineSettings], dict]] = {"postgres": _postgres, "rest_api": _rest_api}
+def _filesystem(decl: SourceDecl, config: PipelineSettings) -> dict:
+    """Mỗi thư mục con có file CSV là một đối tượng; chỉ đọc dòng tiêu đề, không đọc dữ liệu."""
+    objects = [
+        {
+            "name": name,
+            "kind": "folder",
+            "columns": found["columns"],
+            "primary_key": found["primary_key"],
+            "row_estimate": None,
+        }
+        for name, found in files.objects(decl).items()
+    ]
+    return {"objects": objects, "foreign_keys": []}
+
+
+CONNECTORS: dict[str, Callable[[SourceDecl, PipelineSettings], dict]] = {
+    "postgres": _postgres,
+    "rest_api": _rest_api,
+    "filesystem": _filesystem,
+}
 
 
 def supported(kind: str) -> bool:

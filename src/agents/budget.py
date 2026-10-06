@@ -3,6 +3,7 @@
 Sandbox chạy DuckDB local nên không có `dry_run` thật như BigQuery. Ước tính theo SPEC §12 (DuckDB):
 - nguồn `postgres`: kích thước bảng trên đĩa (`pg_relation_size`, cộng mọi partition con),
 - nguồn `rest_api`: số byte JSON của mọi bản ghi, đọc lần lượt các trang như dlt sẽ đọc,
+- nguồn `filesystem`: tổng dung lượng các file khớp `path_pattern`,
 - model: đọc lại các bảng staging, ước bằng tổng byte của các nguồn.
 USD = byte / 10^12 × `budgets.yml: pricing.usd_per_tb`, luôn gắn nhãn ước tính (`estimated: true`).
 
@@ -14,7 +15,7 @@ chưa gồm tiền gọi LLM.
 import json
 from datetime import UTC, datetime
 
-from src.pipeline import postgres, rest_api
+from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report.models import GateResult
@@ -39,7 +40,10 @@ def _source_bytes(spec: Spec, policy: Policy, settings: PipelineSettings) -> dic
     sizes = {}
     for source in spec.sources:
         decl = declared[source.source_ref]
-        if source.kind == "rest_api":
+        if source.kind == "filesystem":
+            folder = source.path_pattern.split("/", 1)[0]
+            sizes[source.id] = files.objects(decl).get(folder, {}).get("bytes", 0)
+        elif source.kind == "rest_api":
             endpoint = {
                 "endpoint": source.endpoint,
                 "records_path": source.records_path,

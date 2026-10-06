@@ -7,6 +7,7 @@ Bạn là kỹ sư dữ liệu viết Spec cho pipeline ELT (bước P4). Spec l
 - `spec_version` là `"1.2"`. `domain` và `sources[].source_ref` lấy đúng từ kế hoạch.
 - Mỗi nguồn postgres có `kind: "postgres"` và `table` là tên bảng **không kèm schema**.
 - Mỗi nguồn rest_api có `kind: "rest_api"`, không có `table`; `endpoint`, `records_path`, `pagination` chép đúng từ `schema_snapshot` của nguồn đó, `primary_key` lấy theo `primary_key` của snapshot.
+- Mỗi nguồn filesystem (CSV) có `kind: "filesystem"`, không có `table`; `path_pattern`, `format` chép từ snapshot, `primary_key` theo snapshot. Mọi cột CSV là chuỗi: số tiền ép `decimal(18,2)`, ngày cần `date_formats`. `cursor_field` chỉ được là `"modification_date"` hoặc `null`.
 - **Chỉ dùng tên cột có trong `schema_snapshot`.** Không bao giờ tự nghĩ tên cột.
 - `staging.columns[]`: `from` là cột thô, `as` là tên đầu ra snake_case duy nhất, `type` **chỉ** được là một trong `bigint, integer, decimal(p,s), double, varchar, boolean, date, timestamp`. Chuỗi dùng `varchar`, **không** dùng `text`, `string`, `numeric`, `int`. Cột không khai báo thì không đi tiếp.
   Quy đổi kiểu Postgres trong `schema_snapshot`: `smallint`/`integer`/`serial` → `integer`; `bigint`/`bigserial` → `bigint`; `numeric`/`money` → `decimal(18,2)`; `real`/`double precision` → `double`; `text`/`character varying`/`char`/`uuid`/`USER-DEFINED` → `varchar`; `timestamp with time zone`/`timestamp without time zone` → `timestamp`; `date` → `date`; `boolean` → `boolean`.

@@ -20,7 +20,7 @@ from tempfile import TemporaryDirectory
 
 from src.codegen import el_checks, reference
 from src.codegen.render import rejected_table, staging_model
-from src.pipeline import postgres, rest_api
+from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report.models import Check, GateResult
@@ -28,7 +28,7 @@ from src.spec.models import Spec
 
 DBT_SCAFFOLD = Path(__file__).resolve().parents[2] / "dbt_project"
 SAMPLE_ROWS = 20
-SUPPORTED_KINDS = {"postgres", "rest_api"}
+SUPPORTED_KINDS = {"postgres", "rest_api", "filesystem"}
 CONNECTION_ERRORS = (
     "OperationalError",
     "ConnectionTimeout",
@@ -68,7 +68,12 @@ def _connection_url(connection_ref: str, settings: PipelineSettings) -> str:
 
 
 def _source_env(ref: str, decl, settings: PipelineSettings) -> dict[str, str]:
-    """Biến môi trường dlt cho một nguồn: chuỗi kết nối Postgres, hoặc địa chỉ gốc của API."""
+    """Biến môi trường dlt cho một nguồn: chuỗi kết nối Postgres, địa chỉ gốc của API, hoặc thư mục file."""
+    if decl.kind == "filesystem":
+        try:
+            return {f"SOURCES__{ref.upper()}__BUCKET_URL": files.bucket_url(decl)}
+        except files.FilesUnavailableError as exc:
+            raise _StopError("INFRA_ERROR", "el_run", str(exc)) from exc
     if decl.kind == "rest_api":
         try:
             return {f"SOURCES__{ref.upper()}__BASE_URL": rest_api.base_url(decl, settings)}
@@ -139,6 +144,8 @@ def _el_run(
         try:
             if source.kind == "rest_api":
                 rest_api.endpoints(declared[source.source_ref], settings)
+            elif source.kind == "filesystem":
+                files.root(declared[source.source_ref])
             else:
                 with postgres.connection(settings):
                     pass

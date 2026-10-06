@@ -91,8 +91,9 @@ async def test_catalog_lists_declared_sources_with_real_columns_and_entities(cli
     assert sales["sources"]["sales_pg"]["tables"]["orders"] == [{"name": "order_id", "type": "integer"}]
     assert sales["sources"]["sales_pg"]["primary_keys"] == {"orders": ["order_id"]}
     assert sales["sources"]["sales_pg"]["foreign_keys"] == [FK]
-    landing = sales["sources"]["landing_sales"]
-    assert landing["available"] is False and landing["reason"] == "Chưa có connector cho nguồn filesystem"
+    landing = sales["sources"]["landing_sales"]  # thư mục CSV thật trong repo (infra/landing/sales)
+    assert landing["available"] is True and landing["primary_keys"] == {"refunds": ["refund_id"]}
+    assert [c["name"] for c in landing["tables"]["refunds"]][:3] == ["refund_id", "order_id", "amount"]
     assert sales["entities"]["order"]["tables"] == ["sales_pg.orders"]
 
     monkeypatch.setattr(catalog_api, "postgres_columns", _down)
@@ -107,7 +108,7 @@ async def test_source_discovery_connects_on_request(client, catalog_api, monkeyp
     sources = {s["ref"]: s for s in (await client.get("/api/v1/catalog/sources")).json()}
     assert sources["sales_pg"]["supported"] is True
     assert sources["sales_pg"]["kind"] == "postgres" and sources["sales_pg"]["location"] == "sales_raw"
-    assert sources["sales_api"]["supported"] is True and sources["landing_sales"]["supported"] is False
+    assert sources["sales_api"]["supported"] is True and sources["landing_sales"]["supported"] is True
 
     found = (await client.get("/api/v1/catalog/sources/sales_pg/objects")).json()
     assert found["domain"] == "sales" and found["foreign_keys"] == [FK] and found["discovered_at"]
@@ -122,6 +123,11 @@ async def test_source_discovery_connects_on_request(client, catalog_api, monkeyp
     ]
     missing = await client.get("/api/v1/catalog/sources/khong_co/objects")
     assert missing.status_code == 404
+    folders = (await client.get("/api/v1/catalog/sources/landing_sales/objects")).json()
+    assert [(o["name"], o["kind"]) for o in folders["objects"]] == [("refunds", "folder")]
+    from src.pipeline import connectors
+
+    monkeypatch.delitem(connectors.CONNECTORS, "filesystem")  # loại nguồn chưa có connector
     unsupported = await client.get("/api/v1/catalog/sources/landing_sales/objects")
     assert unsupported.status_code == 422 and "Chưa có connector" in unsupported.json()["detail"]
     from fastapi.testclient import TestClient

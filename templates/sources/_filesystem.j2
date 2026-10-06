@@ -1,4 +1,5 @@
-[#- Resource dlt cho nguồn filesystem: filesystem(path_pattern) | reader theo format. -#]
+[#- Resource dlt cho nguồn filesystem: filesystem(path_pattern) | reader theo format.
+    CSV đọc bằng DuckDB, mọi cột là chuỗi: staging lo ép kiểu, nên các file không bị đoán kiểu khác nhau. -#]
 [% macro resource(source) -%]
 def resource_[[ source.id ]]():
     files = filesystem(
@@ -8,7 +9,12 @@ def resource_[[ source.id ]]():
 [%- if source.cursor_field %]
     files.apply_hints(incremental=dlt.sources.incremental("modification_date"))
 [%- endif %]
-    return (files | read_[[ source.format ]]()).with_name([[ source.target.table | pystr ]]).apply_hints(
+[%- if source.format == "csv" %]
+    reader = read_csv_duckdb(all_varchar=True)
+[%- else %]
+    reader = read_[[ source.format ]]()
+[%- endif %]
+    return (files | reader).with_name([[ source.target.table | pystr ]]).apply_hints(
         primary_key=[[ source.primary_key | pylist ]],
         write_disposition=[[ source.write_disposition | pystr ]],
     )

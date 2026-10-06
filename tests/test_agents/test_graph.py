@@ -503,12 +503,13 @@ async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monke
         assert (await client.post("/api/v1/agent/runs", json={"request": "x"})).status_code == 403
         await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         assert (await client.post("/api/v1/agent/runs", json={"request": ""})).status_code == 422
-        for sources, message in [
-            ([{"source_ref": "nope"}], "không có trong domains.yml"),
-            ([{"source_ref": "landing_sales"}], "chưa hỗ trợ"),
-        ]:
-            bad = await client.post("/api/v1/agent/runs", json={"request": "x", "sources": sources})
-            assert bad.status_code == 422 and message in bad.json()["detail"]
+        bad = await client.post("/api/v1/agent/runs", json={"request": "x", "sources": [{"source_ref": "nope"}]})
+        assert bad.status_code == 422 and "không có trong domains.yml" in bad.json()["detail"]
+        with monkeypatch.context() as patched:  # loại nguồn chưa chạy thử được thì chặn ngay
+            patched.setattr(routes, "SUPPORTED_KINDS", {"postgres"})
+            only_file = {"request": "x", "sources": [{"source_ref": "landing_sales"}]}
+            bad = await client.post("/api/v1/agent/runs", json=only_file)
+            assert bad.status_code == 422 and "chưa hỗ trợ" in bad.json()["detail"]
         scoped = await client.post(
             "/api/v1/agent/runs",
             json={"request": "Doanh thu", "sources": [{"source_ref": "sales_pg", "tables": ["orders"]}]},

@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass
 
 from src.codegen.render import dlt_name
-from src.pipeline import postgres, rest_api
+from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.run_report.models import Check
 
@@ -44,10 +44,17 @@ def endpoint_of(source) -> dict:
     return {"endpoint": source.endpoint, "records_path": source.records_path, "pagination": source.pagination}
 
 
+def source_records(source, decl, settings: PipelineSettings):
+    """Bản ghi của nguồn không phải bảng Postgres, đọc thẳng (không qua dlt): mọi trang API hoặc mọi file CSV."""
+    if source.kind == "filesystem":
+        return files.records(decl, source.path_pattern.split("/", 1)[0])
+    return rest_api.records(decl, settings, endpoint_of(source))
+
+
 def read_source(source, decl, settings: PipelineSettings) -> Side:
     columns = key_columns(source)
-    if source.kind == "rest_api":
-        rows = list(rest_api.records(decl, settings, endpoint_of(source)))
+    if source.kind in ("rest_api", "filesystem"):
+        rows = list(source_records(source, decl, settings))
         return Side(len(rows), {tuple(_text(row.get(c)) for c in columns) for row in rows})
     from psycopg import sql
 
@@ -68,10 +75,10 @@ def read_bronze(db, source) -> Side:
 
 
 def row_reconcile(source, src: Side, bronze: Side) -> Check:
-    merged = source.kind == "rest_api" and source.write_disposition == "merge"
+    merged = source.kind != "postgres" and source.write_disposition == "merge"
     expected = len(src.keys) if merged else src.records
     observed = {"source": expected, "bronze": bronze.records}
-    if source.kind == "rest_api":
+    if source.kind != "postgres":
         observed["source_records"] = src.records
     return Check(
         name="row_reconcile",

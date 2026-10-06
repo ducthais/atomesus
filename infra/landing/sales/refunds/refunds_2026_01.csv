@@ -1,0 +1,8 @@
+refund_id,order_id,amount,currency,refunded_at,reason
+1,2,500,VND,2026-01-05,damaged
+2,5,1000.00,VND,2026-01-08,late_delivery
+3,7,0.50,USD,2026-01-10,wrong_item
+4,9,2000,VND,2026-01-12,damaged
+5,12,3000.00,VND,2026-01-15,customer_request
+6,14,1500,VND,2026-01-18,late_delivery
+7,18,1.00,USD,2026-01-21,wrong_item

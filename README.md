@@ -184,6 +184,10 @@ make mock-api                            # cổng 8100, khớp PIPELINE_MOCK_API
 
 Schema, cách phân trang và khóa chính đọc từ mô tả OpenAPI của từng domain (`openapi` trong `policy/domains.yml`).
 
+Nguồn file (`landing_sales`, kind `filesystem`) là thư mục CSV trong repo, `infra/landing/sales/`: mỗi thư mục con là một
+đối tượng (`refunds/` là hoàn tiền xuất theo tháng, ngày ghi hai kiểu, có khoản bằng USD và một khoản xuất lặp). Không cần
+chạy thêm gì; CSV được đọc thành chuỗi, staging lo ép kiểu.
+
 ## Luồng sử dụng
 
 1. **Yêu cầu pipeline** → chọn nguồn và bảng (kết nối trực tiếp lúc bấm) → nhập yêu cầu bằng lời, ví dụ "Tính doanh
