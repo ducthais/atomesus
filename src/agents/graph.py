@@ -13,6 +13,8 @@
 Trạng thái kết thúc (mọi trạng thái ngoài DRAFT/GENERATING/VALIDATING) đi thẳng tới END.
 Cổng người P2 (xác nhận kế hoạch) chia graph làm hai lượt: `stop_after_plan` dừng sau planner và cổng semantic,
 Engineer bấm xác nhận thì chạy tiếp với `entry="codegen"` (src/agents/service.py). Chưa có optimizer (P13).
+
+Mọi node chạy dưới trần `budgets.yml: per_run.phase_timeout_sec` (NFR-05, src/agents/timeout.py).
 """
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -27,6 +29,7 @@ from src.agents.nodes.render import render_node
 from src.agents.nodes.sandbox_run import sandbox_run_node
 from src.agents.nodes.semantic import semantic_node
 from src.agents.state import AgentState
+from src.agents.timeout import timed
 
 
 def _then(next_node: str):
@@ -60,13 +63,17 @@ def build_graph(
     `checkpointer`: Checkpointer của LangGraph (MemorySaver, SqliteSaver...) lưu trạng thái agent (phi trạng thái).
     """
     graph = StateGraph(AgentState)
-    graph.add_node("planner", planner(deps))
-    graph.add_node("semantic", semantic_node(deps))
-    graph.add_node("codegen", codegen(deps))
-    graph.add_node("budget", budget_node(deps))
-    graph.add_node("arbitrate", arbitrate_node(deps))
-    graph.add_node("render", render_node(deps))
-    graph.add_node("test_run", sandbox_run_node(deps))
+    nodes = {
+        "planner": planner(deps),
+        "semantic": semantic_node(deps),
+        "codegen": codegen(deps),
+        "budget": budget_node(deps),
+        "arbitrate": arbitrate_node(deps),
+        "render": render_node(deps),
+        "test_run": sandbox_run_node(deps),
+    }
+    for name, node in nodes.items():
+        graph.add_node(name, timed(deps, name, node))
     graph.set_entry_point(entry)
     graph.add_conditional_edges("planner", _then("semantic"), ["semantic", END])
     # Cổng semantic chạy trước khi dừng chờ xác nhận (P2): từ hai nghĩa bị chặn trước khi người dùng phải xem kế hoạch.

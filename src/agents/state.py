@@ -12,6 +12,7 @@ class AgentState(TypedDict, total=False):
     created_by: str  # từ phiên đăng nhập; "system" với run tự động
     trigger: str  # user_request | manual_optimize | regression
     parent_run_id: str | None  # run gốc khi Engineer "Sửa & chạy lại"; dùng để so sánh phiên bản
+    regression: dict | None  # bằng chứng suy giảm, chỉ có khi trigger = regression (SPEC §14.1)
     user_request: str
     catalog: dict  # đối tượng nguồn đọc được của từng domain, đưa cho planner
     source_scope: list[dict] | None  # nguồn/bảng người dùng chọn [{source_ref, tables}]; None = mọi nguồn

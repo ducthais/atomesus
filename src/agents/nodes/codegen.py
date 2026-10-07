@@ -150,6 +150,16 @@ def _user_message(state: AgentState, deps: AgentDeps, snapshot: dict) -> str:
             "nguồn_được_phép": {ref: decl.kind for ref, decl in domain.sources.items()},
         },
     }
+    if state.get("regression"):  # run sửa của Day 2: viết lại Spec đang chạy, không viết từ đầu
+        message["sửa_suy_giảm"] = {
+            "yêu_cầu": (
+                "Pipeline đang chạy theo `spec_đang_chạy` bị suy giảm như `bằng_chứng`. Trả về Spec đầy đủ đã sửa: giữ "
+                "nguyên ý nghĩa đầu ra (cùng model_name, grain, chỉ số, bộ lọc, nguồn), chỉ đổi phần làm pipeline "
+                "chậm / tốn / sai test, ví dụ nạp tăng dần theo cursor_field, bỏ cột không dùng, sửa kiểu và định dạng."
+            ),
+            "bằng_chứng": state["regression"].get("rules", []),
+            "spec_đang_chạy": state["regression"].get("current_spec"),
+        }
     if state.get("feedback"):
         message["yêu_cầu_sửa"] = (
             "Spec lần trước bị từ chối vì các lỗi trong `lỗi_lần_trước`. Trả về Spec đầy đủ đã sửa TẤT CẢ các lỗi đó, "
