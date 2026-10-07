@@ -31,7 +31,7 @@ Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy
 | `/relationships` Quan hệ | Chọn một nguồn và bấm **Kết nối** (`?source=<ref>`): server kết nối trực tiếp tới nguồn, đọc bảng, khóa chính, khóa ngoại (`pg_constraint`) rồi vẽ sơ đồ ER; đường liền = khóa ngoại N–1, đường đứt = phép join pipeline đã dùng. Có Làm mới / Ngắt. Tab Quan hệ của từng dataset vẫn đọc từ catalog | `GET /catalog/sources`, `GET /catalog/sources/{ref}/objects`, `GET /runs` (`transform.joins`) |
 | `/glossary` | Thuật ngữ theo domain, bảng khai báo, dataset dùng thuật ngữ; cảnh báo trùng tên chưa có trong `conformed_dimensions` | `GET /policy` |
 | `/runs` Hoạt động | Run lọc theo trạng thái, dataset liên quan, chi phí so với trần `budgets.yml` | `GET /runs`, `GET /policy` |
-| `/runs/[id]` | Tổng quan (yêu cầu, Spec, dataset, tài nguyên so với trần), Bằng chứng, Code (Monaco, chỉ đọc), Log; duyệt / từ chối | `GET /runs/{id}`, `GET /runs/{id}/files`, `POST /runs/{id}/approve`, `/reject` |
+| `/runs/[id]` | Sửa/xác nhận kế hoạch; xem Staging (lý do và dòng rác mẫu), bằng chứng, code, log; duyệt / từ chối / yêu cầu sửa; hủy run đang chạy | `GET /runs/{id}`, `GET /runs/{id}/files`, `POST /agent/runs/{id}/confirm-plan`, `POST /runs/{id}/approve`, `/reject`, `/request-changes`, `/cancel` |
 | `/runs/new` | Chọn kết nối khai báo trong `domains.yml`, bấm **Kết nối**: backend kết nối trực tiếp tới nguồn lúc đó và trả các bảng đang có (cột, khóa chính, số dòng). Chọn bảng rồi mô tả yêu cầu. Nguồn chưa có connector (REST, file) hiện khóa. Bắt đầu từ một dataset (`?dataset=`) thì tự kết nối và chọn sẵn bảng nguồn của nó | `GET /catalog/sources`, `GET /catalog/sources/{ref}/objects`, `POST /agent/runs` với `sources: [{source_ref, tables}]` |
 | `/policy` | Nội dung `policy/*.yml`, chỉ đọc | `GET /policy` |
 
@@ -64,6 +64,6 @@ Tab **Hỏi đáp** trên trang run gửi `POST /chat` kèm `run_id` và hiện 
 
 - Thuật ngữ gắn theo cột, mô tả dataset do steward viết: backend chưa lưu.
 - Tạo run mới từ chat (`POST /chat` không có `run_id`): giao diện dùng form Yêu cầu pipeline.
-- Theo dõi tiến độ trực tiếp (SSE), yêu cầu sửa qua review: Sprint 2.
+- Theo dõi tiến độ trực tiếp bằng SSE (giao diện hiện đang polling RunReport).
 
 Monaco tải mã từ CDN; trong lúc tải (hoặc khi mạng chặn CDN) code vẫn hiện dạng văn bản có số dòng.

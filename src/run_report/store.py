@@ -39,13 +39,25 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
 
 
 def save_run_report(path: str, report: RunReport) -> None:
-    """Ghi mới hoặc ghi đè RunReport của `run_id` (version mới, duyệt… đều là cập nhật cùng run)."""
+    """Ghi mới hoặc ghi đè RunReport của `run_id`.
+
+    `CANCELLED` là trạng thái chốt: job nền có thể vừa hoàn tất một phase sau khi API hủy trả về, nhưng không được
+    ghi đè quyết định hủy. Điều kiện nằm ngay trong câu UPSERT để không có khe race giữa đọc và ghi.
+    """
     with _database(path) as conn:
         conn.execute(
             "INSERT INTO run_reports VALUES (?, ?, ?, ?)"
-            " ON CONFLICT(run_id) DO UPDATE SET status = excluded.status, report = excluded.report",
+            " ON CONFLICT(run_id) DO UPDATE SET status = excluded.status, report = excluded.report"
+            " WHERE run_reports.status <> 'CANCELLED' OR excluded.status = 'CANCELLED'",
             (report.run_id, report.status, report.created_at.astimezone(UTC).isoformat(), report.model_dump_json()),
         )
+
+
+def is_run_cancelled(path: str, run_id: str) -> bool:
+    """Đọc cờ hủy nhẹ, dùng giữa các phase và trước mỗi lần gọi LLM."""
+    with _database(path) as conn:
+        row = conn.execute("SELECT status FROM run_reports WHERE run_id = ?", (run_id,)).fetchone()
+    return bool(row and row[0] == "CANCELLED")
 
 
 def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HISTORY_LIMIT) -> list[RunReport]:

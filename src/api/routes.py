@@ -6,6 +6,7 @@ from src.agents.nodes.common import AgentDeps
 from src.agents.resolve import ResolveError
 from src.agents.service import (
     PlanNotAwaitingError,
+    PlanRejectedError,
     SpecRejectedError,
     start_agent,
     start_confirm,
@@ -17,7 +18,7 @@ from src.pipeline.postgres import SourceUnavailableError
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.run_report import RunReport
-from src.run_report.store import get_run_report
+from src.run_report.store import get_run_report, is_run_cancelled
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -45,7 +46,12 @@ def agent_deps(config: PipelineSettings = Depends(settings)) -> AgentDeps:
         policy = load_policy()
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
-    return AgentDeps(llm=openai_llm(), policy=policy, settings=config)
+    return AgentDeps(
+        llm=openai_llm(),
+        policy=policy,
+        settings=config,
+        cancelled=lambda run_id: is_run_cancelled(config.store_path, run_id),
+    )
 
 
 def _checked_sources(body: AgentRunRequest, user: dict, deps: AgentDeps) -> list[dict] | None:
@@ -89,6 +95,7 @@ class ConfirmPlanRequest(BaseModel):
     review_mapping: bool = Field(
         default=False, description="Dừng sau khi có Spec để xem và sửa mapping trước khi chạy thử"
     )
+    plan: dict | None = Field(default=None, description="Kế hoạch Engineer đã chỉnh ngay tại cổng xác nhận")
 
 
 @router.post("/runs/{run_id}/confirm-plan", response_model=RunReport)
@@ -107,9 +114,18 @@ def confirm_run_plan(
     if user["role"] != "Engineer" or report.created_by != user["id"]:
         raise HTTPException(403, "Chỉ Engineer tạo run được xác nhận kế hoạch.")
     try:
-        started, job = start_confirm(report, user["id"], deps, config.store_path, body.review_mapping)
+        started, job = start_confirm(
+            report,
+            user["id"],
+            deps,
+            config.store_path,
+            body.review_mapping,
+            edited_plan=body.plan,
+        )
     except PlanNotAwaitingError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except PlanRejectedError as exc:
+        raise HTTPException(422, "Kế hoạch chưa hợp lệ: " + "; ".join(exc.errors)) from exc
     background.add_task(job)
     return started
 

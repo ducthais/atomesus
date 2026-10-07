@@ -155,6 +155,48 @@ async def test_reject_records_decision_without_deploy(logged_in, generated_run, 
     assert second.status_code == 409
 
 
+@pytest.mark.asyncio
+async def test_reviewer_can_request_changes_and_restart_from_spec(logged_in, generated_run):
+    from src.run_report.router import request_change_deps
+    from src.run_report.store import get_run_report
+    from tests.test_agents.test_graph import PLAN, SPEC, FakeLLM, deps
+
+    llm = FakeLLM(SPEC)
+    store_path = app.dependency_overrides[auth.settings]().store_path
+    save_run_report(store_path, generated_run.model_copy(update={"plan": PLAN}))
+    app.dependency_overrides[request_change_deps] = lambda: deps(llm)
+    try:
+        response = await logged_in.post(
+            f"/api/v1/runs/{READY_RUN_ID}/request-changes",
+            json={
+                "files_hash": generated_run.files_hash,
+                "version": generated_run.version,
+                "feedback": "  Giữ metric, sửa lịch chạy  ",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(request_change_deps, None)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["version"] == generated_run.version + 1
+    assert response.json()["status"] == "GENERATING"
+    revised = get_run_report(store_path, READY_RUN_ID)
+    assert revised.status == "READY_FOR_REVIEW", revised.error_trace
+    assert revised.review_history[-1].decision == "changes_requested"
+    assert revised.review_history[-1].comment == "Giữ metric, sửa lịch chạy"
+    assert llm.calls[0]["user"]["lỗi_lần_trước"] == "Giữ metric, sửa lịch chạy"
+
+
+@pytest.mark.asyncio
+async def test_request_changes_rejects_blank_feedback(logged_in, generated_run):
+    response = await logged_in.post(
+        f"/api/v1/runs/{READY_RUN_ID}/request-changes",
+        json={"files_hash": generated_run.files_hash, "version": generated_run.version, "feedback": "   "},
+    )
+
+    assert response.status_code == 422
+
+
 def test_save_overwrites_same_run_and_survives_reopen(store_path):
     ready = next(r for r in list_run_reports(store_path) if r.run_id == READY_RUN_ID)
     save_run_report(store_path, ready.model_copy(update={"status": "NEEDS_HUMAN"}))
@@ -163,3 +205,32 @@ def test_save_overwrites_same_run_and_survives_reopen(store_path):
     assert len(runs) == 3
     assert [r.status for r in runs if r.run_id == READY_RUN_ID] == ["NEEDS_HUMAN"]
     assert [r.run_id for r in list_run_reports(store_path, "READY_FOR_REVIEW")] == []
+
+
+def test_cancelled_run_cannot_be_overwritten_by_late_background_save(store_path):
+    from src.run_report.store import get_run_report
+
+    ready = next(r for r in list_run_reports(store_path) if r.run_id == READY_RUN_ID)
+    running = ready.model_copy(update={"status": "GENERATING", "approval": None})
+    save_run_report(store_path, running)
+    cancelled = running.model_copy(update={"status": "CANCELLED"})
+    save_run_report(store_path, cancelled)
+    save_run_report(store_path, ready)  # job nền hoàn tất muộn
+
+    assert get_run_report(store_path, READY_RUN_ID).status == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_owner_can_cancel_running_run_but_not_reviewable_run(client, store_path):
+    from src.run_report.store import get_run_report
+
+    ready = get_run_report(store_path, READY_RUN_ID)
+    save_run_report(store_path, ready.model_copy(update={"status": "GENERATING", "approval": None}))
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+
+    response = await client.post(f"/api/v1/runs/{READY_RUN_ID}/cancel")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "CANCELLED"
+    assert response.json()["timeline"][-1]["event"] == "cancelled"
+    assert (await client.post(f"/api/v1/runs/{READY_RUN_ID}/cancel")).status_code == 409

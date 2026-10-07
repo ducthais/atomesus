@@ -236,11 +236,13 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 | Method | Path | Làm gì |
 |---|---|---|
 | POST | `/agent/runs` | Gửi yêu cầu; trả ngay, agent lập kế hoạch ở nền rồi dừng chờ xác nhận (DRAFT, stage `confirm`) |
-| POST | `/agent/runs/{id}/confirm-plan` | Engineer tạo run xác nhận kế hoạch; body `{review_mapping}`: dừng ở bản nháp để xem mapping |
+| POST | `/agent/runs/{id}/confirm-plan` | Engineer sửa (tùy chọn) và xác nhận kế hoạch; body `{review_mapping, plan?}` |
 | POST | `/agent/runs/{id}/continue` | Chạy thử bản nháp với Spec đã xác nhận / sửa |
 | GET | `/runs`, `/runs/{id}` | Sổ bằng chứng |
 | GET | `/runs/{id}/compare` | So với bản đang chạy / bản trước, ảnh hưởng nếu duyệt |
 | POST | `/runs/{id}/approve`, `/runs/{id}/reject` | Reviewer duyệt (ghi project Dagster) hoặc từ chối |
+| POST | `/runs/{id}/request-changes` | Reviewer gửi nhận xét; tăng version và chạy lại từ bước viết Spec |
+| POST | `/runs/{id}/cancel` | Engineer sở hữu hủy run đang chạy; trạng thái hủy không bị job nền ghi đè |
 | GET | `/catalog`, `/catalog/sources/{ref}/objects` | Catalog; kết nối nguồn và đọc bảng, khóa |
 | GET | `/catalog/drift` | Schema nguồn của pipeline đang chạy có đổi không |
 | POST | `/catalog/datasets/{domain}/{model}/reconcile` | Đối chiếu lại bảng gold Dagster với nguồn |

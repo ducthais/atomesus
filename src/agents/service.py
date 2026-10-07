@@ -22,15 +22,15 @@ from langgraph.checkpoint.memory import MemorySaver
 from src.agents.graph import build_graph
 from src.agents.nodes.arbitrate import arbitrate_node
 from src.agents.nodes.budget import budget_node
-from src.agents.nodes.common import RUNNING, AgentDeps
+from src.agents.nodes.common import RUNNING, AgentDeps, CancellationRequestedError
+from src.agents.nodes.planner import validate_plan_edit
 from src.agents.nodes.render import render_node
 from src.agents.nodes.sandbox_run import sandbox_run_node
 from src.agents.state import AgentState
 from src.agents.timeout import timed
 from src.agents.validate import validate_spec
-from src.run_report import Attempts, Check, Cost, GateResult, RunReport, Timing, save_run_report
-from src.run_report.models import LlmCall
-from src.run_report.store import save_run_files
+from src.run_report.models import Approval, Attempts, Check, Cost, GateResult, LlmCall, RunReport, Timing
+from src.run_report.store import get_run_report, is_run_cancelled, save_run_files, save_run_report
 
 log = logging.getLogger(__name__)
 Job = Callable[[], RunReport]
@@ -47,6 +47,22 @@ class SpecRejectedError(Exception):
     def __init__(self, errors: list[str]):
         super().__init__("; ".join(errors))
         self.errors = errors
+
+
+class PlanRejectedError(Exception):
+    """Kế hoạch Engineer sửa không khớp hợp đồng, catalog thật hoặc phạm vi nguồn đã chọn."""
+
+    def __init__(self, errors: list[str]):
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
+class RunCancelledError(Exception):
+    """Tín hiệu nội bộ để job nền dừng mà không đổi trạng thái CANCELLED thành lỗi."""
+
+    def __init__(self, report: RunReport):
+        super().__init__(report.run_id)
+        self.report = report
 
 
 def _report(state: AgentState, created_at: datetime) -> RunReport:
@@ -84,6 +100,7 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
         attempts=Attempts.model_validate(state.get("attempts") or {}),
         llm_calls=state.get("llm_calls", 0),
         error_trace=state.get("error_trace", []),
+        review_history=[Approval.model_validate(item) for item in state.get("review_history", [])],
         timeline=state.get("timeline", []),
     )
 
@@ -135,6 +152,8 @@ def _invoke(
             if progress and state.get("status") in RUNNING:
                 progress(state)
         return state
+    except CancellationRequestedError:
+        raise
     except Exception as exc:  # lỗi ngoài dự kiến vẫn phải để lại dấu vết trong sổ bằng chứng
         return {
             **initial,
@@ -146,20 +165,34 @@ def _invoke(
 def _save(state: AgentState, created_at: datetime, store_path: str) -> RunReport:
     report = _report(state, created_at)
     save_run_report(store_path, report)
+    persisted = get_run_report(store_path, report.run_id)
+    if persisted is not None and persisted.status == "CANCELLED" and report.status != "CANCELLED":
+        return persisted
     if state.get("generated_files"):
         save_run_files(store_path, report.run_id, report.version, state["generated_files"])
     return report
 
 
+def _raise_if_cancelled(store_path: str, run_id: str) -> None:
+    if not is_run_cancelled(store_path, run_id):
+        return
+    report = get_run_report(store_path, run_id)
+    if report is not None:
+        raise RunCancelledError(report)
+
+
 class _Progress:
     """Ghi trạng thái đang chạy vào sổ bằng chứng sau mỗi bước (giao diện đọc lại để hiện tiến độ),
-    và mốc spec_ready lần đầu Spec qua các cổng."""
+    và một mốc spec_ready cho mỗi lượt viết Spec qua các cổng."""
 
     def __init__(self, timeline: list[dict], created_at: datetime, store_path: str):
         self.timeline, self.created_at, self.store_path = list(timeline), created_at, store_path
 
     def __call__(self, state: AgentState) -> None:
-        if state.get("status") == "VALIDATING" and not any(e["event"] == "spec_ready" for e in self.timeline):
+        _raise_if_cancelled(self.store_path, state["run_id"])
+        if state.get("status") == "VALIDATING" and (
+            not self.timeline or self.timeline[-1]["event"] != "spec_ready"
+        ):
             self.timeline.append(_event("spec_ready"))
         save_run_report(self.store_path, _report({**state, "timeline": self.timeline}, self.created_at))
 
@@ -173,8 +206,10 @@ def _run(
     plan_gate: bool = False,
     entry: str = "planner",
 ) -> RunReport:
+    _raise_if_cancelled(store_path, initial["run_id"])
     progress = _Progress(initial.get("timeline", []), created_at, store_path)
     state = _invoke(deps, initial, stop_after_spec=draft, progress=progress, stop_after_plan=plan_gate, entry=entry)
+    _raise_if_cancelled(store_path, initial["run_id"])
     if plan_gate and state.get("status") == "GENERATING":  # kế hoạch xong, chờ Engineer xác nhận (P2)
         timeline = [*progress.timeline, _event("plan_ready")]
         return _save(
@@ -190,8 +225,19 @@ def _guarded(job: Job, state: AgentState, created_at: datetime, store_path: str)
 
     def run() -> RunReport:
         try:
+            _raise_if_cancelled(store_path, state["run_id"])
             return job()
+        except RunCancelledError as cancelled:
+            return cancelled.report
+        except CancellationRequestedError:
+            cancelled = get_run_report(store_path, state["run_id"])
+            if cancelled is not None and cancelled.status == "CANCELLED":
+                return cancelled
+            raise
         except Exception as exc:
+            cancelled = get_run_report(store_path, state["run_id"])
+            if cancelled is not None and cancelled.status == "CANCELLED":
+                return cancelled
             log.exception("Run %s lỗi khi chạy nền", state["run_id"])
             error = {"stage": state.get("stage_reached", "intake"), "error": f"{type(exc).__name__}: {exc}"[:500]}
             return _save({**state, "status": "INTERNAL_ERROR", "error_trace": [error]}, created_at, store_path)
@@ -267,15 +313,25 @@ def awaiting_plan(report: RunReport) -> bool:
 
 
 def confirm_plan(
-    report: RunReport, confirmed_by: str, deps: AgentDeps, store_path: str, review_mapping: bool = False
+    report: RunReport,
+    confirmed_by: str,
+    deps: AgentDeps,
+    store_path: str,
+    review_mapping: bool = False,
+    edited_plan: dict | None = None,
 ) -> RunReport:
     """Bản đồng bộ của `start_confirm` (test)."""
-    _started, job = start_confirm(report, confirmed_by, deps, store_path, review_mapping)
+    _started, job = start_confirm(report, confirmed_by, deps, store_path, review_mapping, edited_plan)
     return job()
 
 
 def start_confirm(
-    report: RunReport, confirmed_by: str, deps: AgentDeps, store_path: str, review_mapping: bool = False
+    report: RunReport,
+    confirmed_by: str,
+    deps: AgentDeps,
+    store_path: str,
+    review_mapping: bool = False,
+    edited_plan: dict | None = None,
 ) -> tuple[RunReport, Job]:
     """Engineer xác nhận kế hoạch: ghi PLAN_CONFIRMED ngay, việc chạy nền viết Spec rồi render và chạy thử.
 
@@ -286,7 +342,15 @@ def start_confirm(
         raise PlanNotAwaitingError(
             f"Run đang ở trạng thái {report.status} ({report.stage_reached}), không chờ xác nhận kế hoạch."
         )
-    timeline = [*(e.model_dump(mode="json") for e in report.timeline), _event("plan_confirmed", confirmed_by)]
+    plan = report.plan
+    timeline = [*(e.model_dump(mode="json") for e in report.timeline)]
+    if edited_plan is not None:
+        plan, errors = validate_plan_edit(edited_plan, deps, report.source_scope)
+        if errors or plan is None:
+            raise PlanRejectedError(errors or ["Kế hoạch trống."])
+        if plan != report.plan:
+            timeline.append(_event("plan_edited", confirmed_by))
+    timeline.append(_event("plan_confirmed", confirmed_by))
     state: AgentState = {
         "run_id": report.run_id,
         "version": report.version,
@@ -296,12 +360,13 @@ def start_confirm(
         "source_scope": report.source_scope,
         "user_request": report.user_request,
         "domain": report.domain,
-        "plan": report.plan,
+        "plan": plan,
         "gates": [gate.model_dump() for gate in report.gates],  # cổng semantic đã chạy trước khi dừng chờ xác nhận
         "attempts": report.attempts.model_dump(),
         "llm_calls": report.llm_calls,
         "llm_usage": [call.model_dump() for call in report.llm_usage],
         "error_trace": [],
+        "review_history": [item.model_dump(mode="json") for item in report.review_history],
         "status": "PLAN_CONFIRMED",
         "stage_reached": "confirm",
         "timeline": timeline,
@@ -366,6 +431,7 @@ def start_continue(
         "llm_calls": draft.llm_calls,
         "llm_usage": [call.model_dump() for call in draft.llm_usage],
         "error_trace": [],
+        "review_history": [item.model_dump(mode="json") for item in draft.review_history],
         "status": "VALIDATING",
         "stage_reached": "static",
         "timeline": [*(e.model_dump(mode="json") for e in draft.timeline), _event("mapping_submitted", edited_by)],
@@ -381,11 +447,79 @@ def start_continue(
             "test_run": sandbox_run_node(deps),
         }
         for node in (timed(deps, name, step) for name, step in steps.items()):
+            _raise_if_cancelled(store_path, draft.run_id)
             if current["status"] not in RUNNING:
                 break
             current = {**current, **node(current)}
+            _raise_if_cancelled(store_path, draft.run_id)
             if current["status"] in RUNNING:
                 save_run_report(store_path, _report(current, draft.created_at))
+        _raise_if_cancelled(store_path, draft.run_id)
         return _save({**current, "timeline": [*current["timeline"], _event("finished")]}, draft.created_at, store_path)
 
     return started, _guarded(job, state, draft.created_at, store_path)
+
+
+def start_request_changes(
+    report: RunReport,
+    feedback: str,
+    reviewer: str,
+    deps: AgentDeps,
+    store_path: str,
+) -> tuple[RunReport, Job]:
+    """Reviewer yêu cầu sửa: tạo version mới của cùng run và chạy lại từ bước viết Spec.
+
+    Kế hoạch, phạm vi nguồn và Spec trước được giữ làm ngữ cảnh. File của version cũ vẫn nằm trong `run_files`;
+    version mới xóa hash/approval hiện tại và đưa nhận xét thẳng vào feedback của codegen.
+    """
+    comment = feedback.strip()
+    if not comment:
+        raise ValueError("Nhận xét yêu cầu sửa không được để trống.")
+    decision = Approval(
+        decision="changes_requested",
+        reviewer=reviewer,
+        files_hash=report.files_hash or "",
+        version=report.version,
+        at=datetime.now(UTC),
+        comment=comment,
+    )
+    timeline = [*(e.model_dump(mode="json") for e in report.timeline), _event("changes_requested", reviewer)]
+    history = [
+        *report.spec_history,
+        {"version": report.version, "reason": f"Reviewer {reviewer} yêu cầu sửa: {comment}"},
+    ]
+    state: AgentState = {
+        "run_id": report.run_id,
+        "version": report.version + 1,
+        "created_by": report.created_by,
+        "trigger": report.trigger,
+        "parent_run_id": report.parent_run_id,
+        "source_scope": report.source_scope,
+        "user_request": report.user_request,
+        "domain": report.domain,
+        "plan": report.plan,
+        "spec": report.spec,
+        "spec_history": history,
+        "feedback": comment,
+        "gates": [gate.model_dump() for gate in report.gates if gate.name == "semantic"],
+        "checks": [],
+        "attempts": {"spec": 0, "sql": 0},
+        "llm_calls": 0,
+        "llm_usage": [],
+        "error_trace": [],
+        "review_history": [
+            *(item.model_dump(mode="json") for item in report.review_history),
+            decision.model_dump(mode="json"),
+        ],
+        "status": "GENERATING",
+        "stage_reached": "propose",
+        "timeline": timeline,
+    }
+    started = _save(state, report.created_at, store_path)
+    job = _guarded(
+        lambda: _run(state, report.created_at, deps, store_path, draft=False, entry="codegen"),
+        state,
+        report.created_at,
+        store_path,
+    )
+    return started, job

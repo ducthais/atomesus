@@ -23,7 +23,8 @@ const agentReport: RunReport = {
   gates: [{ name: 'spec_schema', result: 'pass', detail: 'Spec hợp lệ', observed: {} }, { name: 'post_run', result: 'pass', detail: '3/3 phép kiểm tra đạt', observed: { gold_rows: 30 } }],
   checks: [
     { name: 'row_reconcile', source_id: 'orders', result: 'pass', observed: { source: 30, bronze: 30 } },
-    { name: 'staging_reconcile', source_id: 'orders', result: 'pass', observed: { bronze: 30, staging: 29, rejected: 1, reject_pct: 3.33, max_reject_pct: 5, duplicates: 0 } },
+    { name: 'staging_reconcile', source_id: 'orders', result: 'pass', observed: { bronze: 30, staging: 29, rejected: 1, reject_pct: 3.33, max_reject_pct: 5, duplicates: 0,
+      reject_reasons: { 'reject_if:amount_vnd < 0': 1 }, reject_samples: [{ _reject_reason: 'reject_if:amount_vnd < 0', order_id: 7, amount_vnd: -100 }] } },
     { name: 'dbt_test', source_id: null, result: 'pass', observed: { passed: 5, failed: 0 } },
   ],
   cost: { usd: 0 }, attempts: { spec: 1, sql: 0 }, llm_calls: 3,
@@ -49,6 +50,12 @@ test('agent RunReport maps to Studio run without invented numbers', () => {
   ]);
   assert.equal(run.plan.model, 'fct_daily_orders');
   assert.equal(run.plan.filters, "status <> 'cancelled'");
+  assert.deepEqual(run.staging, [{
+    sourceId: 'orders', state: 'pass', bronze: 30, duplicates: 0, rejected: 1, staging: 29,
+    rejectPct: 3.33, maxRejectPct: 5,
+    reasons: [{ reason: 'reject_if:amount_vnd < 0', count: 1 }],
+    samples: [{ reason: 'reject_if:amount_vnd < 0', values: { order_id: 7, amount_vnd: -100 } }],
+  }]);
   assert.deepEqual(run.logs.map(l => l.level), ['warning', 'success', 'success']);
 });
 

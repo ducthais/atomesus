@@ -32,6 +32,7 @@ class AgentState(TypedDict, total=False):
     cost: dict  # {estimated_bytes, actual_bytes, usd} từ cổng budget (P8)
     duration_sec: float
     error_trace: list[dict]
+    review_history: list[dict]  # quyết định review của các version trước (đặc biệt changes_requested)
     timeline: list[dict]  # mốc thời gian {event, at, actor} để đo công sức (RunReport.timeline)
     stage_reached: str
     status: str

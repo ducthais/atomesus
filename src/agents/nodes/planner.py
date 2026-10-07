@@ -233,6 +233,32 @@ def _narrow(catalog: dict, scope: list[dict] | None) -> tuple[dict, list[str]]:
     return narrowed, missing
 
 
+def validate_plan_edit(raw: dict, deps: AgentDeps, scope: list[dict] | None) -> tuple[dict | None, list[str]]:
+    """Kiểm tra kế hoạch do Engineer sửa bằng cùng hợp đồng và catalog thật như planner.
+
+    Client chỉ là giao diện; nguồn, bảng, cột join và phạm vi đã chọn đều được xác minh lại ở backend.
+    """
+    try:
+        plan = Plan.model_validate(raw)
+    except ValidationError as exc:
+        return None, [str(exc)]
+    try:
+        full = deps.catalog(deps.policy, deps.settings)
+        catalog, missing = _narrow(full, scope)
+    except SourceUnavailableError as exc:
+        return None, [str(exc)]
+    if missing:
+        return None, ["Nguồn hoặc bảng đã chọn không có: " + ", ".join(missing)]
+    plan = _complete_sources(plan, catalog)
+    join_errors, outside = _check_joins(plan, catalog, full)
+    errors = _check_against_catalog(plan, catalog) + join_errors + _check_concepts(plan, catalog)
+    if outside:
+        errors.append("Kế hoạch dùng bảng ngoài phạm vi đã chọn: " + ", ".join(outside))
+    if plan.question:
+        errors.append("Kế hoạch vẫn còn câu hỏi cần làm rõ: " + plan.question)
+    return (plan.model_dump(), []) if not errors else (None, errors)
+
+
 def planner(deps: AgentDeps):
     def node(state: AgentState) -> dict:
         calls, usage = state.get("llm_calls", 0), list(state.get("llm_usage", []))

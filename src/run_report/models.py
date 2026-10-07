@@ -127,7 +127,17 @@ class LlmCall(_Contract):
     usd: float | None = Field(default=None, ge=0)
 
 
-TimelineEventName = Literal["submitted", "plan_ready", "plan_confirmed", "spec_ready", "mapping_submitted", "finished"]
+TimelineEventName = Literal[
+    "submitted",
+    "plan_ready",
+    "plan_edited",
+    "plan_confirmed",
+    "spec_ready",
+    "mapping_submitted",
+    "changes_requested",
+    "cancelled",
+    "finished",
+]
 
 
 class TimelineEvent(_Contract):
@@ -205,6 +215,10 @@ class RunReport(_Contract):
     llm_usage: list[LlmCall] = Field(default_factory=list)
     error_trace: list[dict[str, Any]] = Field(default_factory=list)
     approval: Approval | None = None
+    review_history: list[Approval] = Field(
+        default_factory=list,
+        description="Các quyết định review của version cũ; approval là quyết định của version hiện tại.",
+    )
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
     @model_validator(mode="after")

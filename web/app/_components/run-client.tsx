@@ -5,7 +5,7 @@ import { useActionState, useEffect, useState, useTransition } from 'react';
 import { Check, CircleAlert, Database, FileCode2, Info, LoaderCircle, Lock, LockKeyhole, Plug, RefreshCw, Search, Unplug } from 'lucide-react';
 import { PLATFORM_LABEL } from '@/lib/catalog/query';
 import type { DeclaredSource, SourceObject } from '@/lib/catalog/types';
-import { discoverSource, forgetSource, reviewRun, submitRequest, type ActionState } from '../actions';
+import { discoverSource, forgetSource, requestRunChanges, reviewRun, submitRequest, type ActionState } from '../actions';
 import type { Approval } from '@/lib/postgres-api';
 
 const Editor = dynamic(() => import('@monaco-editor/react').then(m => m.Editor), { ssr: false });
@@ -41,7 +41,8 @@ export function ReviewPanel({ runId, approval, eligible, reason, filesHash, vers
   const [pending, start] = useTransition();
   const hash = filesHash.replace('sha256:', '').slice(0, 12);
   const decide = (decision: 'approve' | 'reject') => start(async () => setState(await reviewRun(runId, decision, filesHash, comment.trim())));
-  if (approval) return <section className="panel review done"><div className="panel-head"><h2>{approval.decision === 'approved' ? 'Đã duyệt' : 'Đã từ chối'} v{approval.version}</h2></div>
+  const requestChanges = () => start(async () => setState(await requestRunChanges(runId, filesHash, version, comment)));
+  if (approval) return <section className="panel review done"><div className="panel-head"><h2>{approval.decision === 'approved' ? 'Đã duyệt' : approval.decision === 'changes_requested' ? 'Đã yêu cầu sửa' : 'Đã từ chối'} v{approval.version}</h2></div>
     <p>bởi <strong>{approval.reviewer}</strong> · files_hash <code>{approval.files_hash.replace('sha256:', '').slice(0, 12)}</code></p>{approval.comment && <blockquote>{approval.comment}</blockquote>}
     {state?.message && <p className="muted small" role="status">{state.message}</p>}</section>;
   return <section className="panel review">
@@ -49,9 +50,9 @@ export function ReviewPanel({ runId, approval, eligible, reason, filesHash, vers
     <p className="muted">{reason}</p>
     {impact.length > 0 && <div className="callout warn small review-impact"><Info size={15} aria-hidden /><div><strong>Ảnh hưởng nếu duyệt</strong><ul>{impact.map(n => <li key={n}>{n}</li>)}</ul>{compareHref && <a href={compareHref}>Xem so sánh chi tiết →</a>}</div></div>}
     {!impact.length && compareHref && <p className="small"><a href={compareHref}>So sánh với phiên bản khác →</a></p>}
-    {eligible && <textarea rows={3} maxLength={500} value={comment} onChange={e => setComment(e.target.value)} placeholder="Ghi chú (không bắt buộc)" aria-label="Ghi chú review" />}
+    {eligible && <textarea rows={3} maxLength={2000} value={comment} onChange={e => setComment(e.target.value)} placeholder="Nhận xét review — bắt buộc khi yêu cầu sửa" aria-label="Ghi chú review" />}
     <div className="form-actions">
-      <button className="button" disabled title="Có ở Sprint 2">Yêu cầu sửa</button>
+      <button className="button" disabled={!eligible || pending || !comment.trim()} onClick={requestChanges}>Yêu cầu sửa</button>
       <button className="button danger" disabled={!eligible || pending} onClick={() => decide('reject')}>Từ chối</button>
       <button className="button primary" disabled={!eligible || pending} onClick={() => decide('approve')}><Check size={15} aria-hidden /> {pending ? 'Đang ghi…' : 'Phê duyệt'}</button>
     </div>

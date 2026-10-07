@@ -92,6 +92,36 @@ export async function reviewRun(runId: string, decision: 'approve' | 'reject', f
   }
 }
 
+/** Reviewer trả run về bước viết Spec, giữ kế hoạch và đưa nhận xét vào feedback của version mới. */
+export async function requestRunChanges(runId: string, filesHash: string, version: number, feedback: string): Promise<ActionState> {
+  const comment = feedback.trim();
+  if (!comment) return { error: 'Nhập nhận xét cần sửa.' };
+  if (MOCK) return { message: 'Mock: đã ghi yêu cầu sửa trên trình duyệt.' };
+  try {
+    await backend<RunReport>(`/runs/${encodeURIComponent(runId)}/request-changes`, {
+      method: 'POST', body: JSON.stringify({ feedback: comment, files_hash: filesHash, version }),
+    });
+    refresh();
+    return { message: 'Đã gửi nhận xét. Agent đang viết lại Spec cho version mới.' };
+  } catch (err) {
+    if (err instanceof BackendError && err.status === 409) refresh();
+    return failure(err);
+  }
+}
+
+/** Engineer hủy run của mình; backend quyết định quyền và trạng thái hợp lệ, không tin điều kiện ẩn/hiện ở UI. */
+export async function cancelRun(runId: string): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: đã hủy run trên trình duyệt.' };
+  try {
+    await backend<RunReport>(`/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+    refresh();
+    return { message: 'Đã hủy run.' };
+  } catch (err) {
+    if (err instanceof BackendError && err.status === 409) refresh();
+    return failure(err);
+  }
+}
+
 /** Làm sạch thủ công một bảng nguồn (POST /pipeline/runs): đổi tên, ép kiểu, tách dòng lỗi trong sandbox. */
 export async function cleanTable(table: string, title: string, columns: ColumnRule[]): Promise<ActionState> {
   if (MOCK) return { message: 'Mock: chưa gọi backend. Bỏ CATALOG_MOCK để gửi POST /pipeline/runs thật.' };
@@ -149,9 +179,9 @@ export async function askRun(runId: string, message: string): Promise<ActionStat
 }
 
 /** Cổng P2: Engineer xác nhận kế hoạch; agent viết Spec rồi chạy thử ở nền (hoặc dừng sau Spec nếu muốn xem mapping). */
-export async function confirmPlan(runId: string, reviewMapping: boolean): Promise<ActionState> {
+export async function confirmPlan(runId: string, reviewMapping: boolean, plan?: unknown): Promise<ActionState> {
   if (MOCK) return { message: 'Mock: chưa gọi backend.' };
-  try { await backend<RunReport>(`/agent/runs/${encodeURIComponent(runId)}/confirm-plan`, { method: 'POST', body: JSON.stringify({ review_mapping: reviewMapping }) }); }
+  try { await backend<RunReport>(`/agent/runs/${encodeURIComponent(runId)}/confirm-plan`, { method: 'POST', body: JSON.stringify({ review_mapping: reviewMapping, ...(plan ? { plan } : {}) }) }); }
   catch (err) {
     if (err instanceof BackendError && err.status === 409) refresh(); // run đã đổi (đã xác nhận ở tab khác): tải lại
     return failure(err);

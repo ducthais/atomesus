@@ -10,6 +10,8 @@ import { PlanConfirm } from '../../_components/plan-confirm';
 import { RunProgress } from '../../_components/run-progress';
 import { RunChat } from '../../_components/run-chat';
 import { EffortPanel } from '../../_components/effort';
+import { StagingEvidenceView } from '../../_components/staging-evidence';
+import { CancelRunButton } from '../../_components/run-controls';
 import { isAgentSpec } from '@/lib/postgres-api';
 import { RunCompareView, impactNotes } from '../../_components/run-compare';
 import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, StatusBadge, Tabs, fmtDate, statusTone } from '../../_components/ui';
@@ -45,6 +47,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   // Cổng P2: DRAFT ở stage `confirm` là kế hoạch chờ xác nhận; DRAFT có Spec là mapping chờ sửa.
   const pendingPlan = run.status === 'DRAFT' && STAGE_IDS[run.stage] === 'confirm' && run.agentPlan ? run.agentPlan : null;
   const draftSpec = run.status === 'DRAFT' && isAgentSpec(run.spec) ? run.spec : null;
+  const staging = run.staging ?? [];
   // Đồng hồ tiến độ tính từ lúc xác nhận kế hoạch, không cộng thời gian chờ người.
   const progressFrom = run.timeline?.findLast(e => e.event === 'plan_confirmed')?.at ?? run.updatedAt;
   const retryHref = `/runs/new?request=${encodeURIComponent(run.request)}&parent=${run.id}${run.retryTables?.length ? `&tables=${encodeURIComponent(run.retryTables.join(','))}` : ''}`;
@@ -52,6 +55,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
     ...(pendingPlan ? [{ id: 'plan', label: 'Kế hoạch' }] : []),
     ...(draftSpec ? [{ id: 'mapping', label: 'Mapping' }] : []),
     ...(result && !draftSpec && !inProgress ? [{ id: 'result', label: 'Kết quả' }] : []),
+    ...(staging.length ? [{ id: 'staging', label: 'Staging', count: staging.reduce((n, source) => n + source.rejected, 0) }] : []),
     { id: 'overview', label: 'Tổng quan' },
     { id: 'chat', label: 'Hỏi đáp' },
     { id: 'evidence', label: 'Bằng chứng', count: run.checks.length },
@@ -69,16 +73,18 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const eligible = canReview(run, user.role, user.id);
   const reviewReason = eligible ? 'Duyệt sẽ ghi đúng bộ file này thành project Dagster local.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
   const blocked = statusTone(run.status) === 'bad';
+  const canCancel = user.role === 'Engineer' && user.id === run.owner && ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'].includes(run.status);
   const limits = policy.limits;
 
   return <>
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/runs">Hoạt động</Link><span>/</span><span className="mono">{shortId(run.id)}</span></nav>
     <PageHeader icon={<GitBranch size={22} />} kicker={<><StatusBadge status={run.status} /><span className="meta-tag">v{run.version}</span><span className="meta-tag">Phase {run.stage + 1}/{STAGES.length} · {STAGES[run.stage]}</span></>} title={run.title}
-      actions={<Link href={retryHref} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link>}>
+      actions={<div className="header-actions">{canCancel && <CancelRunButton runId={run.id} />}<Link href={retryHref} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link></div>}>
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
 
     {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Run dừng ở “{STAGES[run.stage]}”</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
+    {run.status === 'CANCELLED' && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>Run đã được Engineer hủy ở phase “{STAGES[run.stage]}”. Bằng chứng đã ghi trước đó vẫn được giữ lại.</span></div>}
 
     {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={progressFrom} specRetries={run.specRetries} />}
 
@@ -86,6 +92,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
 
     {tab === 'result' && result && <RunResultView result={result} summary={run.summary} request={run.request}
       goldId={cat.datasets.find(d => d.name === result.goldTable && d.domain === run.domain)?.id ?? null} deployed={run.status === 'DEPLOYED'} />}
+
+    {tab === 'staging' && <StagingEvidenceView sources={staging} />}
 
     {tab === 'plan' && pendingPlan && <PlanConfirm runId={run.id} plan={pendingPlan} retryHref={retryHref}
       canConfirm={user.role === 'Engineer' && user.id === run.owner}
@@ -114,6 +122,11 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         </Panel>
       </div>
       <div className="stack">
+        {(run.reviewHistory ?? []).some(item => item.decision === 'changes_requested') && <Panel title="Lịch sử yêu cầu sửa">
+          <ul className="plain">{(run.reviewHistory ?? []).filter(item => item.decision === 'changes_requested').map((item, index) => <li key={`${item.version}-${index}`}>
+            <strong>Version {item.version}</strong> · {cat.personName(item.reviewer)} · {fmtDate(item.at)}<blockquote>{item.comment}</blockquote>
+          </li>)}</ul>
+        </Panel>}
         {(run.status === 'READY_FOR_REVIEW' || run.approval) && <ReviewPanel runId={run.id} approval={run.approval ? { ...run.approval, reviewer: cat.personName(run.approval.reviewer) } : null} eligible={eligible} reason={reviewReason} filesHash={run.filesHash} version={run.version}
           impact={notes} compareHref={comparable ? `/runs/${shortId(run.id)}?tab=compare` : undefined} />}
         <Panel title="Dataset liên quan">{datasets.length ? <ul className="plain">{datasets.map(d => <li key={d.id}><Link href={`/datasets/${d.id}`} className="dataset-link"><LayerBadge layer={d.layer} /><span className="mono">{d.name}</span></Link></li>)}</ul> : <p className="muted">Run dừng trước khi tạo dataset.</p>}</Panel>

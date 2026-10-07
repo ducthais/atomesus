@@ -31,7 +31,8 @@ export type RunRequest = { title: string; table: 'sales_raw.orders'; columns: Co
 /** Bản rút gọn của `RunReport` (src/run_report/models.py) — hợp đồng của sổ bằng chứng. */
 export type RejectedRow = { row: number; reason: string; columns: string[]; values: Record<string, string | null> };
 export type StagingObserved = {
-  bronze: number; staging: number; rejected: number; reject_pct: number; reject_reasons: Record<string, number>;
+  bronze: number; staging: number; duplicates?: number; rejected: number; reject_pct: number; max_reject_pct?: number;
+  reject_reasons: Record<string, number>;
   // Run làm sạch Postgres có output_*; run do agent tạo có mẫu gold ở gate post_run và reject_samples dạng {_reject_reason, ...giá trị thô}.
   reject_samples: (RejectedRow | Record<string, unknown>)[]; output_schema?: { name: string; type: string }[]; output_samples?: Record<string, string | null>[];
 };
@@ -62,9 +63,10 @@ export function isAgentSpec(spec: unknown): spec is AgentSpec {
     && typeof schedule?.cron === 'string';
 }
 export type AgentPlan = {
-  summary?: string; model_name?: string; schedule?: string; question?: string | null;
+  domain?: string; summary?: string; model_name?: string; schedule?: string; question?: string | null;
   sources: { id: string; source_ref: string; object: string; purpose?: string }[]; metrics?: { name: string; definition?: string }[];
   joins?: { left: string; right: string; type: 'left' | 'inner' }[]; grain?: string[]; filters?: string[];
+  concepts?: { term: string; column?: string | null }[];
 };
 export type Approval = { decision: string; reviewer: string; files_hash: string; version: number; at: string; comment: string };
 export type RunReport = {
@@ -85,6 +87,7 @@ export type RunReport = {
   error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string; need_tables?: string[] }[];
   /** Nguồn và bảng người dùng chọn khi tạo run; null = agent chọn trong mọi nguồn. */
   source_scope?: { source_ref: string; tables: string[] }[] | null; approval: Approval | null;
+  review_history?: Approval[];
   timeline?: { event: string; at: string; actor?: string | null }[];
 };
 export function stagingOf(report: RunReport): StagingObserved | null {

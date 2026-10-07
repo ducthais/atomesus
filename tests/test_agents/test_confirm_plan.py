@@ -4,7 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.agents.service import PlanNotAwaitingError, confirm_plan, continue_agent, plan_agent, start_confirm
+from src.agents.service import (
+    PlanNotAwaitingError,
+    confirm_plan,
+    continue_agent,
+    plan_agent,
+    start_confirm,
+    start_request_changes,
+)
 from src.pipeline import auth
 from src.run_report import get_run_report
 from src.run_report.store import abandon_unfinished
@@ -48,6 +55,38 @@ def test_confirm_with_mapping_review_stops_after_spec(tmp_path):
         "mapping_submitted",
         "finished",
     ]
+
+
+def test_engineer_can_edit_plan_before_confirmation(tmp_path):
+    store = str(tmp_path / "runs.sqlite3")
+    agent = deps(FakeLLM(PLAN, SPEC))
+    planned = plan_agent("Doanh thu theo ngày", "minh", agent, store)
+    edited = {**planned.plan, "summary": "Doanh thu đã được Engineer kiểm tra", "schedule": "0 6 * * *"}
+
+    done = confirm_plan(planned, "minh", agent, store, edited_plan=edited)
+
+    assert done.status == "READY_FOR_REVIEW"
+    assert done.plan["summary"] == edited["summary"] and done.plan["schedule"] == "0 6 * * *"
+    assert [event.event for event in done.timeline][1:4] == ["plan_ready", "plan_edited", "plan_confirmed"]
+
+
+def test_request_changes_creates_new_version_and_feeds_comment_to_codegen(tmp_path):
+    store = str(tmp_path / "runs.sqlite3")
+    first_agent = deps(FakeLLM(PLAN, SPEC))
+    ready = confirm_plan(plan_agent("Doanh thu theo ngày", "minh", first_agent, store), "minh", first_agent, store)
+    revised_llm = FakeLLM(SPEC)
+
+    started, job = start_request_changes(ready, "Đổi lịch chạy và giữ nguyên metric đúng", "an", deps(revised_llm), store)
+    revised = job()
+
+    assert started.version == 2 and started.status == "GENERATING" and started.files_hash is None
+    assert revised.version == 2 and revised.status == "READY_FOR_REVIEW" and revised.approval is None
+    assert revised.review_history[-1].decision == "changes_requested"
+    assert revised.review_history[-1].comment == "Đổi lịch chạy và giữ nguyên metric đúng"
+    assert revised_llm.calls[0]["user"]["lỗi_lần_trước"] == "Đổi lịch chạy và giữ nguyên metric đúng"
+    assert revised_llm.calls[0]["user"]["spec_lần_trước"] == ready.spec
+    assert any("Reviewer an yêu cầu sửa" in item.get("reason", "") for item in revised.spec_history)
+    assert [event.event for event in revised.timeline].count("spec_ready") == 2
 
 
 def test_only_a_plan_waiting_for_confirmation_can_be_confirmed(tmp_path):

@@ -30,6 +30,11 @@ class AgentDeps:
     estimate_cost: Callable = budget.estimate
     spent_today: Callable = budget.spent_today
     checkpointer: object = None
+    cancelled: Callable[[str], bool] | None = None
+
+
+class CancellationRequestedError(Exception):
+    """Run đã được Engineer hủy; dừng trước lần gọi LLM hoặc phase kế tiếp."""
 
 
 class StopError(Exception):
@@ -76,6 +81,8 @@ def llm_usage(reply: str, stage: str, tier: str, policy: Policy) -> dict:
 
 def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: str, user: str) -> str:
     """Gọi LLM nếu còn trong trần `budgets.yml: per_run.max_llm_calls`; chạm trần → NEEDS_HUMAN (SPEC §11.4)."""
+    if deps.cancelled and deps.cancelled(state["run_id"]):
+        raise CancellationRequestedError
     limit = deps.policy.budgets.per_run.max_llm_calls
     if state.get("llm_calls", 0) >= limit:
         raise StopError("NEEDS_HUMAN", stage, f"Đã chạm trần {limit} lần gọi LLM của run (budgets.yml max_llm_calls).")

@@ -23,6 +23,11 @@ export type Log = { id: string; stage: number; level: 'info' | 'success' | 'erro
 export type Plan = { sources: string[]; tables: string[]; primaryKey: string; cursor: string; metric: string; schedule: string; writeMode: string; model: string; filters: string };
 export type FileArtifact = { path: string; language: string; content: string };
 export type Asset = { name: string; layer: string; kind: string; rows: string; state: string };
+export type RejectSample = { reason: string; values: Record<string, unknown> };
+export type StagingEvidence = {
+  sourceId: string; state: 'pass' | 'fail'; bronze: number; duplicates: number; rejected: number; staging: number;
+  rejectPct: number; maxRejectPct: number | null; reasons: { reason: string; count: number }[]; samples: RejectSample[];
+};
 export type Run = {
   id: string; title: string; domain: string; owner: string; request: string; version: number;
   filesHash: string; status: Status; stage: number; plan: Plan; summary: string; checks: Check[]; logs: Log[];
@@ -30,6 +35,7 @@ export type Run = {
   /** Tiền gọi LLM (USD), tổng token, và số lần gọi chưa tính được tiền (model chưa có giá trong budgets.yml). */
   llmUsd: number; llmTokens: number; llmUnpriced: number;
   fileCount: number; assets: Asset[]; approval: Approval | null; error: string | null; question: string | null;
+  staging?: StagingEvidence[]; reviewHistory?: Approval[];
   /** Bảng `nguồn.bảng` tích sẵn khi bấm "Sửa & chạy lại": phạm vi đã chọn + bảng kế hoạch cần mà chưa chọn. */
   retryTables?: string[];
   /** Run đang chờ backend trả về (POST /agent/runs chạy đồng bộ ~30 giây), chưa có trong sổ bằng chứng. */
@@ -131,6 +137,31 @@ function toAssets(report: RunReport): Asset[] {
   return assets;
 }
 
+function toStaging(report: RunReport): StagingEvidence[] {
+  return report.checks.filter(check => check.name === 'staging_reconcile').map(check => {
+    const o = check.observed;
+    const rawSamples = Array.isArray(o.reject_samples) ? o.reject_samples as Record<string, unknown>[] : [];
+    const samples = rawSamples.map(sample => {
+      if (sample.values && typeof sample.values === 'object' && !Array.isArray(sample.values)) {
+        return { reason: String(sample.reason ?? 'không rõ'), values: sample.values as Record<string, unknown> };
+      }
+      const { _reject_reason, ...values } = sample;
+      return { reason: String(_reject_reason ?? sample.reason ?? 'không rõ'), values };
+    });
+    const reasons = o.reject_reasons && typeof o.reject_reasons === 'object' && !Array.isArray(o.reject_reasons)
+      ? Object.entries(o.reject_reasons as Record<string, unknown>).map(([reason, count]) => ({ reason, count: Number(count) || 0 }))
+      : [];
+    return {
+      sourceId: check.source_id ?? 'nguồn', state: check.result,
+      bronze: Number(o.bronze) || 0, duplicates: Number(o.duplicates) || 0,
+      rejected: Number(o.rejected) || 0, staging: Number(o.staging) || 0,
+      rejectPct: Number(o.reject_pct) || 0,
+      maxRejectPct: o.max_reject_pct === undefined ? null : Number(o.max_reject_pct),
+      reasons, samples,
+    };
+  });
+}
+
 /** RunReport (sổ bằng chứng) → mô hình hiển thị của Studio. Không thêm số liệu nào không có trong report. */
 export function toStudioRun(report: RunReport): Run {
   const status = (report.status in STATUS_LABEL ? report.status : 'INTERNAL_ERROR') as Status;
@@ -147,6 +178,7 @@ export function toStudioRun(report: RunReport): Run {
     llmTokens: (report.llm_usage ?? []).reduce((n, c) => n + (c.input_tokens ?? 0) + (c.output_tokens ?? 0), 0),
     llmUnpriced: (report.llm_usage ?? []).filter(c => c.usd === null).length,
     fileCount: Object.keys(report.files ?? {}).length, assets: toAssets(report), approval: report.approval,
+    staging: toStaging(report), reviewHistory: report.review_history ?? [],
     error: last ? (last.question ? `Cần làm rõ: ${last.question}` : traceText(last)) : null, question: last?.question ?? null,
     retryTables: [...new Set([...(report.source_scope ?? []).flatMap(s => s.tables.map(t => `${s.source_ref}.${t}`)), ...(last?.need_tables ?? [])])],
   };
