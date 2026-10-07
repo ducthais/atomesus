@@ -49,6 +49,35 @@ def _since_deploy(series: dict, parent: RunReport) -> dict:
     return {**series, "runs": [r for r in series["runs"] if datetime.fromisoformat(r["started_at"]) >= start]}
 
 
+def overview(settings: PipelineSettings, policy: Policy, now: datetime | None = None) -> list[dict]:
+    """Chỉ đọc, cho màn theo dõi: mỗi pipeline đã deploy kèm đường cơ sở, lần chạy gần nhất và các luật đang kích hoạt.
+
+    Cùng cách xét như `check` (chỉ các lần chạy sau lần deploy hiện tại) nhưng không cảnh báo, không tạo run sửa.
+    """
+    now = now or datetime.now(UTC)
+    result = []
+    for model in runs.deployed_models(settings.deploy_dir):
+        series = runs.series(settings.store_path, model)
+        parent = runs.deployed_report(settings.store_path, model)
+        objectives = policy.objectives.get(parent.domain) if parent else None
+        current = _since_deploy(series, parent) if parent else series
+        findings = detectors.detect(current, objectives, now) if objectives else []
+        result.append(
+            {
+                "model": model,
+                "domain": parent.domain if parent else None,
+                "owner": parent.created_by if parent else None,
+                "deployed_run_id": parent.run_id if parent else None,
+                "schedule": ((parent.spec or {}).get("schedule") or {}).get("cron") if parent else None,
+                "baseline": series["baseline"],
+                "runs": len(current["runs"]),
+                "last": current["runs"][-1] if current["runs"] else None,
+                "findings": [finding.evidence() for finding in findings],
+            }
+        )
+    return result
+
+
 def check(settings: PipelineSettings, policy: Policy, launch: Launch, now: datetime | None = None) -> list[dict]:
     """Chạy 4 luật cho mọi pipeline đã deploy. Trả danh sách việc đã làm (cảnh báo, run sửa, bỏ qua vì cooldown)."""
     now = now or datetime.now(UTC)

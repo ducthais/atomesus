@@ -198,3 +198,39 @@ export async function continueRun(runId: string, spec: unknown): Promise<ActionS
   catch (err) { return failure(err); }
   redirect(`/runs/${report.run_id.slice(0, 8)}`);
 }
+
+/** Theo dõi: thu số đo các lần pipeline vừa chạy theo lịch (đọc Dagster, dbt, nguồn). Chỉ đọc. */
+export async function collectRuns(): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: chưa gọi backend.' };
+  try {
+    const result = await backend<{ collected: number }>('/monitor/collect', { method: 'POST' });
+    refresh();
+    return { message: result.collected ? `Đã ghi số đo ${result.collected} lần chạy mới.` : 'Không có lần chạy mới nào để ghi.' };
+  } catch (err) { return failure(err); }
+}
+
+/** Theo dõi: chạy 4 luật suy giảm; luật kích hoạt thì backend tạo run sửa (chạy nền, chờ người duyệt) hoặc cảnh báo. */
+export async function checkPipelines(): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: chưa gọi backend.' };
+  try {
+    const { actions } = await backend<{ actions: { model: string; action: string }[] }>('/monitor/check', { method: 'POST' });
+    refresh();
+    if (!actions.length) return { message: 'Không pipeline nào suy giảm.' };
+    return { message: actions.map(a => `${a.model}: ${ACTION_LABEL[a.action] ?? a.action}`).join(' · ') };
+  } catch (err) { return failure(err); }
+}
+
+const ACTION_LABEL: Record<string, string> = {
+  alert: 'đã cảnh báo', already_alerted: 'đã cảnh báo trước đó', cooldown: 'đã có run sửa gần đây (cooldown)',
+  fix_started: 'đã tạo run sửa, chờ người duyệt',
+};
+
+/** Theo dõi: đánh dấu một cảnh báo đã xử lý. */
+export async function resolveAlert(alertId: number): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: chưa gọi backend.' };
+  try {
+    await backend(`/monitor/alerts/${alertId}/resolve`, { method: 'POST' });
+    refresh();
+    return null;
+  } catch (err) { return failure(err); }
+}

@@ -12,6 +12,7 @@ import { DATASETS, DOMAINS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE } from './
 import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
 import { Catalog } from './query.ts';
 import type { AssetRunStatus, CatalogRun, Comparison, DeclaredSource, Discovery, Drift, Orchestration, Person, Platform } from './types.ts';
+import type { Alert, MonitoredPipeline } from '../monitor.ts';
 
 export const MOCK = process.env.CATALOG_MOCK === '1';
 export const BACKEND = (process.env.PIPELINE_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -220,3 +221,17 @@ export const getDrift = cache(async (): Promise<Drift> => {
     };
   } catch (err) { return { available: false, reason: err instanceof Error ? err.message : 'Không kiểm tra được.' }; }
 });
+
+/** Màn theo dõi (Day 2): pipeline đã deploy kèm luật suy giảm đang kích hoạt, và cảnh báo còn mở. */
+export async function getMonitor(): Promise<{ pipelines: MonitoredPipeline[]; alerts: Alert[] } | { error: string }> {
+  if (MOCK) return { pipelines: [], alerts: [] };
+  try {
+    const [pipelines, alerts] = await Promise.all([
+      backend<MonitoredPipeline[]>('/monitor/pipelines'),
+      backend<Alert[]>('/monitor/alerts'),
+    ]);
+    return { pipelines, alerts };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Không đọc được số đo từ backend.' };
+  }
+}

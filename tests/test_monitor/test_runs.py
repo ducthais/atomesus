@@ -130,10 +130,12 @@ async def test_monitor_api(client, env, monkeypatch):
         collected = (await client.post("/api/v1/monitor/collect")).json()
         assert collected["collected"] == 1
         listing = (await client.get("/api/v1/monitor/pipelines")).json()
-        assert (
-            listing == [{"model": MODEL, "runs": 1, "last": listing[0]["last"]}]
-            and listing[0]["last"]["run_id"] == "r1"
-        )
+        (item,) = listing
+        assert (item["model"], item["runs"], item["last"]["run_id"]) == (MODEL, 1, "r1")
+        assert item["domain"] == "sales" and item["deployed_run_id"] == env.report.run_id
+        assert item["baseline"]["duration_sec"] == 12.5
+        # Lần chạy cuối là 06/10: quá độ tươi 60 phút của sales, luật chỉ đọc nên không tạo run sửa nào.
+        assert [f["rule"] for f in item["findings"]] == ["freshness_breach"]
         assert (await client.get(f"/api/v1/monitor/pipelines/{MODEL}")).json()["baseline"]["duration_sec"] == 12.5
         assert (await client.get("/api/v1/monitor/pipelines/khong_co")).status_code == 404
     finally:

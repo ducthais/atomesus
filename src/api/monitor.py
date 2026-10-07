@@ -24,14 +24,13 @@ def collect_runs(config: PipelineSettings = Depends(settings)) -> dict:
 
 @router.get("/pipelines")
 def list_pipelines(config: PipelineSettings = Depends(settings)) -> list[dict]:
-    """Pipeline đã deploy và lần chạy gần nhất đã ghi."""
-    result = []
-    for model in runs.deployed_models(config.deploy_dir):
-        found = runs.series(config.store_path, model)
-        result.append(
-            {"model": model, "runs": len(found["runs"]), "last": found["runs"][-1] if found["runs"] else None}
-        )
-    return result
+    """Pipeline đã deploy: lần chạy gần nhất kể từ lần deploy hiện tại, đường cơ sở và các luật suy giảm đang kích
+    hoạt (chỉ đọc: không cảnh báo, không tạo run sửa; việc đó là của POST /monitor/check)."""
+    try:
+        policy = load_policy()
+    except PolicyError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return day2.overview(config, policy)
 
 
 @router.get("/pipelines/{model}")

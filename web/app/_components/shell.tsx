@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useActionState, useTransition } from 'react';
-import { Activity, BookOpenText, Compass, Layers3, LogIn, LogOut, Network, Plus, ShieldCheck, Waypoints } from 'lucide-react';
+import { Activity, BookOpenText, Compass, Gauge, Layers3, LogIn, LogOut, Network, Plus, ShieldCheck, Waypoints } from 'lucide-react';
 import { signIn, signOut } from '../actions';
 import type { Person } from '@/lib/catalog/types';
 import { initials } from './ui';
@@ -14,6 +14,7 @@ const NAV = [
   { href: '/relationships', label: 'Quan hệ', icon: Waypoints, match: (p: string) => p.startsWith('/relationships') },
   { href: '/glossary', label: 'Thuật ngữ', icon: BookOpenText, match: (p: string) => p.startsWith('/glossary') },
   { href: '/runs', label: 'Hoạt động', icon: Activity, match: (p: string) => p.startsWith('/runs') && p !== '/runs/new' },
+  { href: '/monitor', label: 'Theo dõi', icon: Gauge, match: (p: string) => p.startsWith('/monitor') },
   { href: '/policy', label: 'Chính sách', icon: ShieldCheck, match: (p: string) => p.startsWith('/policy') },
 ];
 
