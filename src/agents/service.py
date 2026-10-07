@@ -190,9 +190,7 @@ class _Progress:
 
     def __call__(self, state: AgentState) -> None:
         _raise_if_cancelled(self.store_path, state["run_id"])
-        if state.get("status") == "VALIDATING" and (
-            not self.timeline or self.timeline[-1]["event"] != "spec_ready"
-        ):
+        if state.get("status") == "VALIDATING" and (not self.timeline or self.timeline[-1]["event"] != "spec_ready"):
             self.timeline.append(_event("spec_ready"))
         save_run_report(self.store_path, _report({**state, "timeline": self.timeline}, self.created_at))
 
@@ -504,8 +502,10 @@ def start_request_changes(
         "gates": [gate.model_dump() for gate in report.gates if gate.name == "semantic"],
         "checks": [],
         "attempts": {"spec": 0, "sql": 0},
+        # Trần gọi LLM tính lại cho version mới (SPEC §14.5), nhưng tiền đã tiêu của các version trước vẫn thuộc run:
+        # giữ llm_usage để cost.llm_usd và ngân sách ngày không bị tính thiếu khi báo cáo ghi đè theo run_id.
         "llm_calls": 0,
-        "llm_usage": [],
+        "llm_usage": [call.model_dump() for call in report.llm_usage],
         "error_trace": [],
         "review_history": [
             *(item.model_dump(mode="json") for item in report.review_history),

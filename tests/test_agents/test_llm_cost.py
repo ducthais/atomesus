@@ -6,7 +6,7 @@ import pytest
 
 from src.agents.llm import LLMReply
 from src.agents.nodes.common import llm_usage
-from src.agents.service import confirm_plan, plan_agent, run_agent
+from src.agents.service import confirm_plan, plan_agent, run_agent, start_request_changes
 from src.policy.loader import load_policy
 from tests.test_agents.test_graph import PLAN, SPEC, deps
 
@@ -77,3 +77,15 @@ def test_daily_spend_includes_llm(tmp_path):
     run_agent("Doanh thu theo ngày", "minh", deps(PricedLLM()), store)
     spent = budget.spent_today(PipelineSettings(_env_file=None, store_path=store))
     assert spent == pytest.approx(0.003 + 1e-8), "tiền LLM + chi phí quét ước tính của run"
+
+
+def test_request_changes_keeps_the_money_already_spent(tmp_path):
+    # Version mới được đặt lại trần gọi LLM, nhưng tiền LLM của version trước không được mất khỏi báo cáo.
+    store = str(tmp_path / "runs.sqlite3")
+    agent = deps(PricedLLM())
+    ready = confirm_plan(plan_agent("Doanh thu theo ngày", "minh", agent, store), "minh", agent, store)
+    _started, job = start_request_changes(ready, "Đổi lịch chạy", "an", agent, store)
+    revised = job()
+    assert revised.version == 2 and revised.llm_calls == 1, "chỉ đếm lần gọi của version mới"
+    assert [c.stage for c in revised.llm_usage] == ["plan", "propose", "propose"]
+    assert revised.cost.llm_usd == pytest.approx(0.003 + 0.0024)
