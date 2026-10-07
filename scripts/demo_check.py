@@ -17,10 +17,12 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 
 BACKEND, DAGSTER, WEB = "http://127.0.0.1:8000", "http://127.0.0.1:3070", "http://localhost:3000"
+MOCK_API = "http://127.0.0.1:8100"
 START = {
     "postgres": "docker compose --env-file .env -p p045-b -f infra/postgres/compose.yml up -d --wait",
     "backend": r".venv\Scripts\uvicorn.exe src.main:app --port 8000",
     "dagster": r".venv\Scripts\python.exe scripts\dagster_local.py",
+    "mock_api": "make mock-api",
     "web": "cd web && npm run dev",
 }
 # Run mà kịch bản dùng: (8 ký tự đầu, trạng thái cần có, vai trò trong demo)
@@ -29,6 +31,8 @@ DEMO_RUNS = [
     ("ce884a4f", "READY_FOR_REVIEW", "run dự phòng để Reviewer duyệt (Sales, doanh thu theo khách hàng)"),
     ("bc434ba6", "READY_FOR_REVIEW", "ví dụ AI hiểu chưa đúng ý → hệ thống cảnh báo (Pagila)"),
     ("c4b8f0d3", "BLOCKED_SEMANTIC_CONFLICT", "ví dụ bị chặn ở cổng ngữ nghĩa"),
+    ("0dbc25b0", "READY_FOR_REVIEW", "3 nguồn Postgres + API + CSV, kế hoạch đã sửa, Reviewer đã yêu cầu sửa (v2)"),
+    ("a1cb5645", "CANCELLED", "run bị Engineer hủy ở bước xác nhận kế hoạch"),
 ]
 failures = 0
 
@@ -64,6 +68,12 @@ def main() -> int:
         return 1
     dagster = get(f"{DAGSTER}/server_info")
     check(bool(dagster and dagster.status_code == 200), "Dagster :3070", START["dagster"])
+    mock = get(f"{MOCK_API}/sales/openapi.json")
+    check(
+        bool(mock and mock.status_code == 200),
+        "Mock REST API :8100 (nguồn sales_api, marketing_api)",
+        START["mock_api"],
+    )
     web = get(WEB)
     check(bool(web and web.status_code == 200), "Frontend :3000", START["web"])
     check(
@@ -88,7 +98,9 @@ def main() -> int:
             check(False, f"Kết nối {ref}", found.text[:200])
             continue
         objects, fks = found.json()["objects"], found.json()["foreign_keys"]
-        fix = "python scripts/load_pagila.py (nạp bộ Pagila kèm trong repo)" if ref == "pagila_pg" else START["postgres"]
+        fix = (
+            "python scripts/load_pagila.py (nạp bộ Pagila kèm trong repo)" if ref == "pagila_pg" else START["postgres"]
+        )
         check(len(objects) > 0, f"Kết nối {ref} ({schema}): {len(objects)} bảng, {len(fks)} khóa ngoại", fix)
 
     print("\n== Run dùng trong kịch bản ==")
@@ -100,6 +112,14 @@ def main() -> int:
             f"{short} {status}: {role}",
             f"hiện là {run['status'] if run else 'không có'}; chọn run khác cùng loại trong trang Hoạt động",
         )
+
+    monitored = session.get("/monitor/pipelines")
+    count = len(monitored.json()) if monitored.status_code == 200 else 0
+    check(
+        count > 0,
+        f"Màn Theo dõi có {count} pipeline đang chạy",
+        "Duyệt ít nhất một run rồi bấm Thu thập ở trang Theo dõi",
+    )
 
     print("\n== Dagster ==")
     if dagster and dagster.status_code == 200:

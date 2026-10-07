@@ -1,4 +1,4 @@
-# Kịch bản demo Atomesus (khoảng 15 phút)
+# Kịch bản demo MVP Atomesus (khoảng 20 phút)
 
 **Thông điệp chính:** người làm dữ liệu mô tả nhu cầu bằng lời, agent sinh pipeline ELT thật (dlt → dbt → Dagster) trên dữ liệu thật, kèm bằng chứng đo được; con người duyệt rồi mới chạy định kỳ. Mọi thứ được tổ chức theo nguyên tắc data catalog: dataset là trung tâm, pipeline là hoạt động trên dataset.
 
@@ -8,10 +8,11 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
 
 ## Chuẩn bị (30 phút trước)
 
-1. Mở **Docker Desktop**, rồi 4 terminal tại `D:\Repo\P-045`:
+1. Mở **Docker Desktop**, rồi 5 terminal tại `D:\Repo\P-045`:
    ```bash
    docker compose --env-file .env -p p045-b -f infra/postgres/compose.yml up -d --wait
    .venv\Scripts\uvicorn.exe src.main:app --port 8000
+   .venv\Scripts\uvicorn.exe infra.mock_api.app:app --port 8100    # nguồn REST API (sales_api, marketing_api)
    .venv\Scripts\python.exe scripts\dagster_local.py
    cd web && npm run dev
    ```
@@ -72,6 +73,24 @@ Các run và con số trong kịch bản là dữ liệu thật trong hệ thố
 | Trang tự chuyển sang tab **Kết quả** | Diễn giải bằng lời: đọc bảng nào, làm sạch gì, mỗi dòng kết quả là gì; bên dưới là **dữ liệu kết quả thật**. |
 
 **Nếu bước này lỗi hoặc quá lâu:** nói "LLM bên ngoài đôi khi chậm" rồi mở run có sẵn **`ce884a4f`** (cùng yêu cầu, đã chạy xong) từ trang **Hoạt động**.
+
+---
+
+## 4b. Ba loại nguồn trong một pipeline, sửa kế hoạch trước khi chạy (3 phút)
+
+Postgres, REST API và file CSV được ghép trong cùng một pipeline. Engineer sửa kế hoạch ngay trên thẻ xác nhận.
+
+| Thao tác | Nói / chỉ vào |
+|---|---|
+| **Yêu cầu pipeline** → tích `sales_pg` (**orders**, **customers**), `sales_api` (**payments**), `landing_sales` (**refunds**) | Ba loại nguồn: Postgres đọc trực tiếp, API đọc theo OpenAPI, CSV đọc từ thư mục landing. |
+| Nhập: **"Theo từng khách hàng: tổng tiền đơn hàng, tổng đã thanh toán và tổng đã hoàn"** → bỏ tích xem mapping → **Gửi cho agent** | Kế hoạch có 4 bảng và 3 phép ghép: payments và refunds ghép LEFT theo `order_id`. |
+| Trên thẻ kế hoạch: **Gộp theo** thêm `customers.customer_name`, đổi **Bảng kết quả** thành `fct_customer_money_flow`, rồi **Xác nhận kế hoạch** | Engineer sửa trực tiếp; hệ thống kiểm lại kế hoạch đã sửa bằng chính các luật của planner. Sổ bằng chứng ghi sự kiện "Engineer sửa kế hoạch" riêng. |
+| Khoảng 1 phút sau → tab **Bằng chứng** | **18/18 kiểm tra đạt**: số dòng và tập khóa nguồn ↔ bronze cho cả 4 bảng, nạp lần hai không đổi dữ liệu, dbt test, và **đối chiếu độc lập**. Với API và CSV, dữ liệu nguồn được đưa thẳng vào câu SQL đối chiếu. |
+| Tab **Tổng quan** → ô **Gọi LLM** | Tiền LLM thật của run (khoảng $0,006), tính theo bảng giá trong `policy/budgets.yml`. |
+
+Run mẫu đã chạy sẵn: **`0dbc25b0`**. Nếu gửi lịch `0 3 * * *` trên thẻ, P5 sẽ đổi sang hằng giờ vì SLA độ tươi của domain Sales; lần đổi đó được ghi trong lịch sử Spec.
+
+**Hủy run:** ở một run đang chờ xác nhận (ví dụ **`a1cb5645`**), bấm **Hủy run**. Bằng chứng đã có vẫn giữ nguyên, và run không xác nhận được nữa.
 
 ---
 
@@ -166,14 +185,47 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 
 **Lưu ý:** trong 1–2 phút Dagster khởi động lại, UI Dagster tạm không vào được, đó là bình thường. Đừng bấm Phê duyệt khi đang có run Dagster chạy dở.
 
+### Yêu cầu sửa và duyệt nhiều run (2 phút)
+
+| Thao tác | Nói / chỉ vào |
+|---|---|
+| (Reviewer) mở run **`0dbc25b0`** → tab **Tổng quan** | Run này đã ở **v2**: Reviewer từng bấm **Yêu cầu sửa** kèm nhận xét; agent viết lại Spec từ nhận xét đó, chạy thử lại, và bản v1 vẫn nằm trong sổ bằng chứng. Tiền LLM của v1 vẫn được tính vào run. |
+| Trang **Hoạt động** → **Duyệt nhiều run** | Mọi run đang chờ duyệt, kèm số kiểm tra đạt và chi phí. Chỉ tích được run của người khác **và** đã đạt mọi kiểm tra; run không chọn được ghi rõ lý do. |
+| Tích 2 run → **Duyệt** (hoặc nhập ghi chú → **Từ chối**) | Mỗi run vẫn được backend kiểm lại đúng bộ file (`files_hash`) như khi duyệt từng run; kết quả hiện riêng cho từng run. |
+
+**Tránh khi demo:** nhận xét "Yêu cầu sửa" kiểu **thêm chỉ số mới** (ví dụ "thêm số đơn hàng"). Hiện agent giữ đúng kế hoạch cũ nên bản mới chưa có chỉ số đó (đã thử với `0dbc25b0`). Nên dùng nhận xét sửa trong phạm vi kế hoạch, ví dụ đổi tên cột.
+
+---
+
+## 7b. Theo dõi pipeline đang chạy · Day 2 (2 phút)
+
+| Thao tác | Nói / chỉ vào |
+|---|---|
+| Menu **Theo dõi** | Mọi pipeline đã deploy: lần chạy gần nhất trên Dagster, thời gian so với mốc của chính nó, số dòng gold, test fail, số bản ghi mới ở nguồn. |
+| Bấm **Thu số đo** | Đọc các lần chạy theo lịch vừa xong từ Dagster, dbt và nguồn. Chỉ đọc, không thay đổi gì. |
+| (Engineer) bấm **Kiểm tra suy giảm** | Chạy các luật phát hiện: pipeline chậm hơn mốc, test fail, nguồn ngừng cấp dữ liệu. Mỗi cảnh báo kèm bằng chứng và gửi tới owner của domain. |
+| Cảnh báo → **Đã xử lý** | Đóng cảnh báo khi đã xem. |
+
+---
+
+## Đo chất lượng agent: số đã chạy thật (1 phút)
+
+| Thao tác | Nói / chỉ vào |
+|---|---|
+| Mở `eval/results/golden_latest.md` | 6 ca có kết quả đúng tính tay từ dữ liệu seed (`eval/golden/`). `python eval/run_eval.py` chạy thật từng ca bằng LLM thật, rồi so bảng gold với kết quả đúng **từng dòng**. Tên cột do LLM đặt nên ghép cột theo giá trị. |
+| Đọc số | **Khớp 5/6 ca**, khớp ngay lần viết Spec đầu 4/6. Theo loại nguồn: Postgres 1/1, API 1/1, CSV 1/1, đa nguồn 2/3. Tiền LLM cả lượt khoảng $0,016. |
+| Ca không đạt | Postgres + CSV: agent đặt khóa `customers.customer_id` (có tên bảng), cổng Spec chặn, sau 2 lần sửa vẫn sai nên dừng ở **Cần kỹ sư**. Run sai dừng lại chứ không tới tay Reviewer. |
+
+**Luôn nói kèm mẫu số:** 6 ca là ít. Ca vi phạm chính sách và ca yêu cầu mơ hồ (`eval/cases/`) đang được viết thêm.
+
 ---
 
 ## 8. Kết (1 phút)
 
 **Nói:**
-- Đã có: catalog trên dữ liệu thật, kết nối nguồn theo yêu cầu, agent sinh pipeline kèm sổ bằng chứng (mọi phép đo của lần chạy thử), người duyệt, Dagster chạy định kỳ và theo dõi.
-- Điểm khác biệt: kết quả được tính lại bằng một đường độc lập trên nguồn và so từng dòng, nên lỗi thực thi bị chặn trước khi duyệt; hệ thống đã bắt được lỗi thật mà test không thấy. Spec có đúng nhu cầu hay không vẫn do Engineer xác nhận và Reviewer duyệt.
-- Tiếp theo: backfill theo partition, connector MongoDB, đối chiếu định kỳ sau mỗi lần Dagster chạy, deploy production qua pull request.
+- Đã có: catalog trên dữ liệu thật; nguồn Postgres, REST API và CSV; agent sinh pipeline kèm sổ bằng chứng (mọi phép đo của lần chạy thử); Engineer xác nhận và sửa kế hoạch; Reviewer duyệt, từ chối hoặc yêu cầu sửa, từng run hoặc nhiều run; Dagster chạy định kỳ; màn theo dõi phát hiện suy giảm.
+- Điểm khác biệt: kết quả được tính lại bằng một đường độc lập trên nguồn và so từng dòng, nên lỗi thực thi bị chặn trước khi duyệt; hệ thống đã bắt được lỗi thật mà test không thấy. Chất lượng agent đo bằng ca có kết quả đúng (hiện 5/6). Spec có đúng nhu cầu hay không vẫn do Engineer xác nhận và Reviewer duyệt.
+- Tiếp theo: nút Tối ưu, ca eval vi phạm / mơ hồ, deploy production qua pull request (hiện duyệt xong ghi thẳng ra Dagster local), backfill theo partition, connector MongoDB.
 
 ---
 
@@ -187,6 +239,8 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 | AI hiểu sai thì sao? | Cảnh báo dễ hiểu ở tab Kết quả, Reviewer bắt lỗi trước khi duyệt; sửa và chạy lại tạo run mới, lịch sử giữ nguyên. |
 | Bảo mật? | Tài khoản Postgres chỉ đọc, mọi giao dịch read-only; credential ở server; agent không chạm production. |
 | Vì sao dlt, dbt, Dagster? | Công cụ mã nguồn mở phổ biến; code sinh ra đọc được và chạy được ngoài hệ thống. |
+| Agent đúng được bao nhiêu? | Trên 6 ca có kết quả đúng tính tay: khớp từng dòng 5/6 (đa nguồn 2/3). Số đo bằng `eval/run_eval.py`, chạy lại được. Ca sai bị cổng chặn ở **Cần kỹ sư**, không tới Reviewer. |
+| Chi phí mỗi pipeline? | Mỗi run ghi tiền LLM thật (thường dưới $0,01) và chi phí quét dữ liệu ước tính; trần chi phí và số lần gọi LLM đọc từ `policy/budgets.yml`. |
 | Dữ liệu lớn thì sao? | Sandbox giới hạn thời gian mỗi phase (300 giây); production dự kiến dùng BigQuery thay DuckDB. |
 
 ---
@@ -196,6 +250,7 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 | Hiện tượng | Xử lý |
 |---|---|
 | Trang báo "Jest worker encountered…" | Tắt terminal `npm run dev` rồi chạy lại. |
+| Run có nguồn `sales_api` lỗi `INFRA_ERROR` | Mock API chưa chạy: `.venv\Scripts\uvicorn.exe infra.mock_api.app:app --port 8100`. |
 | Bấm Kết nối báo lỗi | Kiểm tra Docker Desktop / container Postgres; chạy lại `demo_check.py`. |
 | Kết nối `pagila_pg` báo "Schema 'pagila' chưa có" | Postgres tạo từ volume cũ: chạy `python scripts/load_pagila.py` rồi Kết nối lại. |
 | Tạo pipeline lỗi `INFRA_ERROR` | Hết hạn hoặc thiếu `OPENAI_API_KEY`, hoặc mạng; dùng run dự phòng `ce884a4f`. |
