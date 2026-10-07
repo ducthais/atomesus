@@ -154,7 +154,10 @@ def test_invalid_spec_goes_back_to_codegen_with_specific_error():
     assert state["attempts"]["spec"] == 1 and state["llm_calls"] == 3
     feedback = llm.calls[2]["user"]["lỗi_lần_trước"]
     assert any("cột 'amount' không có ở nguồn" in error for error in feedback)
-    assert [h["errors"] == [] for h in state["spec_history"]] == [False, True]
+    attempts = [
+        h for h in state["spec_history"] if "attempt" in h
+    ]  # bỏ mục P5 đổi lịch chạy (không phải lần viết Spec)
+    assert [h["errors"] == [] for h in attempts] == [False, True]
 
 
 def test_spec_loop_stops_after_policy_limit():

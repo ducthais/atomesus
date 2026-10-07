@@ -23,7 +23,18 @@ def arbitrate_node(deps: AgentDeps):
         if cron is None:
             return StopError("NEEDS_HUMAN", "arbitrate", reason).update(state, **update)
         if cron != spec["schedule"]["cron"]:
-            update["spec"] = {**spec, "schedule": {**spec["schedule"], "cron": cron}}
+            changed = {**spec, "schedule": {**spec["schedule"], "cron": cron}}
+            update["spec"] = changed
+            # Bất biến 5 (SPEC §19): mọi phiên bản Spec đều nằm trong spec_history, kể cả bản P5 đổi lịch chạy.
+            update["spec_history"] = [
+                *state.get("spec_history", []),
+                {
+                    "version": state.get("version", 1),
+                    "reason": f"P5 đổi lịch chạy '{spec['schedule']['cron']}' → '{cron}': {gate.detail}",
+                    "spec": changed,
+                    "errors": [],
+                },
+            ]
         return update
 
     return node

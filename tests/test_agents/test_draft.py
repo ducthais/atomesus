@@ -27,7 +27,8 @@ def test_continue_unchanged_spec_runs_sandbox_on_same_run(tmp_path):
     done = continue_agent(draft, draft.spec, "Minh", deps(FakeLLM()), store)
     assert done.run_id == draft.run_id and done.status == "READY_FOR_REVIEW"
     assert done.llm_calls == draft.llm_calls, "chạy tiếp không gọi thêm LLM"
-    assert "giữ nguyên Spec" in done.spec_history[-1]["reason"]
+    reasons = [item.get("reason", "") for item in done.spec_history]
+    assert any("giữ nguyên Spec" in r for r in reasons) and "P5 đổi lịch" in reasons[-1], "P5 ghi bản đổi lịch sau cùng"
     assert len(get_run_files(store, done.run_id, 1)) == 5
     assert get_run_report(store, done.run_id).status == "READY_FOR_REVIEW"
     # Mốc thời gian để đo công sức: máy chạy và người chỉnh mapping tách bạch.
@@ -46,7 +47,8 @@ def test_continue_with_edited_mapping_records_the_edit(tmp_path):
         "order_id < 0",
     ]
     done = continue_agent(draft, edited, "Minh", deps(FakeLLM()), store)
-    assert done.status == "READY_FOR_REVIEW" and "chỉnh mapping" in done.spec_history[-1]["reason"]
+    assert done.status == "READY_FOR_REVIEW"
+    assert any("chỉnh mapping" in item.get("reason", "") for item in done.spec_history)
     assert "order_id < 0" in done.spec["sources"][0]["staging"]["reject_if"]
 
 
