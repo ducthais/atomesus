@@ -3,9 +3,6 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.agents.llm import openai_llm
-from src.agents.nodes.common import AgentDeps
-from src.agents.service import start_request_changes
 from src.codegen.render import file_hashes
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
@@ -38,12 +35,21 @@ class RequestChangesRequest(BaseModel):
         return value.strip()
 
 
-def request_change_deps(config: PipelineSettings = Depends(settings)) -> AgentDeps:
+def request_change_deps(config: PipelineSettings = Depends(settings)):
+    """Phụ thuộc của agent cho "Yêu cầu sửa".
+
+    Import muộn: src.agents.* import gói src.run_report (models, store), nên import agent ở đầu file này tạo vòng
+    run_report → router → agents → run_report và làm hỏng mọi chỗ import src.run_report trước src.main
+    (scripts/dagster_local.py, src.codegen.sandbox, src.monitor.runs).
+    """
+    from src.agents.llm import openai_llm
+    from src.agents.nodes.common import AgentDeps
+    from src.run_report.store import is_run_cancelled
+
     try:
         policy = load_policy()
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
-    from src.run_report.store import is_run_cancelled
 
     return AgentDeps(
         llm=openai_llm(),
@@ -190,7 +196,7 @@ def request_changes(
     body: RequestChangesRequest,
     background: BackgroundTasks,
     user: dict = Depends(current_user),
-    deps: AgentDeps = Depends(request_change_deps),
+    deps=Depends(request_change_deps),
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
     """Reviewer yêu cầu sửa đúng bản đang xem; version mới chạy lại từ bước viết Spec với feedback."""
@@ -209,6 +215,8 @@ def request_changes(
         raise HTTPException(409, "Bộ file đã thay đổi kể từ lúc bạn xem. Tải lại run rồi review lại.")
     if body.version is not None and body.version != report.version:
         raise HTTPException(409, "Version đã thay đổi kể từ lúc bạn xem. Tải lại run rồi review lại.")
+    from src.agents.service import start_request_changes  # import muộn, xem request_change_deps
+
     started, job = start_request_changes(report, body.feedback, user["id"], deps, config.store_path)
     background.add_task(job)
     return started
