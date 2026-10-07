@@ -8,6 +8,9 @@ Nguồn số liệu, đọc độc lập với dlt / DuckDB / dbt / agent:
 Luật làm sạch giống staging: bản ghi trùng khóa giữ bản đầu, số tiền không đọc được thì bỏ dòng, tiền đổi về VND theo
 policy/domains.yml. Ghép một-nhiều cộng theo từng bảng trước rồi mới ghép (không cộng trùng).
 
+`key` là các cột khóa thay thế nhau: bảng gold khớp **một** trong số đó là đủ (gộp theo khách hàng thì nhận cả
+`customer_id` lẫn `customer_name`, vì cả hai đều đúng ý yêu cầu "theo từng khách hàng").
+
 Chạy: python eval/golden/build.py  → ghi eval/golden/<id>.json. tests/test_eval/test_golden.py kiểm tra file đã ghi
 khớp với lần sinh lại và khớp các con số đã kiểm bằng pipeline thật.
 """
@@ -164,9 +167,9 @@ def build() -> list[dict]:
     cases.append(_case(
         "valid_postgres_rest_api_by_customer", ["postgres", "rest_api"],
         "Với từng khách hàng: số đơn hàng, tổng tiền đơn hàng và tổng tiền đã thanh toán", [SALES_PG, SALES_API],
-        ["customer_id"],
+        ["customer_id", "customer_name"],
         {"order_count": "số đơn", "order_total": "tổng tiền đơn (VND)", "paid": "tổng đã thanh toán (VND)"},
-        [{"key": {"customer_id": c}, "values": {"order_count": order_count[c], "order_total": _money(order_total[c]),
+        [{"key": {"customer_id": c, "customer_name": f"Demo customer {c}"}, "values": {"order_count": order_count[c], "order_total": _money(order_total[c]),
                                                 "paid": _money(paid_by_customer.get(c, zero))}} for c in customers],
         "Ghép một-nhiều đơn → thanh toán: tổng tiền đơn không được cộng trùng theo số khoản thanh toán.",
     ))  # fmt: skip
@@ -174,8 +177,8 @@ def build() -> list[dict]:
     cases.append(_case(
         "valid_postgres_filesystem_by_customer", ["postgres", "filesystem"],
         "Theo từng khách hàng: tổng tiền đơn hàng và tổng tiền đã hoàn", [SALES_PG, LANDING],
-        ["customer_id"], {"order_total": "tổng tiền đơn (VND)", "refunded": "tổng đã hoàn (VND)"},
-        [{"key": {"customer_id": c}, "values": {"order_total": _money(order_total[c]),
+        ["customer_id", "customer_name"], {"order_total": "tổng tiền đơn (VND)", "refunded": "tổng đã hoàn (VND)"},
+        [{"key": {"customer_id": c, "customer_name": f"Demo customer {c}"}, "values": {"order_total": _money(order_total[c]),
                                                 "refunded": _money(refunded_by_customer.get(c, zero))}}
          for c in customers],
         "Khách 1, 3, 6 không có khoản hoàn nào: refunded = 0 (LEFT JOIN, COALESCE) hoặc NULL đều chấp nhận.",
@@ -184,9 +187,9 @@ def build() -> list[dict]:
     cases.append(_case(
         "valid_three_sources_by_customer", ["postgres", "rest_api", "filesystem"],
         "Theo từng khách hàng: tổng tiền đơn hàng, tổng đã thanh toán và tổng đã hoàn", [SALES_PG, SALES_API, LANDING],
-        ["customer_id"],
+        ["customer_id", "customer_name"],
         {"order_total": "tổng tiền đơn (VND)", "paid": "tổng đã thanh toán (VND)", "refunded": "tổng đã hoàn (VND)"},
-        [{"key": {"customer_id": c}, "values": {"order_total": _money(order_total[c]),
+        [{"key": {"customer_id": c, "customer_name": f"Demo customer {c}"}, "values": {"order_total": _money(order_total[c]),
                                                 "paid": _money(paid_by_customer.get(c, zero)),
                                                 "refunded": _money(refunded_by_customer.get(c, zero))}}
          for c in customers],

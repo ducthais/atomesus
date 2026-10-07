@@ -26,7 +26,7 @@ def test_one_case_per_single_source_kind_and_three_multi_source():
 
 
 def _row(case_id, **key):
-    return next(r["values"] for r in CASES[case_id]["rows"] if r["key"] == key)
+    return next(r["values"] for r in CASES[case_id]["rows"] if key.items() <= r["key"].items())
 
 
 def test_numbers_match_the_real_pipeline_runs():

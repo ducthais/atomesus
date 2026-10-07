@@ -21,7 +21,8 @@
     }
   ],
   "key": [
-    "customer_id"
+    "customer_id",
+    "customer_name"
   ],
   "measures": {
     "order_total": "tổng tiền đơn (VND)",
@@ -30,7 +31,8 @@
   "rows": [
     {
       "key": {
-        "customer_id": 1
+        "customer_id": 1,
+        "customer_name": "Demo customer 1"
       },
       "values": {
         "order_total": "33000.00",
@@ -39,7 +41,8 @@
     },
     {
       "key": {
-        "customer_id": 2
+        "customer_id": 2,
+        "customer_name": "Demo customer 2"
       },
       "values": {
         "order_total": "36000.00",
@@ -48,7 +51,8 @@
     },
     {
       "key": {
-        "customer_id": 3
+        "customer_id": 3,
+        "customer_name": "Demo customer 3"
       },
       "values": {
         "order_total": "39000.00",
@@ -57,7 +61,8 @@
     },
     {
       "key": {
-        "customer_id": 4
+        "customer_id": 4,
+        "customer_name": "Demo customer 4"
       },
       "values": {
         "order_total": "42000.00",
@@ -66,7 +71,8 @@
     },
     {
       "key": {
-        "customer_id": 5
+        "customer_id": 5,
+        "customer_name": "Demo customer 5"
       },
       "values": {
         "order_total": "45000.00",
@@ -75,7 +81,8 @@
     },
     {
       "key": {
-        "customer_id": 6
+        "customer_id": 6,
+        "customer_name": "Demo customer 6"
       },
       "values": {
         "order_total": "48000.00",
@@ -84,7 +91,8 @@
     },
     {
       "key": {
-        "customer_id": 7
+        "customer_id": 7,
+        "customer_name": "Demo customer 7"
       },
       "values": {
         "order_total": "51000.00",
@@ -93,7 +101,8 @@
     },
     {
       "key": {
-        "customer_id": 8
+        "customer_id": 8,
+        "customer_name": "Demo customer 8"
       },
       "values": {
         "order_total": "54000.00",
@@ -102,7 +111,8 @@
     },
     {
       "key": {
-        "customer_id": 9
+        "customer_id": 9,
+        "customer_name": "Demo customer 9"
       },
       "values": {
         "order_total": "57000.00",
@@ -111,7 +121,8 @@
     },
     {
       "key": {
-        "customer_id": 10
+        "customer_id": 10,
+        "customer_name": "Demo customer 10"
       },
       "values": {
         "order_total": "60000.00",

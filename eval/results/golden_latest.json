@@ -1,0 +1,159 @@
+{
+  "at": "2026-10-07 16:41 UTC",
+  "summary": {
+    "matched": "5/6",
+    "first_try": "4/6",
+    "by_kind": {
+      "filesystem": "1/1",
+      "postgres": "1/1",
+      "rest_api": "1/1",
+      "đa nguồn": "2/3"
+    },
+    "llm_usd": 0.015836
+  },
+  "results": [
+    {
+      "id": "valid_filesystem_refunds_by_order",
+      "source_kinds": [
+        "filesystem"
+      ],
+      "run_id": "12c0e5cc-7a3b-4ec9-b519-00805c7aaea4",
+      "status": "READY_FOR_REVIEW",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "order_id",
+          "gold": "order_id"
+        },
+        "measures": {
+          "refunded": "total_refund_amount",
+          "refund_count": "refund_count"
+        }
+      },
+      "problems": [],
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00113565,
+      "seconds": 22.1
+    },
+    {
+      "id": "valid_postgres_daily_revenue",
+      "source_kinds": [
+        "postgres"
+      ],
+      "run_id": "b73d5ab4-ae86-4363-8bef-994e589144e9",
+      "status": "READY_FOR_REVIEW",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "day",
+          "gold": "order_date"
+        },
+        "measures": {
+          "revenue": "total_revenue"
+        }
+      },
+      "problems": [],
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.0011301,
+      "seconds": 21.6
+    },
+    {
+      "id": "valid_postgres_filesystem_by_customer",
+      "source_kinds": [
+        "postgres",
+        "filesystem"
+      ],
+      "run_id": "9f71e72c-6737-41f6-8c77-272536502546",
+      "status": "NEEDS_HUMAN",
+      "matched": false,
+      "mapping": null,
+      "problems": [
+        "run dừng ở NEEDS_HUMAN (static)",
+        "Spec vẫn sai sau 2 lần sửa (budgets.yml max_spec_attempts): <gốc>: Value error, unique_key/partition_by/tests dùng cột không có ở gold: ['customers.customer_id']"
+      ],
+      "spec_attempts": 3,
+      "llm_calls": 4,
+      "llm_usd": 0.00451275,
+      "seconds": 36.1
+    },
+    {
+      "id": "valid_postgres_rest_api_by_customer",
+      "source_kinds": [
+        "postgres",
+        "rest_api"
+      ],
+      "run_id": "1bdbbfa4-f6b1-4cce-a8e0-3317ac0677fd",
+      "status": "READY_FOR_REVIEW",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "customer_id",
+          "gold": "customer_id"
+        },
+        "measures": {
+          "order_count": "number_of_orders",
+          "order_total": "total_order_amount",
+          "paid": "total_payment_amount"
+        }
+      },
+      "problems": [],
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00185025,
+      "seconds": 34.3
+    },
+    {
+      "id": "valid_rest_api_paid_by_order",
+      "source_kinds": [
+        "rest_api"
+      ],
+      "run_id": "d639ba32-b931-420d-878e-36e33a735ea7",
+      "status": "READY_FOR_REVIEW",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "order_id",
+          "gold": "order_id"
+        },
+        "measures": {
+          "paid": "total_amount",
+          "payment_count": "payment_count"
+        }
+      },
+      "problems": [],
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00115635,
+      "seconds": 27.1
+    },
+    {
+      "id": "valid_three_sources_by_customer",
+      "source_kinds": [
+        "postgres",
+        "rest_api",
+        "filesystem"
+      ],
+      "run_id": "1358b21b-bb94-4445-9847-b565c8fcb21e",
+      "status": "READY_FOR_REVIEW",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "customer_id",
+          "gold": "customer_id"
+        },
+        "measures": {
+          "order_total": "total_order_amount",
+          "paid": "total_paid_amount",
+          "refunded": "total_refunded_amount"
+        }
+      },
+      "problems": [],
+      "spec_attempts": 2,
+      "llm_calls": 4,
+      "llm_usd": 0.0060507,
+      "seconds": 67.5
+    }
+  ]
+}
