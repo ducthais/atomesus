@@ -1,6 +1,7 @@
 """Cổng `budget` (P8, SPEC §10, §12): ước tính byte quét trước khi chạy, quy ra USD, chặn khi vượt trần.
 
-Sandbox chạy DuckDB local nên không có `dry_run` thật như BigQuery. Ước tính theo SPEC §12 (DuckDB):
+Đặt `PIPELINE_BIGQUERY_PROJECT` / `_DATASET` thì nguồn postgres dùng `dry_run` thật của BigQuery (src/agents/bigquery.py).
+Mặc định sandbox chạy DuckDB local nên không có `dry_run` thật. Ước tính theo SPEC §12 (DuckDB):
 - nguồn `postgres`: kích thước bảng trên đĩa (`pg_relation_size`, cộng mọi partition con),
 - nguồn `rest_api`: số byte JSON của mọi bản ghi, đọc lần lượt các trang như dlt sẽ đọc,
 - nguồn `filesystem`: tổng dung lượng các file khớp `path_pattern`,
@@ -15,6 +16,7 @@ Trần một run (`per_run.max_usd`) chỉ áp cho chi phí quét dữ liệu, n
 import json
 from datetime import UTC, datetime
 
+from src.agents import bigquery
 from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
@@ -35,10 +37,14 @@ WHERE n.nspname = %s AND c.relname = %s
 """
 
 
-def _source_bytes(spec: Spec, policy: Policy, settings: PipelineSettings) -> dict[str, int]:
+def _source_bytes(
+    spec: Spec, policy: Policy, settings: PipelineSettings, skip: frozenset[str] = frozenset()
+) -> dict[str, int]:
     declared = policy.domains.domains[spec.domain].sources
     sizes = {}
     for source in spec.sources:
+        if source.id in skip:  # đã có byte dry_run thật của BigQuery
+            continue
         decl = declared[source.source_ref]
         if source.kind == "filesystem":
             folder = source.path_pattern.split("/", 1)[0]
@@ -58,13 +64,28 @@ def _source_bytes(spec: Spec, policy: Policy, settings: PipelineSettings) -> dic
     return sizes
 
 
-def estimate(spec: Spec, policy: Policy, settings: PipelineSettings) -> dict:
-    """Ước tính byte và USD của một lần chạy: E-L đọc mọi nguồn, model đọc lại staging (≈ cùng cỡ)."""
-    sources = _source_bytes(spec, policy, settings)
+def estimate(spec: Spec, policy: Policy, settings: PipelineSettings, dry_run: bigquery.DryRun | None = None) -> dict:
+    """Byte và USD của một lần chạy: E-L đọc mọi nguồn, model đọc lại staging (≈ cùng cỡ).
+
+    Đặt `PIPELINE_BIGQUERY_PROJECT` / `_DATASET` thì nguồn postgres lấy byte từ `dry_run` thật của BigQuery
+    (src/agents/bigquery.py); `estimated` chỉ False khi mọi nguồn đều có số thật.
+    """
+    real = bigquery.source_bytes(spec, settings, dry_run) if bigquery.enabled(settings) else {}
+    found = _source_bytes(spec, policy, settings, frozenset(real))
+    sources = {s.id: real[s.id]["bytes"] if s.id in real else found[s.id] for s in spec.sources}
     extract = sum(sources.values())
     total = extract * 2
     usd = total / BYTES_PER_TB * policy.budgets.pricing.usd_per_tb
-    return {"sources": sources, "model_bytes": extract, "bytes": total, "usd": usd, "estimated": True}
+    result = {
+        "sources": sources,
+        "model_bytes": extract,
+        "bytes": total,
+        "usd": usd,
+        "estimated": len(real) < len(sources),
+    }
+    if real:
+        result["dry_run"] = {"warehouse": "bigquery", "sql": {sid: item["sql"] for sid, item in real.items()}}
+    return result
 
 
 def spent_today(settings: PipelineSettings) -> float:
@@ -82,21 +103,22 @@ def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, lis
     per_run, per_day = policy.budgets.per_run, policy.budgets.per_day
     size, usd = estimated["bytes"], estimated["usd"]
     by_source = ", ".join(f"{sid} {count:,} byte" for sid, count in estimated["sources"].items())
+    word = "BigQuery dry_run" if "dry_run" in estimated else "Ước tính"
     errors = []
     if size > per_run.max_bytes_scanned:
         errors.append(
-            f"Ước tính quét {size:,} byte ({by_source}, cộng model) vượt budgets.yml per_run.max_bytes_scanned "
+            f"{word} quét {size:,} byte ({by_source}, cộng model) vượt budgets.yml per_run.max_bytes_scanned "
             f"= {per_run.max_bytes_scanned:,}"
         )
     if usd > per_run.max_usd:
-        errors.append(f"Ước tính {usd:.6f} USD vượt budgets.yml per_run.max_usd = {per_run.max_usd}")
+        errors.append(f"{word} {usd:.6f} USD vượt budgets.yml per_run.max_usd = {per_run.max_usd}")
     if spent + usd > per_day.max_usd:
         errors.append(
             f"Hôm nay đã dùng {spent:.6f} USD, cộng run này ({usd:.6f} USD) vượt budgets.yml per_day.max_usd "
             f"= {per_day.max_usd}"
         )
     detail = "; ".join(errors) or (
-        f"Ước tính {size:,} byte ≈ {usd:.6f} USD ({by_source}, cộng model); hôm nay đã dùng {spent:.6f}/"
+        f"{word} {size:,} byte ≈ {usd:.6f} USD ({by_source}, cộng model); hôm nay đã dùng {spent:.6f}/"
         f"{per_day.max_usd} USD"
     )
     observed = {

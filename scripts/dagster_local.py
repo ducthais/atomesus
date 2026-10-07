@@ -4,7 +4,9 @@
 - DAGSTER_HOME cố định (data/dagster_home) để lịch sử run, lịch chạy và backfill được giữ giữa các lần bật.
 - Một warehouse DuckDB chung (data/warehouse/warehouse.duckdb) cho bronze / staging / gold của mọi pipeline.
 - Credential nguồn lấy từ .env (PIPELINE_DATABASE_URL), không ghi ra file.
-- Mỗi `COLLECT_SECONDS` thu số đo các lần chạy theo lịch vừa xong (src/monitor/runs.py) cho phần theo dõi Day 2.
+- Mỗi `COLLECT_SECONDS` thu số đo các lần chạy theo lịch vừa xong (src/monitor/runs.py), rồi chạy 4 luật suy giảm
+  (src/monitor/day2.py): nguồn ngừng cấp thì cảnh báo, pipeline suy giảm thì tạo run sửa chạy ở luồng riêng (không chặn
+  vòng này), chờ người duyệt.
 - Tự khởi động lại khi workspace.yaml đổi: Reviewer duyệt một pipeline thì deploy ghi lại file này, và
   `dagster dev` chỉ đọc danh sách code location lúc khởi động (nút Reload không thêm được location mới).
 
@@ -15,6 +17,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -73,20 +76,36 @@ def stop(process: subprocess.Popen) -> None:
         process.kill()
 
 
+def _in_thread(job) -> None:
+    threading.Thread(target=job, name="regression-fix", daemon=True).start()
+
+
 def collect() -> None:
-    """Ghi số đo các lần chạy đã xong; Dagster chưa lên hoặc nguồn lỗi thì bỏ qua, lần sau thu tiếp."""
+    """Ghi số đo các lần chạy đã xong rồi chạy 4 luật suy giảm; Dagster chưa lên hoặc lỗi thì bỏ qua, lần sau làm tiếp."""
+    from src.agents.llm import openai_llm
+    from src.agents.nodes.common import AgentDeps
+    from src.monitor import day2
     from src.monitor.runs import MonitorError
     from src.monitor.runs import collect as collect_runs
 
+    settings = PipelineSettings()
     try:
-        written = collect_runs(PipelineSettings(), load_policy())
+        policy = load_policy()  # đọc lại mỗi lần: sửa ngưỡng trong objectives.yml có hiệu lực ngay (NFR-04)
+        written = collect_runs(settings, policy)
+        deps = AgentDeps(llm=openai_llm(), policy=policy, settings=settings)
+        actions = day2.check(settings, policy, day2.launcher(deps, settings.store_path, _in_thread))
     except MonitorError:
         return
-    except Exception as exc:  # không để lỗi thu số đo làm tắt Dagster
-        print(f"Thu số đo lỗi: {type(exc).__name__}: {exc}", flush=True)
+    except Exception as exc:  # không để lỗi thu số đo / phát hiện làm tắt Dagster
+        print(f"Theo dõi Day 2 lỗi: {type(exc).__name__}: {exc}", flush=True)
         return
     if written:
         print(f"Đã ghi số đo {len(written)} lần chạy: {', '.join(r['model'] for r in written)}", flush=True)
+    for action in actions:
+        if action["action"] in ("alert", "fix_started"):
+            print(
+                f"Day 2 · {action['model']}: {action['action']} {action.get('run_id', action.get('rule'))}", flush=True
+            )
 
 
 def main() -> int:

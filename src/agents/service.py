@@ -26,6 +26,7 @@ from src.agents.nodes.common import RUNNING, AgentDeps
 from src.agents.nodes.render import render_node
 from src.agents.nodes.sandbox_run import sandbox_run_node
 from src.agents.state import AgentState
+from src.agents.timeout import timed
 from src.agents.validate import validate_spec
 from src.run_report import Attempts, Check, Cost, GateResult, RunReport, Timing, save_run_report
 from src.run_report.models import LlmCall
@@ -58,6 +59,7 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
         trigger=state["trigger"],
         parent_run_id=state.get("parent_run_id"),
         source_scope=state.get("source_scope"),
+        regression=state.get("regression"),
         created_at=created_at,
         user_request=state["user_request"],
         status=status,
@@ -372,7 +374,13 @@ def start_continue(
 
     def job() -> RunReport:
         current = state
-        for node in (budget_node(deps), arbitrate_node(deps), render_node(deps), sandbox_run_node(deps)):
+        steps = {
+            "budget": budget_node(deps),
+            "arbitrate": arbitrate_node(deps),
+            "render": render_node(deps),
+            "test_run": sandbox_run_node(deps),
+        }
+        for node in (timed(deps, name, step) for name, step in steps.items()):
             if current["status"] not in RUNNING:
                 break
             current = {**current, **node(current)}

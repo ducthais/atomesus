@@ -136,6 +136,12 @@ def source_records(spec: Spec, policy: Policy, settings: PipelineSettings) -> di
     return {s.id: el_checks.read_source(s, declared[s.source_ref], settings).records for s in spec.sources}
 
 
+def deployed_models(deploy_dir: str) -> list[str]:
+    """Pipeline đang deploy ở Dagster local (bỏ thư mục `.tmp` deploy đang ghi dở)."""
+    root = Path(deploy_dir)
+    return sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.endswith(".tmp")) if root.exists() else []
+
+
 def recorded(store_path: str) -> set[str]:
     with _database(store_path) as conn:
         return {row[0] for row in conn.execute("SELECT run_id FROM pipeline_runs")}
@@ -153,10 +159,7 @@ def collect(
     `runs` / `estimate` / `counts` mặc định là fetch_runs, budget.estimate, source_records (chọn lúc gọi).
     """
     runs, estimate, counts = runs or fetch_runs, estimate or budget.estimate, counts or source_records
-    root = Path(settings.deploy_dir)
-    deployed = (
-        {p.name for p in root.iterdir() if p.is_dir() and not p.name.endswith(".tmp")} if root.exists() else set()
-    )
+    deployed = set(deployed_models(settings.deploy_dir))
     done = recorded(settings.store_path)
     pending = [
         r

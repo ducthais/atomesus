@@ -1,4 +1,7 @@
-"""Phần dùng chung của các node: phụ thuộc được tiêm vào, trần gọi LLM, trạng thái kết thúc."""
+"""Phần dùng chung của các node: phụ thuộc được tiêm vào, trần gọi LLM, trạng thái kết thúc.
+
+Trần thời gian mỗi phase nằm ở src/agents/timeout.py.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -40,6 +43,9 @@ class StopError(Exception):
         """Phần cập nhật state khi dừng: trạng thái, phase, thêm một dòng error_trace."""
         trace = [*state.get("error_trace", []), self.trace]
         return {"status": self.status, "stage_reached": self.stage, "error_trace": trace, **extra}
+
+
+Node = Callable[[AgentState], dict]  # đọc state, trả phần cập nhật
 
 
 def prompt(name: str) -> str:
