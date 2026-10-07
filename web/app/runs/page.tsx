@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Activity, Plus } from 'lucide-react';
+import { Activity, ListChecks, Plus } from 'lucide-react';
 import { getCatalog, getDrift } from '@/lib/catalog/source';
 import { DriftPanel } from '../_components/drift';
 import { RUNNING, STAGES, shortId } from '@/lib/studio';
@@ -27,7 +27,7 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
 
   return <>
     <PageHeader kicker="Data Catalog" title="Hoạt động pipeline" icon={<Activity size={22} />}
-      actions={<Link href="/runs/new" className="button primary"><Plus size={15} aria-hidden /> Yêu cầu pipeline</Link>}>
+      actions={<><Link href="/runs/review" className="button"><ListChecks size={15} aria-hidden /> Duyệt nhiều run</Link><Link href="/runs/new" className="button primary"><Plus size={15} aria-hidden /> Yêu cầu pipeline</Link></>}>
       <p>Mỗi run là một lần agent lập kế hoạch, sinh code và chạy thử để tạo hoặc cập nhật dataset. Đọc từ sổ bằng chứng.</p>
     </PageHeader>
     <div className="budget"><span>Chi phí warehouse hôm nay</span><strong className="mono">${spent.toFixed(4)} / ${policy.limits.max_usd_per_day.toFixed(2)}</strong>

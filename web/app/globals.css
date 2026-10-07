@@ -665,3 +665,4 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 .monitor-alerts li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
 .monitor-alerts li:last-child { border-bottom: 0; }
 .monitor-alerts p { margin: 4px 0; }
+.row-muted td { color: var(--ink-3, #888); }

@@ -205,6 +205,19 @@ export function canReview(run: Run, role: string, user: string): boolean {
   return role === 'Reviewer' && run.owner !== user && run.status === 'READY_FOR_REVIEW' && run.checks.every(c => c.state === 'pass');
 }
 
+/** Một dòng của màn duyệt nhiều run: run chờ duyệt kèm lý do không chọn được (cùng luật với `canReview`). */
+export type BatchItem = { run: Run; eligible: boolean; reason: string | null };
+
+export function batchReviewItems(runs: Run[], role: string, user: string): BatchItem[] {
+  return runs.filter(run => run.status === 'READY_FOR_REVIEW').map(run => {
+    const failed = run.checks.filter(c => c.state !== 'pass').length;
+    const reason = role !== 'Reviewer' ? 'Chỉ Reviewer duyệt'
+      : run.owner === user ? 'Run của bạn: không tự duyệt'
+      : failed ? `${failed} kiểm tra chưa đạt` : null;
+    return { run, eligible: reason === null, reason };
+  });
+}
+
 /** Một dòng của GET /runs/{id}/messages (bảng run_messages). */
 export type ChatMessage = { id: number; run_id: string; role: 'user' | 'assistant'; author: string; intent: string; content: string; at: string };
 export type ChatResponse = { intent: 'new_request' | 'ask'; reply: string; run_id: string; report: RunReport };
