@@ -89,3 +89,16 @@ def test_request_changes_keeps_the_money_already_spent(tmp_path):
     assert revised.version == 2 and revised.llm_calls == 1, "chỉ đếm lần gọi của version mới"
     assert [c.stage for c in revised.llm_usage] == ["plan", "propose", "propose"]
     assert revised.cost.llm_usd == pytest.approx(0.003 + 0.0024)
+
+
+def test_no_llm_call_once_the_daily_budget_is_spent():
+    from src.agents.graph import build_graph
+    from tests.test_agents.test_graph import PLAN, SPEC, FakeLLM, deps
+
+    llm = FakeLLM(PLAN, SPEC)
+    state = build_graph(deps(llm, spent_today=lambda settings: 2.0)).invoke(
+        {"run_id": "r1", "version": 1, "user_request": "Doanh thu theo ngày", "llm_calls": 0, "error_trace": []}
+    )
+
+    assert state["status"] == "BLOCKED_BUDGET" and llm.calls == [] and state["llm_calls"] == 0
+    assert "per_day.max_usd" in state["error_trace"][-1]["error"]

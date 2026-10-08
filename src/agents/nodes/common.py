@@ -86,6 +86,16 @@ def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: 
     limit = deps.policy.budgets.per_run.max_llm_calls
     if state.get("llm_calls", 0) >= limit:
         raise StopError("NEEDS_HUMAN", stage, f"Đã chạm trần {limit} lần gọi LLM của run (budgets.yml max_llm_calls).")
+    # Trần tiền trong ngày chặn cả trước khi gọi LLM, không chỉ ở cổng budget (sau khi Spec đã viết xong): ngày đã tiêu
+    # hết thì không gửi thêm request nào tới nhà cung cấp LLM.
+    day_limit, spent = deps.policy.budgets.per_day.max_usd, deps.spent_today(deps.settings)
+    if spent >= day_limit:
+        raise StopError(
+            "BLOCKED_BUDGET",
+            stage,
+            f"Hôm nay đã tiêu {spent:.4f} USD, chạm trần {day_limit} USD/ngày (budgets.yml per_day.max_usd); "
+            "không gọi LLM nữa tới ngày mai (UTC).",
+        )
     try:
         return deps.llm(tier, system, user)
     except Exception as exc:  # lỗi mạng/khóa API của nhà cung cấp LLM
