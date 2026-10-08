@@ -1,6 +1,8 @@
-# Deploy Atomesus lên Oracle Cloud (miễn phí) và tự cập nhật khi merge vào `main`
+# Deploy Atomesus lên một VM và tự cập nhật khi merge vào `main`
 
-Toàn bộ sản phẩm chạy trên **một VM Ampere A1 (ARM) của Oracle Cloud Always Free** bằng `deploy/compose.yml`:
+Toàn bộ sản phẩm chạy trên **một VM Ubuntu có Docker** bằng `deploy/compose.yml`, cần khoảng 4 GB RAM trở lên.
+Bước 1 có hai lựa chọn: **Azure for Students** (1a, dùng credit sinh viên) hoặc **Oracle Cloud Always Free** (1b, miễn
+phí lâu dài nhưng đăng ký lâu). Từ bước 2 trở đi giống nhau.
 
 | Dịch vụ | Vai trò | Ra Internet |
 |---|---|---|
@@ -21,7 +23,26 @@ mới; muốn dùng logic mới thì tạo version mới và duyệt lại.
 
 ---
 
-## 1. Tạo VM (làm một lần, trên web Oracle)
+## 1a. Tạo VM trên Azure for Students
+
+1. Đăng ký <https://azure.microsoft.com/free/students> bằng **email trường** và xác minh sinh viên. Thường không cần thẻ;
+   được 100 USD credit. Hết credit thì máy dừng, không tự trừ tiền.
+2. Portal → **Virtual machines → Create → Azure virtual machine**:
+   - Resource group: tạo mới `atomesus`. Virtual machine name: `atomesus`.
+   - Region: vùng gần (**Southeast Asia** / **East Asia**). Tài khoản sinh viên chỉ được dùng một số vùng: báo
+     "disallowed by policy" thì đổi vùng khác.
+   - Image: **Ubuntu Server 24.04 LTS – x64 Gen2**.
+   - Size: **Standard_B2s** (2 vCPU, 4 GB, khoảng 30 USD/tháng, đủ khoảng 3 tháng credit) hoặc **Standard_B2ms**
+     (8 GB, nhanh hơn, tốn gấp đôi).
+   - Authentication type: **SSH public key**, Username **`azureuser`**, Key pair name `atomesus` (Azure tạo khóa mới).
+   - Public inbound ports: **Allow selected ports**, chọn **SSH (22), HTTP (80), HTTPS (443)**.
+   - Tab Disks: OS disk size **64 GiB**, Standard SSD.
+   - **Review + create → Create → Download private key and create resource**. Lưu file `.pem` vào
+     `C:\Users\<bạn>\.ssh\atomesus.pem`.
+3. Mở VM vừa tạo, chép **Public IP address**. Nên bấm vào IP → **Configuration → Assignment: Static** để IP không đổi.
+4. Ở các bước sau: `<user>` là **`azureuser`**, `<khoa-ssh>` là file `.pem` vừa tải.
+
+## 1b. Tạo VM trên Oracle Cloud Always Free (làm một lần, trên web Oracle)
 
 1. Đăng ký <https://www.oracle.com/cloud/free/> (cần thẻ để xác minh, không bị trừ tiền với tài nguyên Always Free).
    Chọn **Home Region** gần (ví dụ Singapore, Tokyo); không đổi được về sau.
@@ -37,11 +58,13 @@ mới; muốn dùng logic mới thì tạo version mới và duyệt lại.
 
 ## 2. Cài VM (một lần, ~5 phút)
 
-Trên máy bạn (thư mục repo):
+Trên máy bạn (PowerShell, thư mục repo). `<user>` là `azureuser` (Azure) hoặc `ubuntu` (Oracle):
 
-```bash
-scp -i <khoa-ssh> deploy/setup-vm.sh ubuntu@<IP>:~
-ssh -i <khoa-ssh> ubuntu@<IP> 'bash setup-vm.sh'
+```powershell
+# Windows: khóa SSH phải chỉ chủ máy đọc được, nếu không ssh từ chối dùng
+icacls <khoa-ssh> /inheritance:r /grant:r "$($env:USERNAME):R"
+scp -i <khoa-ssh> deploy/setup-vm.sh <user>@<IP>:~
+ssh -t -i <khoa-ssh> <user>@<IP> "bash setup-vm.sh"
 ```
 
 Script cài Docker, mở cổng trong iptables của VM (ảnh Ubuntu của Oracle chặn sẵn), hỏi **tên miền** (Enter để dùng
@@ -54,9 +77,9 @@ Dùng tên miền riêng: tạo bản ghi A `app.ten-mien.vn` và `dagster.app.t
 
 Tạo một khóa SSH **chỉ dùng để deploy** (không dùng khóa cá nhân):
 
-```bash
-ssh-keygen -t ed25519 -N "" -C atomesus-deploy -f atomesus_deploy
-ssh-copy-id -i atomesus_deploy.pub -o "IdentityFile <khoa-ssh>" ubuntu@<IP>
+```powershell
+ssh-keygen -t ed25519 -N '""' -C atomesus-deploy -f atomesus_deploy
+type atomesus_deploy.pub | ssh -i <khoa-ssh> <user>@<IP> "cat >> ~/.ssh/authorized_keys"
 ```
 
 Repo GitHub → **Settings → Secrets and variables → Actions → New repository secret**:
@@ -64,11 +87,11 @@ Repo GitHub → **Settings → Secrets and variables → Actions → New reposit
 | Secret | Giá trị |
 |---|---|
 | `DEPLOY_HOST` | Public IP của VM |
-| `DEPLOY_USER` | `ubuntu` |
+| `DEPLOY_USER` | `azureuser` (Azure) hoặc `ubuntu` (Oracle) |
 | `DEPLOY_SSH_KEY` | toàn bộ nội dung file `atomesus_deploy` (khóa riêng) |
 
-Rồi **Actions → Deploy → Run workflow** (nhánh `main`). Lần đầu build mất 10–20 phút trên VM ARM; các lần sau chỉ build lại
-phần code đổi. Xong thì mở `https://<DOMAIN>`.
+Rồi **Actions → Deploy → Run workflow** (nhánh `main`). Lần đầu build mất 10–25 phút; các lần sau chỉ build lại phần code
+đổi. Xong thì mở `https://<DOMAIN>`.
 
 ## 4. Giới hạn tiền OpenAI
 
@@ -91,7 +114,7 @@ Hai lớp, nên bật cả hai:
 ## 5. Vận hành
 
 ```bash
-ssh ubuntu@<IP>
+ssh -i <khoa-ssh> <user>@<IP>
 cd atomesus
 docker compose --env-file .env -f deploy/compose.yml ps            # trạng thái
 docker compose --env-file .env -f deploy/compose.yml logs -f backend  # log (backend, web, dagster, caddy…)
@@ -100,7 +123,7 @@ docker compose --env-file .env -f deploy/compose.yml restart dagster
 
 - Đổi mật khẩu / khóa: sửa `~/atomesus/.env`, rồi `docker compose ... up -d`.
 - Sao lưu: `tar czf atomesus-data.tgz data` và `docker run --rm -v atomesus_pgdata:/v -v $PWD:/b busybox tar czf /b/pgdata.tgz -C /v .`
-- Đưa dữ liệu demo từ máy local lên (run mẫu, pipeline đã duyệt): dừng stack, `scp -r data ubuntu@<IP>:atomesus/`,
+- Đưa dữ liệu demo từ máy local lên (run mẫu, pipeline đã duyệt): dừng stack, `scp -r data <user>@<IP>:atomesus/`,
   `sudo chown -R 1000:1000 ~/atomesus/data`, chạy lại `up -d`.
 
 **Bảo mật của bản demo:** đăng nhập vẫn là hai tài khoản local (`APP_ENV=staging`, backend từ chối mật khẩu mặc định).

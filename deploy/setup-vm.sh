@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Chuẩn bị VM Ubuntu (Oracle Cloud Always Free) cho Atomesus, chạy MỘT lần bằng user ubuntu:
-#   bash setup-vm.sh
-# Việc làm: cài Docker, mở cổng 80/443 trong iptables của VM, tạo ~/atomesus/.env với mật khẩu ngẫu nhiên.
+# Chuẩn bị VM Ubuntu (Azure, Oracle Cloud, AWS, DigitalOcean…) cho Atomesus, chạy MỘT lần bằng user đăng nhập của VM:
+#   ssh -t <user>@<IP> "bash setup-vm.sh"      (-t để nhập OpenAI key không hiện ra màn hình)
+# Việc làm: cài Docker, mở cổng 80/443 nếu iptables của VM chặn (ảnh Oracle), thêm swap nếu RAM < 7 GB,
+# tạo ~/atomesus/.env với mật khẩu ngẫu nhiên.
 # Code do GitHub Actions đẩy lên (.github/workflows/deploy.yml); script không cần quyền đọc repo.
 # Chạy lại an toàn: không ghi đè .env đã có.
 set -euo pipefail
@@ -16,14 +17,27 @@ sudo usermod -aG docker "$USER"
 sudo apt-get install -y rsync >/dev/null
 
 echo "== Mở cổng 80/443 =="
-# Ảnh Ubuntu của Oracle chặn mọi cổng trừ 22 bằng iptables (ngoài Security List của VCN, phải mở cả hai).
-for port in 80 443; do
-  if ! sudo iptables -C INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null; then
-    sudo iptables -I INPUT 6 -p tcp --dport "$port" -m state --state NEW -j ACCEPT
+# Ảnh Ubuntu của Oracle chặn mọi cổng trừ 22 bằng một luật REJECT trong iptables (ngoài Security List của VCN).
+# Azure / AWS / DigitalOcean để iptables trống, cổng mở ở tường lửa của nhà cung cấp (NSG, Security Group): bỏ qua.
+if sudo iptables -S INPUT 2>/dev/null | grep -q -- "-j REJECT"; then
+  for port in 80 443; do
+    if ! sudo iptables -C INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null; then
+      sudo iptables -I INPUT 1 -p tcp --dport "$port" -m state --state NEW -j ACCEPT
+    fi
+  done
+  if command -v netfilter-persistent >/dev/null; then
+    sudo netfilter-persistent save
   fi
-done
-if command -v netfilter-persistent >/dev/null; then
-  sudo netfilter-persistent save
+fi
+
+echo "== Swap =="
+# Máy 4 GB (Azure B2s, DigitalOcean 4 GB): build Next.js + cài dbt / Dagster cùng lúc có thể hết RAM, thêm 4 GB swap.
+if [ "$(free -m | awk '/^Mem:/ {print $2}')" -lt 7000 ] && ! swapon --show | grep -q /swapfile; then
+  sudo fallocate -l 4G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile >/dev/null
+  sudo swapon /swapfile
+  echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab >/dev/null
 fi
 
 mkdir -p "$APP_DIR/data"
