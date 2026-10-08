@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "AI20K Agent"
-    app_env: Literal["development", "production", "test"] = "development"
+    app_env: Literal["development", "staging", "production", "test"] = "development"  # staging: bản demo đã deploy
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

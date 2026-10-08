@@ -1,0 +1,78 @@
+# Tự deploy lên VM (docs/deploy.md) mỗi khi workflow test "Postgres pipeline" chạy xanh trên main.
+# Bấm "Run workflow" để deploy tay (lần đầu, hoặc deploy lại cùng bản).
+# Secrets cần có: DEPLOY_HOST (IP VM), DEPLOY_USER (ubuntu), DEPLOY_SSH_KEY (khóa riêng chỉ dùng để deploy).
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Postgres pipeline"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Chưa cài VM / chưa đặt secrets (docs/deploy.md) thì bỏ qua, không báo đỏ.
+  configured:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -n "$HOST" ] && [ -n "$KEY" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::Chưa có secrets DEPLOY_HOST / DEPLOY_SSH_KEY, bỏ qua deploy (xem docs/deploy.md)."; fi
+
+  deploy:
+    needs: configured
+    if: >-
+      needs.configured.outputs.ready == 'true' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HOST: ${{ secrets.DEPLOY_HOST }}
+      USER_NAME: ${{ secrets.DEPLOY_USER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: SSH key
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync code
+        # .env và data/ trên VM không bị đụng tới (bị loại khỏi rsync nên --delete cũng không xóa).
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy_key" \
+            --exclude .git --exclude .env --exclude 'data/' --exclude node_modules --exclude .next \
+            --exclude .venv --exclude graphify-out --exclude .ai-log \
+            ./ "$USER_NAME@$HOST:atomesus/"
+
+      - name: Build and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key "$USER_NAME@$HOST" \
+            'cd atomesus && docker compose --env-file .env -f deploy/compose.yml up -d --build --remove-orphans --wait --wait-timeout 600 && docker image prune -f'
+
+      - name: Check
+        # Qua đúng đường người dùng đi: HTTPS → Caddy → web → backend.
+        run: |
+          ssh -i ~/.ssh/deploy_key "$USER_NAME@$HOST" 'cd atomesus && docker compose --env-file .env -f deploy/compose.yml ps'
+          domain=$(ssh -i ~/.ssh/deploy_key "$USER_NAME@$HOST" 'grep "^DOMAIN=" atomesus/.env | cut -d= -f2')
+          curl -fsS --retry 10 --retry-delay 6 --retry-all-errors -o /dev/null -w "web %{http_code}\n" "https://$domain/"
+          curl -fsS --retry 5 --retry-delay 6 --retry-all-errors "https://$domain/api/v1/agent/status"

@@ -1,31 +1,24 @@
-# ---- Stage 1: Build ----
-FROM python:3.11-slim AS builder
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# ---- Stage 2: Production ----
+# Image Python dùng chung cho backend, Dagster và mock API (deploy/compose.yml). Build được trên amd64 và arm64
+# (VM Ampere của Oracle Cloud). Chạy bằng user không phải root; dữ liệu nằm ở /app/data (volume).
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 WORKDIR /app
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-ENV PATH=/root/.local/bin:$PATH
+# Thư viện cài trước code để lần deploy chỉ đổi code không phải cài lại (cache theo file requirements).
+COPY requirements.txt ./
+COPY requirements ./requirements
+RUN pip install -r requirements/dagster.txt
 
-# Security: run as non-root user
-RUN useradd -m appuser
+RUN useradd --create-home --uid 1000 app
+COPY --chown=app:app . .
+RUN mkdir -p /app/data && chown app:app /app/data
 
-# Copy application code
-COPY . .
-
-# Create data directory with correct ownership
-RUN mkdir -p /app/data && chown -R appuser:appuser /app
-
-USER appuser
-
+USER app
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \

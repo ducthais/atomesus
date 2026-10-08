@@ -1,11 +1,20 @@
 .git
 .gitignore
 .env
+.env.*
 .venv
 __pycache__
 *.pyc
 .pytest_cache
 .ruff_cache
+data/
+web/
+node_modules/
+graphify-out/
+.ai-log/
+.agents/
+.claude/
+.kiro/
 docs/
 presentation/
 eval/
@@ -14,3 +23,4 @@ eval/
 .dockerignore
 Dockerfile
 docker-compose.yml
+deploy/

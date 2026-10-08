@@ -1,0 +1,13 @@
+# HTTPS tự động (Let's Encrypt / ZeroSSL) cho hai tên miền trỏ về VM, xem docs/deploy.md.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy web:3000
+}
+
+# Dagster UI không có đăng nhập riêng: chặn bằng basic auth (mật khẩu sinh trong deploy/setup-vm.sh).
+{$DAGSTER_DOMAIN} {
+	basic_auth {
+		{$DAGSTER_USER} {$DAGSTER_PASSWORD_HASH}
+	}
+	reverse_proxy dagster:3070
+}

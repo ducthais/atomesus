@@ -13,7 +13,16 @@ async def test_health(client):
 async def test_agent_status(client):
     response = await client.get("/api/v1/agent/status")
     assert response.status_code == 200
-    assert response.json()["graph"] == ["planner", "semantic", "codegen", "budget", "arbitrate", "render", "test_run"]
+    assert response.json()["graph"] == [
+        "planner",
+        "semantic",
+        "codegen",
+        "budget",
+        "arbitrate",
+        "render",
+        "test_run",
+        "repair",
+    ]
 
 
 @pytest.mark.asyncio
@@ -169,3 +178,32 @@ def test_empty_postgres_schema_explains_how_to_fix(monkeypatch, schema, visibili
         postgres.SourceUnavailableError, match=expected.replace("(", r"\(").replace(")", r"\)").replace(".", r"\.")
     ):
         connectors.discover(decl, None)
+
+
+@pytest.mark.asyncio
+async def test_staging_refuses_the_default_passwords(client, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    from src.main import app
+    from src.pipeline import api, auth
+    from src.pipeline.settings import PipelineSettings
+
+    staging = SimpleNamespace(app_env="staging")
+    monkeypatch.setattr(auth, "get_settings", lambda: staging)
+    monkeypatch.setattr(api, "get_settings", lambda: staging)
+    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+    app.dependency_overrides[auth.settings] = lambda: config
+    try:
+        default = await client.post(
+            "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
+        )
+        assert default.status_code == 503 and "PIPELINE_ENGINEER_PASSWORD" in default.json()["detail"]
+        config.engineer_password = SecretStr("mat-khau-rieng-dai")
+        own = await client.post(
+            "/api/v1/pipeline/session", json={"username": "engineer", "password": "mat-khau-rieng-dai"}
+        )
+        assert own.status_code == 200
+    finally:
+        app.dependency_overrides.pop(auth.settings, None)

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from src.config import get_settings
 from src.pipeline import postgres, store
 from src.pipeline.auth import (
     ACCOUNTS,
@@ -29,6 +30,7 @@ from src.pipeline.settings import PipelineSettings
 from src.run_report import Check, Cost, GateResult, RunReport, Timing, save_run_report
 
 router = APIRouter(prefix="/pipeline", tags=["Postgres pipeline"])
+DEFAULT_PASSWORDS = {"Engineer@123", "Reviewer@123"}
 DOMAIN = "sales"
 SAMPLE_ROWS = 20
 MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema nguồn."
@@ -47,6 +49,9 @@ def login(body: LoginRequest, response: Response, config: PipelineSettings = Dep
         "engineer": config.engineer_password.get_secret_value(),
         "reviewer": config.reviewer_password.get_secret_value(),
     }.get(username, "")
+    if get_settings().app_env == "staging" and expected in DEFAULT_PASSWORDS:
+        # Bản demo đã deploy ra Internet: mật khẩu mặc định ai cũng biết, và ai đăng nhập được là tiêu được tiền LLM.
+        raise HTTPException(503, "Môi trường staging phải đặt PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD.")
     if not user_id or not secrets.compare_digest(body.password, expected):
         raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
     token = secrets.token_urlsafe(32)
