@@ -10,9 +10,13 @@
   phép ghép nên không bắt được lỗi này, phải chặn ở đây.
 - `time_grain`: yêu cầu nói "theo ngày / tuần / tháng / quý / năm" thì cột thời gian của grain phải gộp đúng kỳ đó,
   không gộp theo từng thời điểm chính xác (mỗi giao dịch một dòng). Chỉ chạy khi yêu cầu có nói kỳ.
+- `filter_values`: bộ lọc so cột phân loại với hằng chuỗi (`status = 'confirmed'`, `IN (...)`) mà giá trị đó không có
+  trong dòng mẫu của cột → chặn. LLM hay đoán giá trị, làm gold rỗng hoặc mất dòng mà mọi test vẫn đạt. Chỉ xét cột
+  trông như phân loại trong dòng mẫu (có giá trị lặp, tối đa `CATEGORY_MAX` giá trị khác nhau) để không chặn nhầm cột
+  mã / tên mà 20 dòng mẫu không thể chứa hết.
 - `ast_guard` (tạm): biểu thức không chứa lệnh/hàm nguy hiểm, xem `src/codegen/guard.py`.
 
-Lỗi `spec_schema`/`schema_real`/`currency`/`join_fanout`/`time_grain` quay lại codegen kèm thông báo cụ thể
+Lỗi `spec_schema`/`schema_real`/`currency`/`join_fanout`/`time_grain`/`filter_values` quay lại codegen kèm thông báo cụ thể
 (vòng spec); lỗi `ast_guard` dừng hẳn.
 """
 
@@ -43,6 +47,14 @@ _PERIOD = re.compile(r"(?<!\w)(?:theo|mỗi|từng)\s+(?:từng\s+|mỗi\s+)?(ng
 _PERIOD_EN = re.compile(
     r"(?<![a-z])(?:daily|weekly|monthly|quarterly|yearly|per (day|week|month|quarter|year))(?![a-z])", re.IGNORECASE
 )
+# `<cột>` / `<id>.<cột>`, có thể bọc lower()/upper(), so bằng `=` hoặc `IN (...)` với hằng chuỗi; bỏ qua `<>`, `NOT IN`.
+_FILTER = re.compile(
+    r"(?<![\w.])(?:(lower|upper)\s*\(\s*)?(?:([a-z_]\w*)\.)?([a-z_]\w*)\s*\)?\s*"
+    r"(?:(?<![<>!])=\s*('(?:[^']|'')*')|(?<!not )\bin\s*\(((?:\s*'(?:[^']|'')*'\s*,?)+)\))",
+    re.IGNORECASE,
+)
+_LITERAL = re.compile(r"'((?:[^']|'')*)'")
+CATEGORY_MAX = 12
 _PERIOD_EN_WORDS = {"daily": "day", "weekly": "week", "monthly": "month", "quarterly": "quarter", "yearly": "year"}
 
 
@@ -277,6 +289,48 @@ def _join_fanout(spec: Spec) -> list[str]:
     return errors
 
 
+def _sample_values(spec: Spec, snapshot: dict, source_id: str | None, column: str) -> tuple[str, str, set[str]] | None:
+    """Cột đầu ra staging `column` → (id nguồn, cột thô, tập giá trị thấy trong dòng mẫu), nếu cột là chuỗi phân loại."""
+    by_table = {(item["source_ref"], item["table"]): item for item in snapshot.values()}
+    candidates = [s for s in spec.sources if (source_id is None or s.id == source_id) and column in s.outputs]
+    if len(candidates) != 1:
+        return None
+    source = candidates[0]
+    staged = next(c for c in source.staging.columns if c.as_ == column)
+    if staged.type != "varchar":
+        return None
+    rows = (by_table.get((source.source_ref, _object(source))) or {}).get("sample_rows") or []
+    seen = [str(row[staged.from_]) for row in rows if row.get(staged.from_) is not None]
+    values = set(seen)
+    if not values or len(values) == len(seen) or len(values) > CATEGORY_MAX:
+        return None  # không có mẫu, hoặc cột không giống phân loại (mỗi dòng một giá trị)
+    return source.id, staged.from_, values
+
+
+def _filter_values(spec: Spec, snapshot: dict) -> list[str]:
+    errors = []
+    for expression in spec.transform.filters:
+        for match in _FILTER.finditer(expression):
+            wrapper, source_id, column, single, many = match.groups()
+            found = _sample_values(spec, snapshot, source_id, column)
+            if found is None:
+                continue
+            sid, raw, values = found
+            literals = [single[1:-1]] if single else _LITERAL.findall(many)
+            fold = (lambda v: v.lower()) if wrapper else (lambda v: v)  # noqa: E731
+            for literal in (value.replace("''", "'") for value in literals):
+                if fold(literal) in {fold(v) for v in values}:
+                    continue
+                near = sorted(v for v in values if v.lower() == literal.lower())
+                hint = f" (có '{near[0]}': sai hoa / thường)" if near else ""
+                errors.append(
+                    f"transform.filters `{expression}`: giá trị '{literal}' không có trong dòng mẫu của cột '{raw}' "
+                    f"(nguồn '{sid}'){hint}; các giá trị thấy: {sorted(values)}. Đoán giá trị sẽ làm gold rỗng hoặc "
+                    "mất dòng; chỉ dùng giá trị có thật, hoặc bỏ bộ lọc nếu yêu cầu không nói tới"
+                )
+    return errors
+
+
 def _used_columns(spec: Spec, snapshot: dict) -> dict[str, dict[str, str]]:
     """Mốc schema của pipeline: với mỗi nguồn, các cột Spec đọc và kiểu của chúng lúc kiểm tra.
 
@@ -334,6 +388,16 @@ def validate_spec(raw: dict, snapshot: dict, policy: Policy, request: str | None
         )
     )
     errors += fanout
+    if errors:
+        return Validation(spec, gates, errors)
+    errors = _filter_values(spec, snapshot)
+    gates.append(
+        GateResult(
+            name="filter_values",
+            result="fail" if errors else "pass",
+            detail="; ".join(errors) or "Bộ lọc chỉ dùng giá trị có trong dòng mẫu",
+        )
+    )
     if errors:
         return Validation(spec, gates, errors)
     if unit := requested_period(request):

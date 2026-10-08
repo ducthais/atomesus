@@ -51,7 +51,7 @@ export const STATUS_LABEL: Record<Status, string> = {
 };
 export const RUNNING: Status[] = ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'];
 const GATE_LABEL: Record<string, string> = {
-  spec_schema: 'Spec hợp lệ', schema_real: 'Cột có thật ở nguồn', currency: 'Quy đổi tiền tệ', join_fanout: 'Không cộng trùng khi ghép', time_grain: 'Gộp đúng kỳ yêu cầu', semantic: 'Ngữ nghĩa',
+  spec_schema: 'Spec hợp lệ', schema_real: 'Cột có thật ở nguồn', currency: 'Quy đổi tiền tệ', join_fanout: 'Không cộng trùng khi ghép', time_grain: 'Gộp đúng kỳ yêu cầu', filter_values: 'Bộ lọc dùng giá trị có thật', semantic: 'Ngữ nghĩa',
   ast_guard: 'Biểu thức an toàn', budget: 'Ngân sách', arbitrate: 'Chọn lịch chạy (P5)', post_run: 'Tổng kết chạy thử',
 };
 const CHECK_LABEL: Record<string, string> = {
@@ -220,7 +220,7 @@ export function batchReviewItems(runs: Run[], role: string, user: string): Batch
 
 /** Một dòng của GET /runs/{id}/messages (bảng run_messages). */
 export type ChatMessage = { id: number; run_id: string; role: 'user' | 'assistant'; author: string; intent: string; content: string; at: string };
-export type ChatResponse = { intent: 'new_request' | 'ask'; reply: string; run_id: string; report: RunReport };
+export type ChatResponse = { intent: 'new_request' | 'ask' | 'revise'; reply: string; run_id: string; report: RunReport };
 export type ChatMode = { mode: 'ask' | 'new_request' | null; hint: string };
 
 /** Ô chat hỏi về run đang mở, hoặc tạo run mới khi chưa mở run nào (chỉ Engineer). */

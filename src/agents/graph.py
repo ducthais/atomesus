@@ -9,10 +9,14 @@
 | arbitrate | P5       | tất định  | lịch chạy thỏa độ tươi (objectives.yml), rẻ nhất; cần chi phí của P8 |
 | render    | P6       | tất định  | 4 + N file từ templates/                                 |
 | test_run  | P9–P12   | tất định  | chạy dlt + dbt trong sandbox, đối soát, RunReport        |
+| repair    | §11.2    | tất định  | chạy thử không đạt → bảng định tuyến: vòng spec / SQL / dừng |
 
 Trạng thái kết thúc (mọi trạng thái ngoài DRAFT/GENERATING/VALIDATING) đi thẳng tới END.
 Cổng người P2 (xác nhận kế hoạch) chia graph làm hai lượt: `stop_after_plan` dừng sau planner và cổng semantic,
 Engineer bấm xác nhận thì chạy tiếp với `entry="codegen"` (src/agents/service.py). Chưa có optimizer (P13).
+
+Chạy thử không đạt thì `repair` tra bảng định tuyến (src/agents/router.py): vòng spec quay về codegen rồi đi lại
+budget → … → test_run; vòng SQL quay về codegen (chế độ sql_fix) rồi render thẳng (P6). Trần mỗi vòng ở budgets.yml.
 
 Mọi node chạy dưới trần `budgets.yml: per_run.phase_timeout_sec` (NFR-05, src/agents/timeout.py).
 """
@@ -26,6 +30,7 @@ from src.agents.nodes.codegen import codegen
 from src.agents.nodes.common import RUNNING, AgentDeps
 from src.agents.nodes.planner import planner
 from src.agents.nodes.render import render_node
+from src.agents.nodes.repair import repair_node
 from src.agents.nodes.sandbox_run import sandbox_run_node
 from src.agents.nodes.semantic import semantic_node
 from src.agents.state import AgentState
@@ -45,7 +50,9 @@ def _after_codegen(stop_after_spec: bool):
             return END
         if state.get("feedback"):
             return "codegen"  # còn lỗi → vòng spec
-        return END if stop_after_spec else "budget"
+        if stop_after_spec:
+            return END
+        return "render" if state.get("repair") == "sql_fix" else "budget"  # vòng SQL: render lại ngay (P6)
 
     return route
 
@@ -71,6 +78,7 @@ def build_graph(
         "arbitrate": arbitrate_node(deps),
         "render": render_node(deps),
         "test_run": sandbox_run_node(deps),
+        "repair": repair_node(deps),
     }
     for name, node in nodes.items():
         graph.add_node(name, timed(deps, name, node))
@@ -78,10 +86,13 @@ def build_graph(
     graph.add_conditional_edges("planner", _then("semantic"), ["semantic", END])
     # Cổng semantic chạy trước khi dừng chờ xác nhận (P2): từ hai nghĩa bị chặn trước khi người dùng phải xem kế hoạch.
     graph.add_conditional_edges("semantic", _then(END if stop_after_plan else "codegen"), ["codegen", END])
-    graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "budget", END])
+    graph.add_conditional_edges("codegen", _after_codegen(stop_after_spec), ["codegen", "budget", "render", END])
     graph.add_conditional_edges("budget", _then("arbitrate"), ["arbitrate", END])
     graph.add_conditional_edges("arbitrate", _then("render"), ["render", END])
     graph.add_conditional_edges("render", _then("test_run"), ["test_run", END])
-    graph.add_edge("test_run", END)
+    graph.add_conditional_edges(
+        "test_run", lambda state: "repair" if state.get("status") == "NEEDS_HUMAN" else END, ["repair", END]
+    )
+    graph.add_conditional_edges("repair", _then("codegen"), ["codegen", END])
     saver = checkpointer if checkpointer is not None else getattr(deps, "checkpointer", None)
     return graph.compile(checkpointer=saver)

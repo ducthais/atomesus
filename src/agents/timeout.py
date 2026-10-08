@@ -21,6 +21,7 @@ PHASES = {
     "arbitrate": ("arbitrate", 1),
     "render": ("render", 1),
     "test_run": ("t_validate", 4),
+    "repair": ("propose", 1),
 }
 
 

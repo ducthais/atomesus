@@ -239,3 +239,39 @@ def test_currency_is_moved_to_the_source_that_has_a_currency_code():
     assert by_id["orders"]["currency"] is None
     assert by_id["payments"]["currency"] == {"code_column": "currency", "to": "VND"}
     assert not validate_spec(fixed, snapshot, load_policy()).errors
+
+
+def test_api_join_key_takes_the_type_of_the_other_side():
+    # eval 2026-10-08: orders.order_id integer, refunds.order_id (CSV) varchar; LLM lặp lỗi lệch kiểu 2 lần.
+    from src.agents.nodes.codegen import _add_key_columns
+
+    payments = copy.deepcopy(PAYMENTS)
+    payments["staging"]["columns"][1]["type"] = "varchar"
+    raw = _spec(
+        [ORDERS, payments],
+        [{"source": "payments", "type": "left", "on": [["orders.order_id", "payments.order_id"]]}],
+        [("t", "SUM(orders.amount)")],
+        ["orders.order_id"],
+    )
+    fixed = _add_key_columns(raw, _api_snapshot())
+    assert fixed["sources"][1]["staging"]["columns"][1]["type"] == "integer"
+    assert fixed["sources"][0]["staging"]["columns"][0]["type"] == "integer", "phía Postgres giữ nguyên"
+
+
+def test_gold_key_columns_lose_the_source_prefix():
+    # eval 2026-10-08: unique_key / tests dùng 'customers.customer_id', bị báo 2 lần vẫn lặp lại.
+    from src.agents.nodes.codegen import _add_key_columns
+
+    raw = _spec([ORDERS], [], [("revenue", "SUM(orders.amount)")], ["orders.customer_id"])
+    raw["transform"] |= {
+        "materialization": "incremental",
+        "unique_key": ["orders.customer_id"],
+        "partition_by": "orders.customer_id",
+        "tests": [
+            {"column": "orders.customer_id", "test": "unique"},
+            {"column": "khong_co.cot_la", "test": "not_null"},
+        ],
+    }
+    transform = _add_key_columns(raw, {})["transform"]
+    assert transform["unique_key"] == ["customer_id"] and transform["partition_by"] == "customer_id"
+    assert [t["column"] for t in transform["tests"]] == ["customer_id", "khong_co.cot_la"], "cột lạ để cổng báo lỗi"

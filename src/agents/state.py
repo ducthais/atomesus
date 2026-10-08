@@ -20,7 +20,9 @@ class AgentState(TypedDict, total=False):
     schema_snapshot: dict  # từ resolve, theo sources[].id của plan; KHÔNG do LLM sinh
     spec: dict | None
     spec_history: list[dict]
-    feedback: str | None  # lỗi cụ thể của lần sinh spec trước, đưa lại cho codegen
+    feedback: list[str] | None  # lỗi cụ thể của lần sinh spec / chạy thử trước, đưa lại cho codegen
+    repair: str | None  # vòng tự sửa sau chạy thử đang đi: propose | sql_fix (src/agents/router.py)
+    revision: dict | None  # người yêu cầu thay đổi: {by, comment, spec}; codegen áp dụng thay vì bám kế hoạch cũ
     generated_files: dict[str, str]
     files: dict[str, str]  # đường dẫn → hash
     files_hash: str | None

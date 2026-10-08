@@ -138,6 +138,7 @@ def test_happy_path_runs_four_steps():
         "schema_real",
         "currency",
         "join_fanout",
+        "filter_values",
         "time_grain",
         "ast_guard",
         "budget",
@@ -397,8 +398,10 @@ def test_sandbox_failure_is_reported():
     def failing(spec, files, policy, settings):
         return SandboxResult("NEEDS_HUMAN", "t_run", error_trace=[{"stage": "t_run", "error": "dbt lỗi"}])
 
-    state = run(FakeLLM(PLAN, SPEC), sandbox=failing)
-    assert state["status"] == "NEEDS_HUMAN" and state["error_trace"][-1]["error"] == "dbt lỗi"
+    llm = FakeLLM(PLAN, SPEC, SPEC, SPEC)  # dbt lỗi → vòng SQL, tối đa budgets.yml max_sql_attempts (2) lần
+    state = run(llm, sandbox=failing)
+    assert state["status"] == "NEEDS_HUMAN" and state["attempts"]["sql"] == 2 and len(llm.calls) == 4
+    assert "dbt lỗi" in state["error_trace"][-2]["error"] and "max_sql_attempts" in state["error_trace"][-1]["error"]
 
 
 def test_service_saves_report_and_files(tmp_path):

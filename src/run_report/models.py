@@ -58,6 +58,7 @@ GateName = Literal[
     "currency",
     "join_fanout",
     "time_grain",
+    "filter_values",
     "semantic",
     "ast_guard",
     "budget",
@@ -135,6 +136,7 @@ TimelineEventName = Literal[
     "spec_ready",
     "mapping_submitted",
     "changes_requested",
+    "revised",
     "cancelled",
     "finished",
 ]
