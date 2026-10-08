@@ -458,34 +458,31 @@ def start_continue(
     return started, _guarded(job, state, draft.created_at, store_path)
 
 
-def start_request_changes(
+REVISABLE = frozenset({"READY_FOR_REVIEW", "NEEDS_HUMAN", "REJECTED", "BLOCKED_BUDGET"})
+
+
+class RevisionNotAllowedError(Exception):
+    """Run không ở trạng thái sửa được bằng chat (đang chạy, đã deploy, bị hủy…)."""
+
+
+def _new_version(
     report: RunReport,
-    feedback: str,
-    reviewer: str,
+    comment: str,
+    author: str,
     deps: AgentDeps,
     store_path: str,
+    event: str,
+    reason: str,
+    decision: Approval | None = None,
 ) -> tuple[RunReport, Job]:
-    """Reviewer yêu cầu sửa: tạo version mới của cùng run và chạy lại từ bước viết Spec.
+    """Version mới của cùng run (vòng người, SPEC §11.3), chạy lại từ bước viết Spec với yêu cầu thay đổi của người.
 
     Kế hoạch, phạm vi nguồn và Spec trước được giữ làm ngữ cảnh. File của version cũ vẫn nằm trong `run_files`;
-    version mới xóa hash/approval hiện tại và đưa nhận xét thẳng vào feedback của codegen.
+    version mới xóa hash/approval hiện tại (bản duyệt cũ mất hiệu lực). Yêu cầu đi vào codegen qua `revision`, kênh
+    riêng với lỗi kiểm tra, để LLM được phép đổi chỉ số / độ hạt / bộ lọc so với kế hoạch ban đầu.
     """
-    comment = feedback.strip()
-    if not comment:
-        raise ValueError("Nhận xét yêu cầu sửa không được để trống.")
-    decision = Approval(
-        decision="changes_requested",
-        reviewer=reviewer,
-        files_hash=report.files_hash or "",
-        version=report.version,
-        at=datetime.now(UTC),
-        comment=comment,
-    )
-    timeline = [*(e.model_dump(mode="json") for e in report.timeline), _event("changes_requested", reviewer)]
-    history = [
-        *report.spec_history,
-        {"version": report.version, "reason": f"Reviewer {reviewer} yêu cầu sửa: {comment}"},
-    ]
+    timeline = [*(e.model_dump(mode="json") for e in report.timeline), _event(event, author)]
+    history = [*report.spec_history, {"version": report.version, "reason": reason}]
     state: AgentState = {
         "run_id": report.run_id,
         "version": report.version + 1,
@@ -498,7 +495,7 @@ def start_request_changes(
         "plan": report.plan,
         "spec": report.spec,
         "spec_history": history,
-        "feedback": comment,
+        "revision": {"by": author, "comment": comment, "spec": report.spec},
         "gates": [gate.model_dump() for gate in report.gates if gate.name == "semantic"],
         "checks": [],
         "attempts": {"spec": 0, "sql": 0},
@@ -509,7 +506,7 @@ def start_request_changes(
         "error_trace": [],
         "review_history": [
             *(item.model_dump(mode="json") for item in report.review_history),
-            decision.model_dump(mode="json"),
+            *([decision.model_dump(mode="json")] if decision else []),
         ],
         "status": "GENERATING",
         "stage_reached": "propose",
@@ -523,3 +520,49 @@ def start_request_changes(
         store_path,
     )
     return started, job
+
+
+def start_request_changes(
+    report: RunReport,
+    feedback: str,
+    reviewer: str,
+    deps: AgentDeps,
+    store_path: str,
+) -> tuple[RunReport, Job]:
+    """Reviewer yêu cầu sửa: tạo version mới của cùng run và chạy lại từ bước viết Spec kèm nhận xét."""
+    comment = feedback.strip()
+    if not comment:
+        raise ValueError("Nhận xét yêu cầu sửa không được để trống.")
+    decision = Approval(
+        decision="changes_requested",
+        reviewer=reviewer,
+        files_hash=report.files_hash or "",
+        version=report.version,
+        at=datetime.now(UTC),
+        comment=comment,
+    )
+    reason = f"Reviewer {reviewer} yêu cầu sửa: {comment}"
+    return _new_version(report, comment, reviewer, deps, store_path, "changes_requested", reason, decision)
+
+
+def start_revision(
+    report: RunReport,
+    message: str,
+    engineer: str,
+    deps: AgentDeps,
+    store_path: str,
+) -> tuple[RunReport, Job]:
+    """Engineer sửa pipeline bằng chat (`revise`, SPEC §14.5): version mới, bản duyệt cũ mất hiệu lực.
+
+    Chỉ sửa được run đã dừng và có kế hoạch. Run đã deploy thì dùng "Sửa & chạy lại" (run mới, giữ bản đang chạy).
+    """
+    comment = message.strip()
+    if not comment:
+        raise ValueError("Yêu cầu sửa không được để trống.")
+    if report.status not in REVISABLE or not report.plan:
+        raise RevisionNotAllowedError(
+            f"Run đang ở trạng thái {report.status}; chỉ sửa bằng chat được run đã dừng và có kế hoạch "
+            f"({', '.join(sorted(REVISABLE))}). Run đã deploy: dùng Sửa & chạy lại."
+        )
+    reason = f"{engineer} sửa qua chat: {comment}"
+    return _new_version(report, comment, engineer, deps, store_path, "revised", reason)

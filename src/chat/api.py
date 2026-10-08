@@ -1,15 +1,16 @@
 """API chat bản Sprint 1 (SPEC §14.5, §15, FR-27).
 
 - `POST /chat` không có `run_id`: `new_request`, lập kế hoạch rồi dừng chờ xác nhận bằng nút (P2), chỉ Engineer.
-- `POST /chat` có `run_id`: `ask`, trả lời từ RunReport, không đổi trạng thái run, trần `max_chat_calls`.
+- `POST /chat` có `run_id`: `ask`, trả lời từ RunReport, không đổi trạng thái run, trần `max_chat_calls`;
+  hoặc `revise` (câu mệnh lệnh đổi pipeline, chỉ Engineer sở hữu run): tạo version mới, agent viết lại Spec ở nền.
 - `GET /runs/{run_id}/messages`: lịch sử chat của run.
 Chat không duyệt, không deploy: cổng người chỉ qua nút bấm.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src.agents.nodes.common import AgentDeps
-from src.agents.service import plan_agent
+from src.agents.service import RevisionNotAllowedError, plan_agent, start_revision
 from src.api.routes import agent_deps
 from src.chat import answers, store
 from src.chat.models import ChatMessage, ChatRequest, ChatResponse
@@ -31,6 +32,7 @@ def _existing_run(store_path: str, run_id: str) -> RunReport:
 @router.post("/chat", response_model=ChatResponse)
 def post_chat(
     body: ChatRequest,
+    background: BackgroundTasks,
     user: dict = Depends(current_user),
     deps: AgentDeps = Depends(agent_deps),
     config: PipelineSettings = Depends(settings),
@@ -44,6 +46,18 @@ def post_chat(
             raise HTTPException(403, "Chỉ Engineer được tạo pipeline từ chat.")
         report = plan_agent(message, user["id"], deps, config.store_path)
         intent, reply = "new_request", answers.created_reply(report)
+    elif answers.intent(message) == "revise":
+        report = _existing_run(config.store_path, body.run_id)
+        if user["role"] != "Engineer":
+            raise HTTPException(403, "Reviewer không sửa pipeline qua chat; dùng nút Yêu cầu sửa trên run.")
+        if report.created_by != user["id"]:
+            raise HTTPException(403, "Chỉ Engineer tạo run được sửa run đó.")
+        try:
+            report, job = start_revision(report, message, user["id"], deps, config.store_path)
+        except RevisionNotAllowedError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        background.add_task(job)
+        intent, reply = "revise", answers.revised_reply(report, message)
     else:
         report = _existing_run(config.store_path, body.run_id)
         limit = deps.policy.budgets.per_run.max_chat_calls

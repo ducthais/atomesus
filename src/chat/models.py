@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.run_report.models import RunReport
 
-Intent = Literal["new_request", "ask"]
+Intent = Literal["new_request", "ask", "revise"]
 Role = Literal["user", "assistant"]
 
 

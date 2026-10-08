@@ -130,3 +130,56 @@ async def test_chat_rejects_identity_fields_from_client(client, env):
     response = await client.post("/api/v1/chat", json={"message": "x", "run_id": READY, "user": "an"})
 
     assert response.status_code == 422
+
+
+DEPLOYED = "a7d2e9f1"
+
+
+@pytest.mark.asyncio
+async def test_engineer_revises_by_chat_and_gets_a_new_version(client, env, monkeypatch):
+    jobs = []
+    monkeypatch.setattr(chat_api, "start_revision", _recording_revision(jobs))
+    await _login(client, "minh")
+
+    response = await client.post("/api/v1/chat", json={"message": "Thêm số đơn hàng của mỗi ngày", "run_id": READY})
+
+    body = response.json()
+    assert response.status_code == 200 and body["intent"] == "revise"
+    assert body["report"]["version"] == 4 and body["report"]["status"] == "GENERATING" and jobs == ["chạy"]
+    assert "version 4" in body["reply"] and "duyệt lại" in body["reply"]
+    messages = (await client.get(f"/api/v1/runs/{READY}/messages")).json()
+    assert [m["intent"] for m in messages] == ["revise", "revise"]
+
+
+def _recording_revision(jobs: list):
+    """start_revision thật (ghi version mới vào sổ), nhưng job nền chỉ được ghi lại, không gọi agent."""
+    from src.agents.service import start_revision
+
+    def run(report, message, engineer, deps, store_path):
+        started, _job = start_revision(report, message, engineer, deps, store_path)
+        return started, lambda: jobs.append("chạy")
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_questions_never_revise_and_reviewers_cannot_revise(client, env, monkeypatch):
+    monkeypatch.setattr(chat_api, "start_revision", lambda *_: pytest.fail("câu hỏi không được tạo version mới"))
+    await _login(client, "minh")
+    asked = (await client.post("/api/v1/chat", json={"message": "Thêm cột status được không?", "run_id": READY})).json()
+    assert asked["intent"] == "ask"
+
+    await _login(client, "an")
+    denied = await client.post("/api/v1/chat", json={"message": "Bỏ nguồn payments", "run_id": READY})
+    assert denied.status_code == 403 and "Yêu cầu sửa" in denied.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_deployed_run_is_revised_with_edit_and_rerun_instead(client, env):
+    await _login(client, "minh")
+    run_id = next(p for p in (await client.get("/api/v1/runs")).json() if p["run_id"].startswith(DEPLOYED))["run_id"]
+
+    response = await client.post("/api/v1/chat", json={"message": "Đổi lịch chạy sang 3 giờ sáng", "run_id": run_id})
+
+    assert response.status_code == 409 and "Sửa & chạy lại" in response.json()["detail"]
+    assert (await client.get(f"/api/v1/runs/{run_id}")).json()["status"] == "DEPLOYED"

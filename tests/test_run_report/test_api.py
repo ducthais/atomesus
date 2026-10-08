@@ -25,9 +25,7 @@ def store_path(tmp_path, monkeypatch):
 
 @pytest_asyncio.fixture
 async def logged_in(client, store_path):
-    response = await client.post(
-        "/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"}
-    )
+    response = await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
     assert response.status_code == 200
     return client
 
@@ -184,7 +182,7 @@ async def test_reviewer_can_request_changes_and_restart_from_spec(logged_in, gen
     assert revised.status == "READY_FOR_REVIEW", revised.error_trace
     assert revised.review_history[-1].decision == "changes_requested"
     assert revised.review_history[-1].comment == "Giữ metric, sửa lịch chạy"
-    assert llm.calls[0]["user"]["lỗi_lần_trước"] == "Giữ metric, sửa lịch chạy"
+    assert "Giữ metric, sửa lịch chạy" in llm.calls[0]["user"]["yêu_cầu_thay_đổi"]
 
 
 @pytest.mark.asyncio

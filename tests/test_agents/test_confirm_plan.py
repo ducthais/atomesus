@@ -76,15 +76,19 @@ def test_request_changes_creates_new_version_and_feeds_comment_to_codegen(tmp_pa
     ready = confirm_plan(plan_agent("Doanh thu theo ngày", "minh", first_agent, store), "minh", first_agent, store)
     revised_llm = FakeLLM(SPEC)
 
-    started, job = start_request_changes(ready, "Đổi lịch chạy và giữ nguyên metric đúng", "an", deps(revised_llm), store)
+    started, job = start_request_changes(
+        ready, "Đổi lịch chạy và giữ nguyên metric đúng", "an", deps(revised_llm), store
+    )
     revised = job()
 
     assert started.version == 2 and started.status == "GENERATING" and started.files_hash is None
     assert revised.version == 2 and revised.status == "READY_FOR_REVIEW" and revised.approval is None
     assert revised.review_history[-1].decision == "changes_requested"
     assert revised.review_history[-1].comment == "Đổi lịch chạy và giữ nguyên metric đúng"
-    assert revised_llm.calls[0]["user"]["lỗi_lần_trước"] == "Đổi lịch chạy và giữ nguyên metric đúng"
-    assert revised_llm.calls[0]["user"]["spec_lần_trước"] == ready.spec
+    # Nhận xét đi kênh riêng (yêu_cầu_thay_đổi), không lẫn với lỗi kiểm tra: LLM được đổi so với kế hoạch cũ.
+    prompt = revised_llm.calls[0]["user"]
+    assert "Đổi lịch chạy và giữ nguyên metric đúng" in prompt["yêu_cầu_thay_đổi"] and "lỗi_lần_trước" not in prompt
+    assert prompt["spec_hiện_tại"] == ready.spec
     assert any("Reviewer an yêu cầu sửa" in item.get("reason", "") for item in revised.spec_history)
     assert [event.event for event in revised.timeline].count("spec_ready") == 2
 

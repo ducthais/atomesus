@@ -6,22 +6,23 @@ import type { ChatMessage } from '@/lib/studio';
 import { askRun } from '../actions';
 import { fmtDate } from './ui';
 
-/** Câu hỏi mẫu khớp 4 nhóm câu trả lời của backend (src/chat/answers.py). */
-const SUGGESTIONS = ['Vì sao run này dừng?', 'Mỗi nguồn có bao nhiêu dòng?', 'Run sinh ra những file nào?', 'Run đã được duyệt chưa?'];
+/** Câu hỏi mẫu khớp các nhóm câu trả lời của backend (src/chat/answers.py). */
+const SUGGESTIONS = ['Vì sao run này dừng?', 'Nguồn nào đang bẩn, vì sao?', 'Mỗi nguồn có bao nhiêu dòng?', 'Run đã được duyệt chưa?'];
 
 /** `tên` trong câu trả lời → <code>, phần còn lại giữ nguyên xuống dòng. */
 const Rich = ({ text }: { text: string }) => <>{text.split('`').map((part, i) => i % 2 ? <code key={i}>{part}</code> : <Fragment key={i}>{part}</Fragment>)}</>;
 
 type Props = { runId: string; messages: ChatMessage[]; people: Record<string, string>; limit: number; disabledReason: string | null };
 
-/** Hỏi đáp về run đang mở. Trả lời lấy từ RunReport, không đổi trạng thái run; duyệt và deploy chỉ qua nút bấm. */
+/** Hỏi đáp về run đang mở (trả lời từ RunReport, không đổi run). Câu mệnh lệnh của Engineer ("Thêm…", "Bỏ…") tạo
+ * version mới để agent sửa pipeline; duyệt và deploy vẫn chỉ qua nút bấm. */
 export function RunChat({ runId, messages, people, limit, disabledReason }: Props) {
   const [draft, setDraft] = useState('');
   const [asking, setAsking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const end = useRef<HTMLDivElement>(null);
-  const used = messages.filter(m => m.role === 'user').length;
+  const used = messages.filter(m => m.role === 'user' && m.intent === 'ask').length;
   const exhausted = used >= limit;
   const blocked = disabledReason ?? (exhausted ? `Run đã dùng hết ${limit} câu hỏi (budgets.yml: per_run.max_chat_calls).` : null);
 
@@ -42,7 +43,7 @@ export function RunChat({ runId, messages, people, limit, disabledReason }: Prop
 
   return <section className="panel chat">
     <div className="panel-head"><h2>Hỏi về run này</h2><span className="muted small mono" title="budgets.yml: per_run.max_chat_calls">{used}/{limit} câu hỏi</span></div>
-    <p className="muted small">Câu trả lời đọc từ RunReport, mỗi con số kèm tên trường nguồn. Chat không đổi trạng thái run; duyệt và deploy chỉ qua nút bấm.</p>
+    <p className="muted small">Câu hỏi được trả lời từ RunReport, mỗi con số kèm tên trường nguồn, không đổi run. Engineer tạo run có thể ra lệnh sửa (ví dụ <em>Thêm số đơn hàng của mỗi khách hàng</em>): agent tạo version mới và bản duyệt cũ mất hiệu lực. Duyệt và deploy chỉ qua nút bấm.</p>
 
     <div className="chat-log" aria-live="polite">
       {messages.length === 0 && !asking && <p className="muted chat-empty">Chưa có câu hỏi nào. Thử một câu gợi ý bên dưới.</p>}
@@ -61,8 +62,8 @@ export function RunChat({ runId, messages, people, limit, disabledReason }: Prop
     {blocked ? <p className="callout warn small"><CircleAlert size={15} aria-hidden /><span>{blocked}</span></p> : <>
       <div className="chat-suggestions">{SUGGESTIONS.map(s => <button key={s} type="button" className="chip" disabled={pending} onClick={() => send(s)}>{s}</button>)}</div>
       <form className="chat-compose" onSubmit={e => { e.preventDefault(); send(draft); }}>
-        <label htmlFor="chat-input" className="sr-only">Câu hỏi về run</label>
-        <textarea id="chat-input" rows={2} maxLength={2000} value={draft} disabled={pending} placeholder="Ví dụ: Vì sao run này dừng?"
+        <label htmlFor="chat-input" className="sr-only">Câu hỏi hoặc yêu cầu sửa run</label>
+        <textarea id="chat-input" rows={2} maxLength={2000} value={draft} disabled={pending} placeholder="Ví dụ: Vì sao run này dừng? hoặc: Thêm số đơn hàng của mỗi khách hàng"
           onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(draft); } }} />
         <button type="submit" className="button primary" disabled={pending || !draft.trim()}><Send size={15} aria-hidden /> Gửi</button>
       </form>

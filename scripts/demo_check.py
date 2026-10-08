@@ -31,7 +31,11 @@ DEMO_RUNS = [
     ("ce884a4f", "READY_FOR_REVIEW", "run dự phòng để Reviewer duyệt (Sales, doanh thu theo khách hàng)"),
     ("bc434ba6", "READY_FOR_REVIEW", "ví dụ AI hiểu chưa đúng ý → hệ thống cảnh báo (Pagila)"),
     ("c4b8f0d3", "BLOCKED_SEMANTIC_CONFLICT", "ví dụ bị chặn ở cổng ngữ nghĩa"),
-    ("0dbc25b0", "READY_FOR_REVIEW", "3 nguồn Postgres + API + CSV, kế hoạch đã sửa, Reviewer đã yêu cầu sửa (v2)"),
+    (
+        "0dbc25b0",
+        "READY_FOR_REVIEW",
+        "3 nguồn Postgres + API + CSV, kế hoạch đã sửa, yêu cầu sửa (v2) và sửa qua chat (v3)",
+    ),
     ("a1cb5645", "CANCELLED", "run bị Engineer hủy ở bước xác nhận kế hoạch"),
 ]
 failures = 0

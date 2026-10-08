@@ -189,11 +189,13 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 
 | Thao tác | Nói / chỉ vào |
 |---|---|
-| (Reviewer) mở run **`0dbc25b0`** → tab **Tổng quan** | Run này đã ở **v2**: Reviewer từng bấm **Yêu cầu sửa** kèm nhận xét; agent viết lại Spec từ nhận xét đó, chạy thử lại, và bản v1 vẫn nằm trong sổ bằng chứng. Tiền LLM của v1 vẫn được tính vào run. |
+| (Reviewer) mở run **`0dbc25b0`** → tab **Tổng quan** | Run này đã ở **v3**: v2 do Reviewer bấm **Yêu cầu sửa**, v3 do Engineer gõ trong chat "Thêm số đơn hàng của mỗi khách hàng". Agent thêm chỉ số `order_count` (đếm DISTINCT vì đã ghép thanh toán), chạy thử lại, đối chiếu độc lập vẫn khớp; các bản cũ còn trong sổ bằng chứng, tiền LLM của chúng vẫn tính vào run. |
 | Trang **Hoạt động** → **Duyệt nhiều run** | Mọi run đang chờ duyệt, kèm số kiểm tra đạt và chi phí. Chỉ tích được run của người khác **và** đã đạt mọi kiểm tra; run không chọn được ghi rõ lý do. |
 | Tích 2 run → **Duyệt** (hoặc nhập ghi chú → **Từ chối**) | Mỗi run vẫn được backend kiểm lại đúng bộ file (`files_hash`) như khi duyệt từng run; kết quả hiện riêng cho từng run. |
 
-**Tránh khi demo:** nhận xét "Yêu cầu sửa" kiểu **thêm chỉ số mới** (ví dụ "thêm số đơn hàng"). Hiện agent giữ đúng kế hoạch cũ nên bản mới chưa có chỉ số đó (đã thử với `0dbc25b0`). Nên dùng nhận xét sửa trong phạm vi kế hoạch, ví dụ đổi tên cột.
+**Sửa bằng chat (Engineer):** ở tab **Chat** của run, câu hỏi ("Nguồn nào đang bẩn, vì sao?") chỉ được trả lời từ sổ bằng chứng; câu mệnh lệnh ("Thêm…", "Bỏ…", "Đổi…") tạo version mới và bản duyệt cũ mất hiệu lực. Run đã deploy thì dùng **Sửa & chạy lại**.
+
+**Tự sửa sau chạy thử:** chạy thử không đạt (dòng rác vượt ngưỡng, dbt lỗi, đối chiếu lệch) thì agent tự sửa theo bảng định tuyến `src/agents/router.py`, tối đa 2 lần mỗi vòng (`budgets.yml`); lệch do múi giờ thì vẫn dừng cho người xem, như ca ở phần điểm nhấn.
 
 ---
 
