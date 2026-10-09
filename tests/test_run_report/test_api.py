@@ -1,3 +1,4 @@
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -120,6 +121,22 @@ async def test_approve_deploys_approved_files_to_local_dagster(logged_in, genera
     assert (project / "infra/dagster/generated/fct_daily_orders_asset.py").is_file()
     assert (project / "dbt_project/models/gold/fct_daily_orders.sql").is_file()
     assert (project / "dbt_project/dbt_project.yml").is_file()
+
+
+@pytest.mark.asyncio
+async def test_deploy_timeout_is_recorded_as_deploy_failed(logged_in, generated_run, monkeypatch):
+    from src.codegen import deploy
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("dbt parse", 120)
+
+    monkeypatch.setattr(deploy, "deploy_local", timeout)
+    response = await logged_in.post(
+        f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": generated_run.files_hash}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "DEPLOY_FAILED"
 
 
 @pytest.mark.asyncio

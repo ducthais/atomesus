@@ -1,4 +1,4 @@
-"""Node `codegen` (P3 resolve + P4 propose, LLM mạnh): kế hoạch + schema thật + dòng mẫu → Spec (SPEC §14.2).
+"""Node `codegen` (P3 resolve + P4 propose, LLM mạnh): kế hoạch + schema thật + profile mẫu an toàn → Spec.
 
 Spec được kiểm tra ngay (`src/agents/validate.py`). Sai `spec_schema`/`schema_real` thì gọi lại LLM kèm
 lỗi cụ thể, tối đa `budgets.yml: per_run.max_spec_attempts` lần (vòng spec, SPEC §11.3); hết lượt → NEEDS_HUMAN.
@@ -6,6 +6,7 @@ Biểu thức nguy hiểm → BLOCKED_AST, không thử lại.
 """
 
 import json
+from datetime import datetime
 
 from src.agents.llm import LLMOutputError, parse_json
 from src.agents.nodes.common import AgentDeps, StopError, call_llm, llm_usage, prompt
@@ -17,6 +18,7 @@ from src.spec import SPEC_FIXTURES_DIR
 
 EXAMPLE_SPEC = SPEC_FIXTURES_DIR / "spec_02_sales_multi_source.json"
 TEMPORAL = {"date", "timestamp"}
+DATE_FORMATS = ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S")
 
 # Kiểu Postgres (information_schema.data_type) → kiểu staging cho phép (src/spec/models.py COLUMN_TYPE).
 PG_TYPES = {
@@ -196,12 +198,49 @@ def _system_prompt() -> str:
     return prompt("codegen").replace("{example}", EXAMPLE_SPEC.read_text(encoding="utf-8"))
 
 
+def _value_profiles(source: dict) -> dict:
+    """Rút đặc trưng hữu ích từ mẫu tại máy mà không gửi bất kỳ giá trị nguồn nào ra ngoài."""
+    rows = source.get("sample_rows") or []
+    profiles = {}
+    for column in source.get("columns") or {}:
+        values = [str(row[column]) for row in rows if isinstance(row, dict) and row.get(column) not in (None, "")]
+        if not values:
+            continue
+        formats = []
+        for date_format in DATE_FORMATS:
+            try:
+                for value in values:
+                    datetime.strptime(value, date_format)
+            except ValueError:
+                continue
+            formats.append(date_format)
+        numeric_text = True
+        try:
+            for value in values:
+                float(value.replace(",", ""))
+        except ValueError:
+            numeric_text = False
+        profiles[column] = {
+            "non_null_samples": len(values),
+            "distinct_samples": len(set(values)),
+            "max_length": max(map(len, values)),
+            "date_formats": formats,
+            "numeric_text": numeric_text,
+        }
+    return profiles
+
+
 def _user_message(state: AgentState, deps: AgentDeps, snapshot: dict) -> str:
     domain = deps.policy.domains.domains[state["plan"]["domain"]]
+    # Dòng mẫu chỉ dùng cho validation cục bộ. Không gửi giá trị nguồn thật tới nhà cung cấp LLM.
+    prompt_snapshot = {}
+    for source_id, source in snapshot.items():
+        prompt_snapshot[source_id] = {key: value for key, value in source.items() if key != "sample_rows"}
+        prompt_snapshot[source_id]["value_profiles"] = _value_profiles(source)
     message = {
         "yêu_cầu": state["user_request"],
         "kế_hoạch": state["plan"],
-        "schema_snapshot": snapshot,
+        "schema_snapshot": prompt_snapshot,
         "chính_sách": {
             "domain": state["plan"]["domain"],
             "tiền_gốc": domain.currency.base,
@@ -244,7 +283,7 @@ def _user_message(state: AgentState, deps: AgentDeps, snapshot: dict) -> str:
 REPAIR_PROMPTS = {
     "propose": (
         "Spec lần trước đã qua kiểm tra tĩnh nhưng CHẠY THỬ trên dữ liệu thật không đạt, chi tiết trong `lỗi_chạy_thử` "
-        "(kèm phase, nguồn, số đo và dòng mẫu). Trả về Spec đầy đủ đã sửa đúng nguyên nhân đó, giữ nguyên ý nghĩa đầu "
+        "(chỉ gồm phase, nguồn và số đo tổng hợp). Trả về Spec đầy đủ đã sửa đúng nguyên nhân đó, giữ nguyên ý nghĩa đầu "
         "ra (model_name, grain, chỉ số) trừ khi lỗi nằm chính ở đó."
     ),
     "sql_fix": (

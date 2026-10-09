@@ -8,6 +8,7 @@ phase bị treo vào error_trace. Dùng cho graph (src/agents/graph.py), luồng
 import queue
 import threading
 
+from src.agents.cancellation import bind_phase_cancel, raise_if_phase_cancelled
 from src.agents.nodes.common import AgentDeps, Node, StopError
 from src.agents.state import AgentState
 
@@ -34,8 +35,10 @@ def with_timeout(node: Node, stage: str, seconds: float, label: str | None = Non
 
     def run(state: AgentState) -> dict:
         box: queue.Queue = queue.Queue(maxsize=1)
+        cancelled = threading.Event()
 
         def target() -> None:
+            bind_phase_cancel(cancelled)
             try:
                 box.put((True, node(state)))
             except BaseException as exc:  # chuyển lỗi về luồng của graph
@@ -45,6 +48,7 @@ def with_timeout(node: Node, stage: str, seconds: float, label: str | None = Non
         try:
             ok, value = box.get(timeout=seconds)
         except queue.Empty:
+            cancelled.set()
             message = f"Phase {label or stage} chạy quá {seconds:g} giây (budgets.yml phase_timeout_sec), đã dừng."
             return StopError("INFRA_ERROR", stage, message).update(state)
         if not ok:
@@ -52,6 +56,9 @@ def with_timeout(node: Node, stage: str, seconds: float, label: str | None = Non
         return value
 
     return run
+
+
+__all__ = ["raise_if_phase_cancelled", "timed", "with_timeout"]
 
 
 def timed(deps: AgentDeps, name: str, node: Node) -> Node:

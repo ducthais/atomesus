@@ -126,7 +126,7 @@ async def test_monitor_api(client, env, monkeypatch):
     monkeypatch.setattr(runs.budget, "estimate", lambda *a: {"bytes": 1, "usd": 0.0})
     try:
         assert (await client.post("/api/v1/monitor/collect")).status_code == 401
-        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         collected = (await client.post("/api/v1/monitor/collect")).json()
         assert collected["collected"] == 1
         listing = (await client.get("/api/v1/monitor/pipelines")).json()

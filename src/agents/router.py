@@ -53,8 +53,7 @@ ROUTES: tuple[Route, ...] = (
         "P12",
         "staging_rejects",
         "propose",
-        hint="Quá nhiều dòng bị tách ở staging: sửa khối staging (date_formats, kiểu cột, reject_if) theo lý do và "
-        "dòng mẫu bị tách.",
+        hint="Quá nhiều dòng bị tách ở staging: sửa khối staging (date_formats, kiểu cột, reject_if) theo lý do.",
     ),
     Route("P12", "dbt_test", "sql_fix", hint="Sửa biểu thức hoặc khóa làm dbt test không đạt."),
     Route(
@@ -111,26 +110,19 @@ def _staging(check: dict) -> str:
     reasons = ", ".join(
         f"{reason}: {count} dòng" for reason, count in list((o.get("reject_reasons") or {}).items())[:3]
     )
-    samples = [
-        {k: v for k, v in sample.items() if not k.startswith("_") or k == "_reject_reason"}
-        for sample in (o.get("reject_samples") or [])[:3]
-    ]
     text = f"{o.get('rejected')}/{o.get('bronze')} dòng bị tách ({o.get('reject_pct')}% > {o.get('max_reject_pct')}%)"
     if o.get("duplicates", 0) < 0 or not o.get("bronze"):
         text = f"bronze {o.get('bronze')} dòng, staging {o.get('staging')}, tách {o.get('rejected')}"
     return (
         text
         + (f"; lý do nhiều nhất: {reasons}" if reasons else "")
-        + (f"; dòng mẫu bị tách: {samples}" if samples else "")
     )
 
 
 def _metric(check: dict) -> str:
     o = check["observed"]
-    shown = (o.get("mismatched") or [])[:3]
     return (
         f"{o.get('mismatch_count')} giá trị khác, {o.get('missing_count')} dòng thiếu, {o.get('extra_count')} dòng thừa"
-        f"; tổng {o.get('totals')}" + (f"; ví dụ {shown}" if shown else "")
     )
 
 
@@ -149,7 +141,22 @@ def classify(state: dict) -> list[Failure]:
             continue
         name, sid, o = check["name"], check.get("source_id"), check.get("observed") or {}
         if name in ("row_reconcile", "hash_reconcile", "idempotent"):
-            failures.append(Failure(name, str({k: v for k, v in o.items() if not k.endswith("_hash")}), sid))
+            safe = {
+                key: o[key]
+                for key in (
+                    "source",
+                    "bronze",
+                    "source_records",
+                    "key_columns",
+                    "source_keys",
+                    "bronze_keys",
+                    "first_rows",
+                    "second_rows",
+                    "write_disposition",
+                )
+                if key in o
+            }
+            failures.append(Failure(name, str(safe), sid))
         elif name == "staging_reconcile":
             failures.append(Failure("staging_rejects", _staging(check), sid))
         elif name == "dbt_test":

@@ -82,6 +82,7 @@ def _in_thread(job) -> None:
 
 def collect() -> None:
     """Ghi số đo các lần chạy đã xong rồi chạy 4 luật suy giảm; Dagster chưa lên hoặc lỗi thì bỏ qua, lần sau làm tiếp."""
+    from src.agents import budget
     from src.agents.llm import openai_llm
     from src.agents.nodes.common import AgentDeps
     from src.monitor import day2
@@ -92,7 +93,7 @@ def collect() -> None:
     try:
         policy = load_policy()  # đọc lại mỗi lần: sửa ngưỡng trong objectives.yml có hiệu lực ngay (NFR-04)
         written = collect_runs(settings, policy)
-        deps = AgentDeps(llm=openai_llm(), policy=policy, settings=settings)
+        deps = AgentDeps(llm=openai_llm(), policy=policy, settings=settings, reserve_daily=budget.reserve_daily)
         actions = day2.check(settings, policy, day2.launcher(deps, settings.store_path, _in_thread))
     except MonitorError:
         return

@@ -6,7 +6,7 @@ Mỗi run một dòng, khóa theo `run_id`; bản ghi được kiểm tra bằng
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.run_report.models import RunReport, RunStatus
@@ -23,8 +23,13 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
         with conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS run_reports ("
-                " run_id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL, report TEXT NOT NULL)"
+                " run_id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL, report TEXT NOT NULL,"
+                " updated_at TEXT)"
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(run_reports)")}
+            if "updated_at" not in columns:
+                conn.execute("ALTER TABLE run_reports ADD COLUMN updated_at TEXT")
+            conn.execute("UPDATE run_reports SET updated_at = created_at WHERE updated_at IS NULL")
             # created_at lưu ở UTC để sắp xếp theo chuỗi đúng thứ tự thời gian.
             conn.execute("CREATE INDEX IF NOT EXISTS run_reports_created_at ON run_reports (created_at)")
             # Nội dung đầy đủ file sinh ra theo (run_id, version), để xem diff sau khi sandbox đã xóa (SPEC §8.2).
@@ -33,6 +38,17 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
                 " run_id TEXT NOT NULL, version INTEGER NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,"
                 " PRIMARY KEY (run_id, version, path))"
             )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS budget_ledger ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, version INTEGER NOT NULL,"
+                " category TEXT NOT NULL, usd REAL NOT NULL, spent_at TEXT NOT NULL)"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS budget_reservations ("
+                " run_id TEXT NOT NULL, version INTEGER NOT NULL, category TEXT NOT NULL, usd REAL NOT NULL,"
+                " reserved_at TEXT NOT NULL, PRIMARY KEY (run_id, version, category))"
+            )
+            conn.commit()  # schema/migration work must finish before callers request BEGIN IMMEDIATE
             yield conn
     finally:
         conn.close()
@@ -45,12 +61,113 @@ def save_run_report(path: str, report: RunReport) -> None:
     ghi đè quyết định hủy. Điều kiện nằm ngay trong câu UPSERT để không có khe race giữa đọc và ghi.
     """
     with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        recorded_total = conn.execute(
+            "SELECT coalesce(sum(usd), 0) FROM budget_ledger WHERE run_id = ?", (report.run_id,)
+        ).fetchone()[0]
+        scan_usd = 0.0 if report.status == "BLOCKED_BUDGET" else report.cost.usd
+        new_total = scan_usd + report.cost.llm_usd
+        delta = max(0.0, new_total - recorded_total)
+        now = datetime.now(UTC).isoformat()
+        if delta:
+            conn.execute(
+                "INSERT INTO budget_ledger (run_id, version, category, usd, spent_at) VALUES (?, ?, ?, ?, ?)",
+                (report.run_id, report.version, "reported", delta, now),
+            )
         conn.execute(
-            "INSERT INTO run_reports VALUES (?, ?, ?, ?)"
-            " ON CONFLICT(run_id) DO UPDATE SET status = excluded.status, report = excluded.report"
+            "INSERT INTO run_reports (run_id, status, created_at, report, updated_at) VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(run_id) DO UPDATE SET status = excluded.status, report = excluded.report,"
+            " updated_at = excluded.updated_at"
             " WHERE run_reports.status <> 'CANCELLED' OR excluded.status = 'CANCELLED'",
-            (report.run_id, report.status, report.created_at.astimezone(UTC).isoformat(), report.model_dump_json()),
+            (report.run_id, report.status, report.created_at.astimezone(UTC).isoformat(), report.model_dump_json(), now),
         )
+        # Chỉ giải phóng khoản giữ chỗ khi báo cáo chứng minh công việc tương ứng đã hoàn tất. Reservation của một
+        # lần gọi LLM bị timeout/cancel vẫn ở lại đến hết ngày, vì nhà cung cấp có thể đã tính tiền dù usage chưa về.
+        current_calls = report.llm_usage[-report.llm_calls :] if report.llm_calls else []
+        completed = [f"llm:{call.stage}:{index}" for index, call in enumerate(current_calls, start=1)]
+        budget_passes = sum(gate.name == "budget" for gate in report.gates)
+        if budget_passes:
+            completed.append(f"scan:{budget_passes}")
+        if completed:
+            conn.executemany(
+                "DELETE FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
+                [(report.run_id, report.version, category) for category in completed],
+            )
+
+
+def transition_run_report(
+    path: str,
+    report: RunReport,
+    expected_status: str,
+    expected_version: int,
+    expected_files_hash: str | None = None,
+) -> bool:
+    """Atomically replace a report only when the caller still owns the observed state."""
+    with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT status, report FROM run_reports WHERE run_id = ?", (report.run_id,)).fetchone()
+        if row is None:
+            return False
+        current = RunReport.model_validate_json(row[1])
+        if row[0] != expected_status or current.version != expected_version:
+            return False
+        if expected_files_hash is not None and current.files_hash != expected_files_hash:
+            return False
+        now = datetime.now(UTC).isoformat()
+        cursor = conn.execute(
+            "UPDATE run_reports SET status = ?, report = ?, updated_at = ? WHERE run_id = ? AND status = ?",
+            (report.status, report.model_dump_json(), now, report.run_id, expected_status),
+        )
+        return cursor.rowcount == 1
+
+
+def reserve_budget(
+    path: str, run_id: str, version: int, category: str, usd: float, daily_limit: float
+) -> tuple[bool, float]:
+    """Reserve budget under one SQLite write transaction; retries are idempotent."""
+    now = datetime.now(UTC)
+    day = now.date().isoformat()
+    with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
+            (run_id, version, category),
+        ).fetchone()
+        spent = conn.execute(
+            "SELECT coalesce(sum(usd), 0) FROM budget_ledger WHERE substr(spent_at, 1, 10) = ?", (day,)
+        ).fetchone()[0]
+        reserved = conn.execute(
+            "SELECT coalesce(sum(usd), 0) FROM budget_reservations WHERE substr(reserved_at, 1, 10) = ?", (day,)
+        ).fetchone()[0]
+        if existing:
+            return True, float(spent + reserved)
+        if spent + reserved + usd > daily_limit:
+            return False, float(spent + reserved)
+        conn.execute(
+            "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
+            (run_id, version, category, usd, now.isoformat()),
+        )
+        return True, float(spent + reserved)
+
+
+def release_budget(path: str, run_id: str, version: int, category: str) -> None:
+    with _database(path) as conn:
+        conn.execute(
+            "DELETE FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
+            (run_id, version, category),
+        )
+
+
+def spent_today(path: str) -> float:
+    day = datetime.now(UTC).date().isoformat()
+    with _database(path) as conn:
+        spent = conn.execute(
+            "SELECT coalesce(sum(usd), 0) FROM budget_ledger WHERE substr(spent_at, 1, 10) = ?", (day,)
+        ).fetchone()[0]
+        reserved = conn.execute(
+            "SELECT coalesce(sum(usd), 0) FROM budget_reservations WHERE substr(reserved_at, 1, 10) = ?", (day,)
+        ).fetchone()[0]
+    return float(spent + reserved)
 
 
 def is_run_cancelled(path: str, run_id: str) -> bool:
@@ -70,7 +187,7 @@ def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HI
     return [RunReport.model_validate_json(row[0]) for row in rows]
 
 
-def abandon_unfinished(path: str) -> list[str]:
+def abandon_unfinished(path: str, stale_before: datetime | None = None) -> list[str]:
     """Run đang chạy nền lúc backend tắt sẽ không bao giờ xong: đánh dấu lỗi để giao diện không chờ mãi.
 
     Chỉ gọi lúc backend khởi động (chưa có việc nền nào). DRAFT là nháp chờ người (xác nhận kế hoạch hoặc sửa
@@ -79,6 +196,12 @@ def abandon_unfinished(path: str) -> list[str]:
     abandoned = []
     for status in ("PLAN_CONFIRMED", "GENERATING", "VALIDATING"):
         for report in list_run_reports(path, status, limit=1000):
+            if stale_before is not None:
+                with _database(path) as conn:
+                    row = conn.execute("SELECT updated_at FROM run_reports WHERE run_id = ?", (report.run_id,)).fetchone()
+                updated_at = datetime.fromisoformat(row[0]) if row and row[0] else report.created_at
+                if updated_at >= stale_before:
+                    continue
             error = {
                 "stage": report.stage_reached,
                 "error": "Backend khởi động lại khi run đang chạy; hãy gửi lại yêu cầu.",

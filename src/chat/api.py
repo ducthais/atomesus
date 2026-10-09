@@ -10,7 +10,7 @@ Chat không duyệt, không deploy: cổng người chỉ qua nút bấm.
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src.agents.nodes.common import AgentDeps
-from src.agents.service import RevisionNotAllowedError, plan_agent, start_revision
+from src.agents.service import RevisionNotAllowedError, RunChangedError, plan_agent, start_revision
 from src.api.routes import agent_deps
 from src.chat import answers, store
 from src.chat.models import ChatMessage, ChatRequest, ChatResponse
@@ -54,7 +54,7 @@ def post_chat(
             raise HTTPException(403, "Chỉ Engineer tạo run được sửa run đó.")
         try:
             report, job = start_revision(report, message, user["id"], deps, config.store_path)
-        except RevisionNotAllowedError as exc:
+        except (RevisionNotAllowedError, RunChangedError) as exc:
             raise HTTPException(409, str(exc)) from exc
         background.add_task(job)
         intent, reply = "revise", answers.revised_reply(report, message)

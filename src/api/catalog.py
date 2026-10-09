@@ -138,11 +138,18 @@ def schema_drift(config: PipelineSettings = Depends(settings)) -> dict:
 
 
 @router.post("/datasets/{domain}/{model}/reconcile")
-def reconcile_deployed(domain: str, model: str, config: PipelineSettings = Depends(settings)) -> dict:
+def reconcile_deployed(
+    domain: str,
+    model: str,
+    user: dict = Depends(current_user),
+    config: PipelineSettings = Depends(settings),
+) -> dict:
     """Đối chiếu lại bảng gold Dagster đang giữ với kết quả tính lại thẳng trên nguồn Postgres, ngay lúc gọi.
 
     Dùng Spec của bản đang chạy (bản duyệt mới nhất của model). Không ghi gì: chỉ đọc warehouse và nguồn.
     """
+    if user["role"] != "Engineer":
+        raise HTTPException(403, "Chỉ Engineer được đối soát pipeline đã deploy.")
     import duckdb
 
     live = [r for r in live_pipelines(list_run_reports(config.store_path, limit=1000)) if r.domain == domain]

@@ -128,7 +128,10 @@ def test_happy_path_runs_four_steps():
     state = run(llm)
     assert state["status"] == "READY_FOR_REVIEW" and state["stage_reached"] == "t_validate"
     assert [c["tier"] for c in llm.calls] == ["cheap", "strong"]
-    assert llm.calls[1]["user"]["schema_snapshot"] == SNAPSHOT  # LLM luôn nhận schema thật
+    prompt_snapshot = llm.calls[1]["user"]["schema_snapshot"]
+    assert prompt_snapshot["orders"]["columns"] == SNAPSHOT["orders"]["columns"]
+    assert prompt_snapshot["orders"]["value_profiles"]["ordered_at_text"]["date_formats"] == ["%Y-%m-%d"]
+    assert "sample_rows" not in prompt_snapshot["orders"]
     assert state["llm_calls"] == 2 and state["domain"] == "sales"
     assert len(state["generated_files"]) == 5 and set(state["files"]) == set(state["generated_files"])
     assert state["files_hash"].startswith("sha256:")
@@ -441,12 +444,18 @@ def test_progress_is_saved_after_each_step_and_background_job_finishes(tmp_path,
     store = str(tmp_path / "runs.sqlite3")
     seen = []
     original = service.save_run_report
+    original_transition = service.transition_run_report
 
     def recording(path, report):
         seen.append((report.status, report.stage_reached))
         original(path, report)
 
+    def recording_transition(path, report, *args, **kwargs):
+        seen.append((report.status, report.stage_reached))
+        return original_transition(path, report, *args, **kwargs)
+
     monkeypatch.setattr(service, "save_run_report", recording)
+    monkeypatch.setattr(service, "transition_run_report", recording_transition)
     agent = deps(FakeLLM(PLAN, SPEC))
     started, job = start_agent("Doanh thu theo ngày", "minh", agent, store)
     assert started.status == "GENERATING" and get_run_report(store, started.run_id).status == "GENERATING"

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from src.agents.cancellation import raise_if_phase_cancelled
 from src.codegen import el_checks, reference
 from src.codegen.render import rejected_table, staging_model
 from src.pipeline import files, postgres, rest_api
@@ -112,18 +113,63 @@ def _env(sandbox: Path, spec: Spec, policy: Policy, settings: PipelineSettings) 
 
 
 def _run(command: list[str], sandbox: Path, env: dict[str, str], timeout: int, stage: str) -> str:
+    raise_if_phase_cancelled()
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    process = subprocess.Popen(
+        command,
+        cwd=sandbox,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        start_new_session=os.name != "nt",
+        creationflags=flags,
+    )
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _terminate_process_tree(process)
+            raise _StopError(
+                "INFRA_ERROR", stage, f"Phase {stage} chạy quá {timeout} giây (budgets.yml phase_timeout_sec)."
+            )
+        try:
+            stdout, stderr = process.communicate(timeout=min(0.05, remaining))
+            break
+        except subprocess.TimeoutExpired:
+            try:
+                raise_if_phase_cancelled()
+            except TimeoutError:
+                _terminate_process_tree(process)
+                raise
+    if process.returncode != 0:
+        output = (stderr or stdout).strip()
+        raise _StopError("NEEDS_HUMAN", stage, output[-2000:] or f"{stage} thất bại (mã {process.returncode}).")
+    return stdout
+
+
+def _terminate_process_tree(process: subprocess.Popen) -> None:
+    """Dừng tiến trình phase và mọi tiến trình con trước khi trả kết quả timeout."""
+    if process.poll() is not None:
+        return
     try:
-        done = subprocess.run(
-            command, cwd=sandbox, env=env, capture_output=True, text=True, encoding="utf-8", timeout=timeout
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise _StopError(
-            "INFRA_ERROR", stage, f"Phase {stage} chạy quá {timeout} giây (budgets.yml phase_timeout_sec)."
-        ) from exc
-    if done.returncode != 0:
-        output = (done.stderr or done.stdout).strip()
-        raise _StopError("NEEDS_HUMAN", stage, output[-2000:] or f"{stage} thất bại (mã {done.returncode}).")
-    return done.stdout
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            os.killpg(process.pid, 9)
+    except (OSError, subprocess.SubprocessError):
+        process.kill()
+    try:
+        process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
 
 
 def prepare_project(sandbox: Path, files: dict[str, str]) -> None:

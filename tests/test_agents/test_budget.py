@@ -56,7 +56,7 @@ def test_daily_spend_blocks_the_next_run():
     assert state["status"] == "BLOCKED_BUDGET" and "per_day.max_usd" in state["error_trace"][-1]["error"]
 
 
-def test_spent_today_sums_only_todays_runs(tmp_path):
+def test_spent_today_uses_when_cost_is_recorded_not_run_creation(tmp_path):
     store = str(tmp_path / "runs.sqlite3")
     base = RunReport.model_validate_json(open(FIXTURE, encoding="utf-8").read())
     now = datetime.now(UTC)
@@ -67,7 +67,7 @@ def test_spent_today_sums_only_todays_runs(tmp_path):
     ]:
         cost = base.cost.model_copy(update={"usd": usd})
         save_run_report(store, base.model_copy(update={"run_id": run_id, "created_at": at, "cost": cost}))
-    assert budget.spent_today(PipelineSettings(_env_file=None, store_path=store)) == 0.75
+    assert budget.spent_today(PipelineSettings(_env_file=None, store_path=store)) == 9.75
 
 
 def test_estimate_reads_every_api_page(monkeypatch):

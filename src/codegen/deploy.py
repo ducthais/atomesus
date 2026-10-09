@@ -9,9 +9,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 from src.codegen.sandbox import prepare_project
 from src.spec.models import Spec
+
+DBT_PARSE_TIMEOUT_SEC = 120
 
 
 def write_workspace(deploy_dir: str) -> Path:
@@ -33,7 +36,9 @@ def write_workspace(deploy_dir: str) -> Path:
     if len(lines) == 2:
         lines[-1] = "load_from: []"
     path = root / "workspace.yaml"
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary = root / f".workspace-{uuid4().hex}.tmp"
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
     return path
 
 
@@ -46,24 +51,44 @@ def _compile_manifest(project_root: Path) -> None:
         "WAREHOUSE_PATH": str(warehouse),
         "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
     }
-    subprocess.run(
+    done = subprocess.run(
         [sys.executable, "-m", "dbt.cli.main", "parse", "--project-dir", str(dbt_dir), "--profiles-dir", str(dbt_dir)],
         capture_output=True,
         text=True,
         env=env,
         check=False,
+        timeout=DBT_PARSE_TIMEOUT_SEC,
     )
+    if done.returncode:
+        detail = (done.stderr or done.stdout).strip()[-1000:]
+        raise OSError(f"dbt parse thất bại (mã {done.returncode}): {detail}")
 
 
 def deploy_local(spec: Spec, files: dict[str, str], deploy_dir: str) -> Path:
     """Ghi project ra đĩa, trả đường dẫn thư mục project."""
     target = Path(deploy_dir) / spec.transform.model_name
-    staging = target.with_name(target.name + ".tmp")
-    shutil.rmtree(staging, ignore_errors=True)
-    prepare_project(staging, files)
-    _compile_manifest(staging)
-    # Thay thư mục cũ sau khi bản mới đã ghi xong, để không bao giờ còn lại project ghi dở.
-    shutil.rmtree(target, ignore_errors=True)
-    staging.rename(target)
-    write_workspace(deploy_dir)
+    token = uuid4().hex
+    staging = target.with_name(f"{target.name}.tmp-{token}")
+    backup = target.with_name(f"{target.name}.old-{token}")
+    old_moved = new_active = False
+    try:
+        prepare_project(staging, files)
+        _compile_manifest(staging)
+        if target.exists():
+            target.rename(backup)
+            old_moved = True
+        staging.rename(target)
+        new_active = True
+        write_workspace(deploy_dir)
+    except (OSError, subprocess.SubprocessError):
+        if new_active and target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        if old_moved and backup.exists():
+            backup.rename(target)
+        raise
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
     return target

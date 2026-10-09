@@ -4,7 +4,7 @@
 |-----------|----------|-----------|----------------------------------------------------------|
 | planner   | P1       | LLM rẻ    | kế hoạch: nguồn, join, độ hạt, chỉ số, lịch chạy          |
 | semantic  | P3       | tất định  | từ có hai nghĩa ở hai domain → BLOCKED_SEMANTIC_CONFLICT  |
-| codegen   | P3, P4   | LLM mạnh  | schema thật + 20 dòng mẫu → Spec đã kiểm tra (vòng spec) |
+| codegen   | P3, P4   | LLM mạnh  | schema thật + profile không chứa giá trị mẫu → Spec đã kiểm tra (vòng spec) |
 | budget    | P8       | tất định  | ước tính byte, USD; vượt trần run / ngày → BLOCKED_BUDGET |
 | arbitrate | P5       | tất định  | lịch chạy thỏa độ tươi (objectives.yml), rẻ nhất; cần chi phí của P8 |
 | render    | P6       | tất định  | 4 + N file từ templates/                                 |
