@@ -10,7 +10,6 @@ Mô tả pain point cụ thể với data/số liệu:
 - Tại sao các giải pháp hiện tại chưa đủ?
 
 ## Giải pháp (Solution)
-
 Sản phẩm giải quyết vấn đề như thế nào bằng AI:
 - Feature 1: [mô tả]
 - Feature 2: [mô tả]
