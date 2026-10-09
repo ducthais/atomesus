@@ -9,10 +9,14 @@ Việc làm:
 2. Tạo Space (Docker, công khai) và dataset riêng tư giữ data/, đặt secrets của Space với mật khẩu ngẫu nhiên.
 3. In ra giá trị cần dán vào GitHub secrets và Vercel, cùng mật khẩu đăng nhập.
 
+Terminal không nhập được thì đặt trước biến môi trường HF_TOKEN, OPENAI_API_KEY, SUPABASE_URL
+(và SUPABASE_PASSWORD nếu chuỗi còn [YOUR-PASSWORD]); script dùng luôn, không hỏi.
+
 Chạy lại sẽ sinh mật khẩu mới (reader, Engineer, Reviewer, Dagster) và ghi đè secrets của Space.
 """
 
 import getpass
+import os
 import secrets
 import string
 import subprocess
@@ -43,9 +47,21 @@ def password(length: int = 20) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-def ask(prompt: str, default: str = "", secret: bool = False) -> str:
+def ask(prompt: str, default: str = "", secret: bool = False, env: str = "") -> str:
+    """Hỏi một giá trị; đã đặt biến môi trường `env` thì dùng luôn (khi terminal không nhập được)."""
+    if env and os.environ.get(env, "").strip():
+        print(f"{prompt}: lấy từ biến môi trường {env}")
+        return os.environ[env].strip()
+    if not sys.stdin.isatty():
+        raise SystemExit(f"Không nhập được từ bàn phím. Chạy trong PowerShell / Terminal thường, hoặc đặt biến {env}.")
     label = f"{prompt} [{default}]: " if default else f"{prompt}: "
-    value = (getpass.getpass(label) if secret else input(label)).strip()
+    if secret:
+        print("  (ký tự KHÔNG hiện ra khi gõ/dán, đó là bình thường: dán bằng Ctrl+V hoặc chuột phải rồi Enter)")
+        value = getpass.getpass(label).strip()
+        if value:
+            print(f"  → đã nhận {len(value)} ký tự ({value[:4]}…{value[-2:]})")
+    else:
+        value = input(label).strip()
     if not value and not default:
         raise SystemExit(f"Cần nhập: {prompt}")
     return value or default
@@ -53,9 +69,11 @@ def ask(prompt: str, default: str = "", secret: bool = False) -> str:
 
 def supabase_url() -> tuple[str, str, str]:
     """URL admin (session pooler), host và project ref. Session pooler đi qua IPv4; kết nối trực tiếp chỉ có IPv6."""
-    url = ask("Supabase → Connect → Session pooler, dán connection string")
+    url = ask("Supabase → Connect → Session pooler, dán connection string", env="SUPABASE_URL")
     if "[YOUR-PASSWORD]" in url:
-        url = url.replace("[YOUR-PASSWORD]", quote(ask("Mật khẩu database Supabase", secret=True), safe=""))
+        url = url.replace(
+            "[YOUR-PASSWORD]", quote(ask("Mật khẩu database Supabase", secret=True, env="SUPABASE_PASSWORD"), safe="")
+        )
     parts = urlsplit(url)
     user = parts.username or ""
     if "pooler.supabase.com" not in (parts.hostname or "") or "." not in user:
@@ -86,12 +104,12 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")  # console Windows mặc định cp1252
     print("Cần: token Hugging Face quyền Write (huggingface.co/settings/tokens), OpenAI API key,")
     print("project Supabase (supabase.com), Docker Desktop đang chạy.\n")
-    token = ask("Hugging Face token (Write)", secret=True)
+    token = ask("Hugging Face token (Write)", secret=True, env="HF_TOKEN")
     api = HfApi(token=token)
     owner = api.whoami()["name"]
     space = ask("Tên Space", f"{owner}/atomesus")
     data_repo = ask("Dataset riêng tư giữ data/", f"{owner}/atomesus-data")
-    openai_key = ask("OpenAI API key (sk-...)", secret=True)
+    openai_key = ask("OpenAI API key (sk-...)", secret=True, env="OPENAI_API_KEY")
     admin_url, host, ref = supabase_url()
 
     reader = password(24)

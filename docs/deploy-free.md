@@ -1,18 +1,23 @@
-# Deploy miễn phí: Vercel + Hugging Face Space + Supabase
+# Deploy: Vercel + Hugging Face Space + Supabase
 
-Combo lấy từ danh sách dịch vụ chương trình AI20K khuyên dùng (`check.md`). Tất cả **miễn phí và không cần thẻ**.
+> **Cần gói Hugging Face PRO (khoảng 9 USD/tháng, phải có thẻ).** Hiện nay (kiểm tra 10/2026) Hugging Face chỉ cho chạy Docker
+> Space trên CPU miễn phí với tài khoản PRO (tạo Space báo `402 Payment Required`). `check.md` (tháng 6/2026) đã cũ.
+> Không có thẻ: dùng **Azure for Students** theo [deploy.md](deploy.md) (miễn phí với email trường, một VM chạy cả web,
+> backend, Dagster và Postgres, không mất dữ liệu).
+
+Web chạy trên Vercel, Postgres nguồn trên Supabase (cả hai miễn phí, không cần thẻ), backend chạy trên một Space.
 Khoảng 30 phút cho lần đầu, sau đó merge vào `main` là tự deploy.
 
 | Phần | Chạy ở đâu | Gói miễn phí | URL |
 |---|---|---|---|
 | Web Next.js | **Vercel** | Hobby | `https://<project>.vercel.app` (URL demo) |
-| Backend FastAPI + agent, Dagster, mock API | **Hugging Face Space** (Docker) | CPU Basic: 2 vCPU, 16 GB RAM | `https://<user>-atomesus.hf.space` |
+| Backend FastAPI + agent, Dagster, mock API | **Hugging Face Space** (Docker) | CPU Basic: 2 vCPU, 16 GB RAM (cần PRO) | `https://<user>-atomesus.hf.space` |
 | Postgres nguồn (sales_raw, Pagila) | **Supabase** | 500 MB | không ra Internet ngoài app |
 | Sao lưu `data/` | **HF Dataset** riêng tư | miễn phí | không |
 | CI/CD | **GitHub Actions** | đã có | không |
 
 Vì sao không dùng Render như bảng stack trong `check.md`: backend cần khoảng 4 GB RAM (dlt, dbt, Dagster chạy cùng
-lúc), nhưng Render free chỉ có 512 MB, không có ổ đĩa và tự ngủ sau 15 phút. Space miễn phí có 16 GB RAM.
+lúc), nhưng Render free chỉ có 512 MB, không có ổ đĩa và tự ngủ sau 15 phút. Space CPU Basic có 16 GB RAM.
 
 ```
 Trình duyệt ──► Vercel (web) ──/api/v1──► Space :7860 (Caddy) ─┬─► FastAPI :8000 ──► Supabase (Postgres nguồn)
@@ -20,9 +25,9 @@ Trình duyệt ──► Vercel (web) ──/api/v1──► Space :7860 (Caddy)
                                                                 └─  mock API :8100, data/ ⇄ HF Dataset mỗi 10 phút
 ```
 
-## Bước 1: Đăng ký tài khoản (đều không cần thẻ)
+## Bước 1: Đăng ký tài khoản
 
-- [ ] **Hugging Face**: <https://huggingface.co/join>, rồi **Settings → Access Tokens → Create new token**, loại
+- [ ] **Hugging Face** có gói **PRO** (<https://huggingface.co/pro>), rồi **Settings → Access Tokens → Create new token**, loại
   **Write**. Chép token `hf_...`.
 - [ ] **Supabase**: <https://supabase.com> → **New project** (Region: Singapore). Nhớ **Database password**.
   Đợi project tạo xong, bấm **Connect** (trên cùng) → mục **Session pooler** → chép **connection string**.

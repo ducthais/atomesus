@@ -4,7 +4,8 @@ Toàn bộ sản phẩm chạy trên **một VM Ubuntu có Docker** bằng `depl
 Bước 1 có hai lựa chọn: **Azure for Students** (1a, dùng credit sinh viên) hoặc **Oracle Cloud Always Free** (1b, miễn
 phí lâu dài nhưng đăng ký lâu). Từ bước 2 trở đi giống nhau.
 
-Không có VM: dùng combo miễn phí Vercel + Hugging Face Space + Supabase ở [deploy-free.md](deploy-free.md).
+Không cần thẻ: chọn 1a (Azure for Students). Combo Vercel + Hugging Face Space + Supabase ở
+[deploy-free.md](deploy-free.md) cần gói Hugging Face PRO.
 
 | Dịch vụ | Vai trò | Ra Internet |
 |---|---|---|
@@ -18,6 +19,8 @@ Không có VM: dùng combo miễn phí Vercel + Hugging Face Space + Supabase �
 **Cập nhật tự động:** merge vào `main` → workflow "Postgres pipeline" (lint + test với Postgres thật) chạy xanh →
 workflow **Deploy** đẩy code lên VM và `docker compose up -d --build`. Khoảng 3–10 phút sau sản phẩm chạy bản mới.
 Test đỏ thì không deploy. Bấm **Actions → Deploy → Run workflow** để deploy tay.
+GitHub Actions không chạy được (vd. organization hết hạn mức / lỗi thanh toán): deploy từ máy Windows bằng
+`powershell -ExecutionPolicy Bypass -File deploy/push.ps1 -VmHost <IP>` (đưa bản `main` trên GitHub lên VM rồi build).
 
 **Không mất khi cập nhật:** `~/atomesus/data` (sổ bằng chứng, chat, warehouse DuckDB, project Dagster đã duyệt, lịch sử
 Dagster), volume `pgdata` (dữ liệu nguồn), `~/atomesus/.env` (mật khẩu, khóa API). Pipeline đã duyệt không tự đổi theo code

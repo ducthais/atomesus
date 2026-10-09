@@ -70,3 +70,7 @@ dbt_project/logs/
 dbt_project/dbt_packages/
 
 web/tsconfig.tsbuildinfo
+# Khóa SSH (deploy VM), không bao giờ commit
+*.pem
+atomesus_deploy
+atomesus_deploy.pub
