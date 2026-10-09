@@ -61,7 +61,15 @@ def login(body: LoginRequest, response: Response, config: PipelineSettings = Dep
             "INSERT INTO sessions VALUES (?, ?, ?)",
             (hashlib.sha256(token.encode()).hexdigest(), user_id, time.time() + SESSION_SECONDS),
         )
-    response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=SESSION_SECONDS, path=COOKIE_PATH)
+    response.set_cookie(
+        COOKIE,
+        token,
+        httponly=True,
+        samesite="strict",
+        secure=get_settings().app_env not in ("development", "test"),  # bản deploy chạy sau HTTPS
+        max_age=SESSION_SECONDS,
+        path=COOKIE_PATH,
+    )
     return USERS[user_id]
 
 

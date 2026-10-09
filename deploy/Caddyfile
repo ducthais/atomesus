@@ -1,11 +1,27 @@
 # HTTPS tự động (Let's Encrypt / ZeroSSL) cho hai tên miền trỏ về VM, xem docs/deploy.md.
+
+# Header bảo mật cho cả hai site: trình duyệt luôn dùng HTTPS (HSTS, kể cả khi gõ http://), không cho nhúng trang vào
+# iframe của site khác, không đoán kiểu nội dung, không lộ framework.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-X-Powered-By
+		-Server
+	}
+}
+
 {$DOMAIN} {
+	import security_headers
 	encode gzip
 	reverse_proxy web:3000
 }
 
 # Dagster UI không có đăng nhập riêng: chặn bằng basic auth (mật khẩu sinh trong deploy/setup-vm.sh).
 {$DAGSTER_DOMAIN} {
+	import security_headers
 	basic_auth {
 		{$DAGSTER_USER} {$DAGSTER_PASSWORD_HASH}
 	}

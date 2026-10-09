@@ -13,6 +13,8 @@ import { toReconcile, type Reconcile } from '@/lib/catalog/explain';
 export type ActionState = { error?: string; message?: string } | null;
 const failure = (err: unknown): ActionState => ({ error: err instanceof Error ? err.message : 'Thao tác thất bại. Vui lòng thử lại.' });
 const MAX_AGE = 28800; // = SESSION_SECONDS của backend
+// Bản build (deploy sau HTTPS) chỉ gửi cookie qua HTTPS; `next dev` chạy http nên để tắt.
+const SECURE = process.env.NODE_ENV === 'production';
 
 /** Đăng nhập bằng tài khoản local. Backend đặt cookie Path=/api/v1; lưu lại token với Path=/ cho các Server Component. */
 export async function signIn(_: ActionState, form: FormData): Promise<ActionState> {
@@ -27,7 +29,7 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
     };
     const account = accounts[username];
     if (!account || account.password !== password) return { error: 'Tên đăng nhập hoặc mật khẩu không đúng.' };
-    jar.set(MOCK_USER_COOKIE, account.id, { path: '/', maxAge: 31536000, sameSite: 'lax' });
+    jar.set(MOCK_USER_COOKIE, account.id, { path: '/', maxAge: 31536000, sameSite: 'lax', secure: SECURE });
     redirect('/');
   }
   let response: Response;
@@ -37,7 +39,7 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
   if (!response.ok) return { error: (await response.json().catch(() => null))?.detail ?? 'Đăng nhập thất bại.' };
   const token = response.headers.getSetCookie().map(c => c.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
   if (!token) return { error: 'Backend không trả cookie phiên.' };
-  jar.set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', maxAge: MAX_AGE });
+  jar.set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
   redirect('/');
 }
 
@@ -55,7 +57,7 @@ async function remember(ref: string, on: boolean) {
   const now = parseConnections(jar.get(CONNECTIONS_COOKIE)?.value);
   const next = on ? [...new Set([...now, ref])] : now.filter(r => r !== ref);
   if (next.length === now.length) return;
-  if (next.length) jar.set(CONNECTIONS_COOKIE, next.join(','), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: MAX_AGE });
+  if (next.length) jar.set(CONNECTIONS_COOKIE, next.join(','), { path: '/', httpOnly: true, sameSite: 'lax', secure: SECURE, maxAge: MAX_AGE });
   else jar.delete(CONNECTIONS_COOKIE);
 }
 
