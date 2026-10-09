@@ -1,0 +1,14 @@
+# Chép thành .dockerignore ở gốc repo Space. Khác bản ở gốc repo: giữ deploy/hf-space (start.sh, Caddyfile).
+.git
+.env
+.env.*
+__pycache__
+*.pyc
+data/
+web/
+docs/
+presentation/
+eval/
+graphify-out/
+deploy/compose.yml
+deploy/setup-vm.sh

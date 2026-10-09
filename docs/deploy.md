@@ -4,6 +4,8 @@ Toàn bộ sản phẩm chạy trên **một VM Ubuntu có Docker** bằng `depl
 Bước 1 có hai lựa chọn: **Azure for Students** (1a, dùng credit sinh viên) hoặc **Oracle Cloud Always Free** (1b, miễn
 phí lâu dài nhưng đăng ký lâu). Từ bước 2 trở đi giống nhau.
 
+Không có VM: dùng combo miễn phí Vercel + Hugging Face Space + Supabase ở [deploy-free.md](deploy-free.md).
+
 | Dịch vụ | Vai trò | Ra Internet |
 |---|---|---|
 | `caddy` | HTTPS tự động, chuyển request vào web / Dagster | 80, 443 |

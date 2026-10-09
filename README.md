@@ -313,6 +313,8 @@ Hook ghi prompt của Claude Code, Cursor, Codex CLI, Gemini CLI, Antigravity, G
 - [`docs/task-b.md`](docs/task-b.md): Postgres nguồn, làm sạch, đăng nhập. [`docs/task-c.md`](docs/task-c.md): agent,
   template, sandbox.
 - [`web/README.md`](web/README.md): giao diện, các màn hình và API tương ứng.
+- [`docs/deploy-free.md`](docs/deploy-free.md): deploy miễn phí, không cần thẻ, theo combo trong hướng dẫn AI20K: web trên
+  Vercel, backend + Dagster trên Hugging Face Space, Postgres nguồn trên Supabase, tự cập nhật khi merge vào `main`.
 - [`docs/deploy.md`](docs/deploy.md): deploy cả sản phẩm lên một VM Oracle Cloud miễn phí, tự cập nhật khi merge vào `main`,
   giới hạn tiền OpenAI.
 - [`docs/guide/`](docs/guide/): Technical Guidebook của khóa AI20K (tài liệu tham khảo, không mô tả dự án này).

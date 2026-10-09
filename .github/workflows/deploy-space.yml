@@ -1,0 +1,94 @@
+# Đẩy backend lên Hugging Face Space (docs/deploy-free.md) mỗi khi workflow test "Postgres pipeline" chạy xanh trên main.
+# Bấm "Run workflow" để deploy tay. Web trên Vercel tự deploy theo nhánh main (Vercel Git integration).
+# Secrets cần có: HF_TOKEN (token Hugging Face quyền write), HF_SPACE (vd. ten-ban/atomesus).
+name: Deploy Space
+
+on:
+  workflow_run:
+    workflows: ["Postgres pipeline"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-space
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Chưa chạy deploy/hf-space/setup.py / chưa đặt secrets thì bỏ qua, không báo đỏ.
+  configured:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.HF_TOKEN }}
+          SPACE: ${{ secrets.HF_SPACE }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$SPACE" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::Chưa có secrets HF_TOKEN / HF_SPACE, bỏ qua deploy (xem docs/deploy-free.md)."; fi
+
+  deploy:
+    needs: configured
+    if: >-
+      needs.configured.outputs.ready == 'true' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_SPACE: ${{ secrets.HF_SPACE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install huggingface_hub
+
+      - name: Stage Space files
+        # Repo Space cần Dockerfile, README (khai báo sdk: docker) và .dockerignore riêng ở gốc.
+        run: |
+          mkdir -p /tmp/space
+          git archive HEAD | tar -x -C /tmp/space
+          rm -rf /tmp/space/web /tmp/space/presentation /tmp/space/graphify-out /tmp/space/.github
+          cp deploy/hf-space/Dockerfile /tmp/space/Dockerfile
+          cp deploy/hf-space/README.md /tmp/space/README.md
+          cp deploy/hf-space/dockerignore /tmp/space/.dockerignore
+
+      - name: Upload and wait for the Space
+        run: |
+          python - <<'PY'
+          import os, time
+          from huggingface_hub import HfApi
+          api, space = HfApi(), os.environ["HF_SPACE"]
+          sha = os.environ["GITHUB_SHA"][:7]
+          api.upload_folder(folder_path="/tmp/space", repo_id=space, repo_type="space", delete_patterns="*",
+                            commit_message=f"deploy {sha}")
+          # Bản cũ vẫn RUNNING cho tới khi Space bắt đầu build bản mới; code không đổi thì Space không build lại.
+          started, deadline = time.time(), time.time() + 35 * 60
+          rebuilding = False
+          while time.time() < deadline:
+              stage = api.get_space_runtime(space).stage
+              print("Space:", stage, flush=True)
+              rebuilding = rebuilding or stage != "RUNNING"
+              if stage == "RUNNING" and (rebuilding or time.time() - started > 120):
+                  break
+              if stage in ("BUILD_ERROR", "RUNTIME_ERROR", "CONFIG_ERROR", "NO_APP_FILE"):
+                  raise SystemExit(f"Space lỗi ({stage}), xem log ở https://huggingface.co/spaces/{space}")
+              time.sleep(20)
+          else:
+              raise SystemExit("Space chưa chạy sau 35 phút")
+          PY
+
+      - name: Check
+        run: |
+          host="https://$(echo "$HF_SPACE" | tr 'A-Z/_.' 'a-z---').hf.space"
+          curl -fsS --retry 10 --retry-delay 10 --retry-all-errors "$host/health"

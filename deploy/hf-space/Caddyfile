@@ -1,0 +1,22 @@
+# Cổng duy nhất của Space (7860). Space đã có HTTPS ở phía Hugging Face nên Caddy chỉ chạy HTTP.
+{
+	admin off
+	auto_https off
+}
+
+:7860 {
+	encode gzip
+
+	# Dagster UI (chạy với path prefix /dagster) không có đăng nhập riêng: chặn bằng basic auth.
+	handle /dagster* {
+		basic_auth {
+			{$DAGSTER_USER} {$DAGSTER_PASSWORD_HASH}
+		}
+		reverse_proxy 127.0.0.1:3070
+	}
+
+	# Còn lại là FastAPI. Web trên Vercel gọi vào đây (rewrite /api/v1 trong web/next.config.ts).
+	handle {
+		reverse_proxy 127.0.0.1:8000
+	}
+}
