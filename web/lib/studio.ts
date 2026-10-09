@@ -216,7 +216,8 @@ export function batchReviewItems(runs: Run[], role: string, user: string): Batch
     const failed = run.checks.filter(c => c.state !== 'pass').length;
     const reason = role !== 'Reviewer' ? 'Chỉ Reviewer duyệt'
       : run.owner === user ? 'Run của bạn: không tự duyệt'
-      : failed ? `${failed} kiểm tra chưa đạt` : null;
+      : failed ? `${failed} kiểm tra chưa đạt`
+      : !run.filesHash ? 'Run chưa có bộ file để duyệt' : null;
     return { run, eligible: reason === null, reason };
   });
 }

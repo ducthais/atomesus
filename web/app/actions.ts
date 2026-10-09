@@ -279,7 +279,7 @@ export async function resolveAlert(alertId: number): Promise<ActionState> {
   } catch (err) { return failure(err); }
 }
 
-export type BatchReviewResult = { results: { runId: string; ok: boolean; message: string }[] } | { error: string };
+export type BatchReviewResult = { results: { runId: string; ok: boolean; status?: string | null; message: string }[] } | { error: string };
 
 /**
  * Duyệt / từ chối nhiều run một lượt. Mỗi run đi qua đúng API duyệt từng run (kiểm files_hash, chặn tự duyệt, chỉ
@@ -287,17 +287,20 @@ export type BatchReviewResult = { results: { runId: string; ok: boolean; message
  */
 export async function reviewRuns(items: { runId: string; filesHash: string }[], decision: 'approve' | 'reject', comment: string): Promise<BatchReviewResult> {
   if (!items.length) return { error: 'Chọn ít nhất một run.' };
+  if (items.length > 50) return { error: 'Mỗi lượt chỉ được duyệt tối đa 50 run.' };
+  if (new Set(items.map(item => item.runId)).size !== items.length) return { error: 'Mỗi run chỉ được chọn một lần.' };
   if (decision === 'reject' && !comment.trim()) return { error: 'Từ chối nhiều run cần ghi lý do.' };
   if (MOCK) return { results: items.map(i => ({ runId: i.runId, ok: true, message: 'Mock: chưa gọi backend.' })) };
-  const results = [];
-  for (const { runId, filesHash } of items) {
-    try {
-      const report = await backend<RunReport>(`/runs/${encodeURIComponent(runId)}/${decision}`, { method: 'POST', body: JSON.stringify({ files_hash: filesHash || null, comment: comment.trim() }) });
-      results.push({ runId, ok: true, message: report.status === 'DEPLOY_FAILED' ? 'Đã duyệt nhưng ghi project Dagster thất bại' : decision === 'approve' ? 'Đã duyệt' : 'Đã từ chối' });
-    } catch (err) {
-      results.push({ runId, ok: false, message: err instanceof Error ? err.message : 'Thao tác thất bại' });
-    }
+  try {
+    const result = await backend<{ results: { run_id: string; ok: boolean; status?: string | null; message: string }[] }>('/runs/batch-review', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: items.map(item => ({ run_id: item.runId, files_hash: item.filesHash })), decision, comment: comment.trim(),
+      }),
+    });
+    refresh();
+    return { results: result.results.map(item => ({ runId: item.run_id, ok: item.ok, status: item.status, message: item.message })) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Duyệt hàng loạt thất bại.' };
   }
-  refresh();
-  return { results };
 }

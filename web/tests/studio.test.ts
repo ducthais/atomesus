@@ -159,14 +159,15 @@ test('chat payload trims the message and never sends identity fields', () => {
 
 test('duyệt nhiều run: chỉ chọn được run của người khác, đạt mọi kiểm tra', async () => {
   const { batchReviewItems } = await import('../lib/studio.ts');
-  const base = { status: 'READY_FOR_REVIEW', owner: 'minh', checks: [{ id: 'a', name: 'a', state: 'pass', value: '', detail: '' }] };
+  const base = { status: 'READY_FOR_REVIEW', owner: 'minh', filesHash: 'sha256:abc', checks: [{ id: 'a', name: 'a', state: 'pass', value: '', detail: '' }] };
   const runs = [
     { ...base, id: 'r1' },
     { ...base, id: 'r2', owner: 'an' },
     { ...base, id: 'r3', checks: [{ id: 'b', name: 'b', state: 'fail', value: '', detail: '' }] },
+    { ...base, id: 'r5', filesHash: '' },
     { ...base, id: 'r4', status: 'DEPLOYED' },
   ] as unknown as Parameters<typeof batchReviewItems>[0];
   assert.deepEqual(batchReviewItems(runs, 'Reviewer', 'an').map(i => [i.run.id, i.eligible, i.reason]),
-    [['r1', true, null], ['r2', false, 'Run của bạn: không tự duyệt'], ['r3', false, '1 kiểm tra chưa đạt']]);
+    [['r1', true, null], ['r2', false, 'Run của bạn: không tự duyệt'], ['r3', false, '1 kiểm tra chưa đạt'], ['r5', false, 'Run chưa có bộ file để duyệt']]);
   assert.ok(batchReviewItems(runs, 'Engineer', 'minh').every(i => !i.eligible));
 });

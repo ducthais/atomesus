@@ -154,6 +154,7 @@ a.tag:hover { border-color: var(--accent); color: var(--accent); text-decoration
 .callout p { margin-top: 4px; }
 .callout.info { background: var(--accent-soft); border-color: transparent; }
 .callout.info > svg { color: var(--accent); }
+.callout.good { background: var(--good-soft); border-color: transparent; }
 .callout.warn { background: var(--wait-soft); border-color: transparent; }
 .callout.bad { background: var(--bad-soft); border-color: transparent; }
 .callout.warn > svg { color: var(--wait); } .callout.bad > svg { color: var(--bad); }
@@ -666,7 +667,17 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 
 /* ── Theo dõi pipeline (Day 2) ── */
 .monitor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.monitor-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.monitor-summary > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.monitor-summary span { color: var(--muted); font-size: 13px; }
+.monitor-summary strong { font-size: 22px; }
+.monitor-summary .summary-bad { border-color: var(--bad); color: var(--bad); }
+.monitor-summary .summary-warn { border-color: var(--wait); color: var(--wait); }
+.monitor-findings { display: grid; gap: 8px; min-width: 220px; }
+.monitor-findings > div { display: grid; gap: 4px; }
+.monitor-findings small { color: var(--muted); line-height: 1.4; }
 .monitor-alerts li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
 .monitor-alerts li:last-child { border-bottom: 0; }
 .monitor-alerts p { margin: 4px 0; }
+@media (max-width: 760px) { .monitor-summary { grid-template-columns: 1fr; } }
 .row-muted td { color: var(--ink-3, #888); }

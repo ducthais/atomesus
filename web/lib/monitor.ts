@@ -23,7 +23,7 @@ export type Alert = {
 };
 
 export const RULE_LABEL: Record<Finding['rule'], string> = {
-  runtime_regression: 'Đang chậm', cost_regression: 'Chi phí tăng', test_degradation: 'Test fail tăng', freshness_breach: 'Không đủ tươi',
+  runtime_regression: 'Pipeline đang chậm', cost_regression: 'Chi phí tăng', test_degradation: 'Test fail tăng', freshness_breach: 'Không đủ tươi',
 };
 export const ALERT_LABEL: Record<Alert['kind'], string> = {
   source_stalled: 'Nguồn ngừng cấp dữ liệu', no_improvement: 'Không có bản tốt hơn', needs_human: 'Run sửa cần người xử lý',
@@ -32,8 +32,17 @@ export const ALERT_LABEL: Record<Alert['kind'], string> = {
 /** Nhãn hiển thị của các luật đang kích hoạt; nguồn ngừng cấp tách thành nhãn riêng kèm tên nguồn. */
 export function findingBadges(findings: Finding[]): { label: string; tone: 'bad' | 'amber'; detail: string }[] {
   return findings.map(f => f.stalled_sources.length
-    ? { label: `Nguồn ngừng cấp: ${f.stalled_sources.join(', ')}`, tone: 'amber' as const, detail: f.detail }
+    ? { label: `Nguồn ngừng cấp dữ liệu: ${f.stalled_sources.join(', ')}`, tone: 'amber' as const, detail: f.detail }
     : { label: RULE_LABEL[f.rule] ?? f.rule, tone: 'bad' as const, detail: f.detail });
+}
+
+/** Các con số đầu trang, tính trực tiếp từ finding Người 4 trả về; mỗi pipeline chỉ được đếm một lần cho mỗi nhóm. */
+export function monitorSummary(pipelines: MonitoredPipeline[]): { total: number; slow: number; stalled: number } {
+  return {
+    total: pipelines.length,
+    slow: pipelines.filter(p => p.findings.some(f => f.rule === 'runtime_regression')).length,
+    stalled: pipelines.filter(p => p.findings.some(f => f.stalled_sources.length > 0)).length,
+  };
 }
 
 /** Thời gian lần chạy gần nhất so với đường cơ sở, ví dụ "+62%". Thiếu số thì null. */

@@ -245,6 +245,7 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 | GET | `/runs`, `/runs/{id}` | Sổ bằng chứng |
 | GET | `/runs/{id}/compare` | So với bản đang chạy / bản trước, ảnh hưởng nếu duyệt |
 | POST | `/runs/{id}/approve`, `/runs/{id}/reject` | Reviewer duyệt (ghi project Dagster) hoặc từ chối |
+| POST | `/runs/batch-review` | Reviewer duyệt hoặc từ chối tối đa 50 run; trả kết quả riêng cho từng run |
 | POST | `/runs/{id}/request-changes` | Reviewer gửi nhận xét; tăng version và chạy lại từ bước viết Spec |
 | POST | `/runs/{id}/cancel` | Engineer sở hữu hủy run đang chạy; trạng thái hủy không bị job nền ghi đè |
 | POST | `/pipelines/{model}/optimize` | Engineer yêu cầu tối ưu pipeline đã deploy; tạo run `manual_optimize` và chỉ chuyển duyệt khi có bản tốt hơn |
