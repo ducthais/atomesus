@@ -275,3 +275,32 @@ def test_gold_key_columns_lose_the_source_prefix():
     transform = _add_key_columns(raw, {})["transform"]
     assert transform["unique_key"] == ["customer_id"] and transform["partition_by"] == "customer_id"
     assert [t["column"] for t in transform["tests"]] == ["customer_id", "khong_co.cot_la"], "cột lạ để cổng báo lỗi"
+
+
+@pytest.mark.parametrize("extra", ["customer_id", "order_id", "orders.order_id"])
+def test_unique_key_of_an_aggregate_is_its_grain(extra):
+    # run a7d0d9ca: "doanh thu và số đơn hàng theo ngày", grain ['orders.ordered_at'] nhưng LLM đặt unique_key
+    # ['ordered_at', 'order_id'] (cột không có ở gold) và lặp lỗi qua cả 3 lần viết Spec. Mỗi dòng gold là một tổ hợp
+    # grain nên khóa duy nhất chỉ có thể là các cột của grain.
+    from src.agents.nodes.codegen import _add_key_columns
+
+    orders = _source(
+        "orders", "postgres", [("order_id", "integer"), ("ordered_at", "date"), ("amount", "decimal(18,2)")], "order_id"
+    )
+    raw = _spec(
+        [orders],
+        [],
+        [("total_revenue", "SUM(orders.amount)"), ("order_count", "COUNT(DISTINCT orders.order_id)")],
+        ["orders.ordered_at"],
+    )
+    raw["transform"]["unique_key"] = ["ordered_at", extra]
+    fixed = _add_key_columns(raw, {})
+    assert fixed["transform"]["unique_key"] == ["ordered_at"]
+    assert Spec.model_validate(fixed)
+
+
+def test_unique_key_left_empty_stays_empty():
+    from src.agents.nodes.codegen import _add_key_columns
+
+    raw = _spec([ORDERS], [], [("total", "SUM(orders.amount)")], ["orders.customer_id"])
+    assert _add_key_columns(raw, {})["transform"]["unique_key"] == []

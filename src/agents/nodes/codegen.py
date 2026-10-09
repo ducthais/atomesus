@@ -78,6 +78,7 @@ def _add_key_columns(raw: object, snapshot: dict, policy=None) -> object:
       mẫu hiện giá trị dạng chuỗi ISO, nhưng ở bronze cột đã là timestamp nên mọi dòng sẽ trượt định dạng và bị tách.
     - Khóa ghép của nguồn file / API để varchar trong khi phía kia là số → ép theo kiểu phía kia (`_align_join_types`).
     - `unique_key` / `partition_by` / `tests[].column` có tiền tố `<id>.` → bỏ tiền tố (`_bare_gold_columns`).
+    - `unique_key` khác các cột của grain → thay bằng các cột của grain (`_bare_gold_columns`).
 
     LLM hay bỏ khóa ghép (ví dụ `address.city_id`) khỏi staging.columns và lặp lại lỗi đó cả khi được báo. Chỉ thêm cột
     thô có thật trong schema_snapshot, chưa được khai báo dưới tên nào, giữ nguyên tên và ép kiểu theo kiểu nguồn.
@@ -179,6 +180,11 @@ def _bare_gold_columns(transform: dict) -> None:
 
     if isinstance(transform.get("unique_key"), list):
         transform["unique_key"] = [bare(key) for key in transform["unique_key"]]
+        # Mỗi dòng gold là một tổ hợp grain nên khóa duy nhất chỉ có thể là đúng các cột grain. LLM hay thêm khóa của
+        # bảng nguồn (`order_id` khi yêu cầu có "số đơn hàng") và lặp lại cả khi được báo (run a7d0d9ca).
+        grain = [str(g).rpartition(".")[2] for g in transform.get("grain") or []]
+        if transform["unique_key"] and grain and transform["unique_key"] != grain:
+            transform["unique_key"] = grain
     if transform.get("partition_by"):
         transform["partition_by"] = bare(transform["partition_by"])
     for test in transform.get("tests") or []:
