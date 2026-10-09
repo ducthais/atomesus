@@ -154,6 +154,18 @@ export async function cancelRun(runId: string): Promise<ActionState> {
   }
 }
 
+/** Yêu cầu Người 3 tối ưu pipeline đang deploy; backend tạo run mới và tự đánh giá có tốt hơn hay không. */
+export async function optimizePipeline(model: string): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: đã gửi yêu cầu tối ưu pipeline.' };
+  let report: RunReport;
+  try {
+    report = await backend<RunReport>(`/pipelines/${encodeURIComponent(model)}/optimize`, { method: 'POST' });
+  } catch (err) {
+    return failure(err);
+  }
+  redirect(`/runs/${report.run_id.slice(0, 8)}`);
+}
+
 /** Làm sạch thủ công một bảng nguồn (POST /pipeline/runs): đổi tên, ép kiểu, tách dòng lỗi trong sandbox. */
 export async function cleanTable(table: string, title: string, columns: ColumnRule[]): Promise<ActionState> {
   if (MOCK) return { message: 'Mock: chưa gọi backend. Bỏ CATALOG_MOCK để gửi POST /pipeline/runs thật.' };

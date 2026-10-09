@@ -247,6 +247,7 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 | POST | `/runs/{id}/approve`, `/runs/{id}/reject` | Reviewer duyệt (ghi project Dagster) hoặc từ chối |
 | POST | `/runs/{id}/request-changes` | Reviewer gửi nhận xét; tăng version và chạy lại từ bước viết Spec |
 | POST | `/runs/{id}/cancel` | Engineer sở hữu hủy run đang chạy; trạng thái hủy không bị job nền ghi đè |
+| POST | `/pipelines/{model}/optimize` | Engineer yêu cầu tối ưu pipeline đã deploy; tạo run `manual_optimize` và chỉ chuyển duyệt khi có bản tốt hơn |
 | GET | `/catalog`, `/catalog/sources/{ref}/objects` | Catalog; kết nối nguồn và đọc bảng, khóa |
 | GET | `/catalog/drift` | Schema nguồn của pipeline đang chạy có đổi không |
 | POST | `/catalog/datasets/{domain}/{model}/reconcile` | Đối chiếu lại bảng gold Dagster với nguồn |

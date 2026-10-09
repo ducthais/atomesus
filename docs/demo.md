@@ -225,9 +225,9 @@ docker exec p045-b-postgres-1 psql -U <POSTGRES_USER> -d pipeline_demo -c "ALTER
 ## 8. Kết (1 phút)
 
 **Nói:**
-- Đã có: catalog trên dữ liệu thật; nguồn Postgres, REST API và CSV; agent sinh pipeline kèm sổ bằng chứng (mọi phép đo của lần chạy thử); Engineer xác nhận và sửa kế hoạch; Reviewer duyệt, từ chối hoặc yêu cầu sửa, từng run hoặc nhiều run; Dagster chạy định kỳ; màn theo dõi phát hiện suy giảm.
+- Đã có: catalog trên dữ liệu thật; nguồn Postgres, REST API và CSV; agent sinh pipeline kèm sổ bằng chứng (mọi phép đo của lần chạy thử); Engineer xác nhận và sửa kế hoạch; Reviewer duyệt, từ chối hoặc yêu cầu sửa, từng run hoặc nhiều run; Dagster chạy định kỳ; màn theo dõi phát hiện suy giảm và cho phép yêu cầu tối ưu thủ công.
 - Điểm khác biệt: kết quả được tính lại bằng một đường độc lập trên nguồn và so từng dòng, nên lỗi thực thi bị chặn trước khi duyệt; hệ thống đã bắt được lỗi thật mà test không thấy. Chất lượng agent đo bằng ca có kết quả đúng (hiện 5/6). Spec có đúng nhu cầu hay không vẫn do Engineer xác nhận và Reviewer duyệt.
-- Tiếp theo: nút Tối ưu, ca eval vi phạm / mơ hồ, deploy production qua pull request (hiện duyệt xong ghi thẳng ra Dagster local), backfill theo partition, connector MongoDB.
+- Tiếp theo: ca eval vi phạm / mơ hồ, deploy production qua pull request (hiện duyệt xong ghi thẳng ra Dagster local), backfill theo partition, connector MongoDB.
 
 ---
 

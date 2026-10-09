@@ -72,6 +72,19 @@ test('stopped run exposes the recorded reason and stage', () => {
   assert.equal(run.plan.model, 'fct_daily_orders');
 });
 
+test('manual optimization exposes the no-improvement verdict to the UI', () => {
+  const run = toStudioRun({
+    ...agentReport,
+    trigger: 'manual_optimize',
+    status: 'NO_IMPROVEMENT',
+    stage_reached: 'report',
+    regression: { verdict: { improved: false, reason: 'Bản đề xuất không nhanh hơn bản đang chạy.' } },
+  });
+  assert.equal(run.trigger, 'manual_optimize');
+  assert.equal(run.optimization?.verdict?.improved, false);
+  assert.equal(run.optimization?.verdict?.reason, 'Bản đề xuất không nhanh hơn bản đang chạy.');
+});
+
 test('run stopped at a gate with a half-written Spec falls back to the plan instead of crashing', () => {
   // Spec LLM viết dở, lưu nguyên khi cổng kiểm tra chặn (run 870fe465): nguồn thiếu primary_key, write_disposition.
   const partial = { domain: 'rental', sources: [{ id: 'customer', kind: 'postgres', source_ref: 'pagila_pg', table: 'customer' }], transform: {}, schedule: {} };

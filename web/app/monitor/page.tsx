@@ -4,6 +4,7 @@ import { currentUser, getMonitor } from '@/lib/catalog/source';
 import { ALERT_LABEL, findingBadges, newRecordsText, versusBaseline } from '@/lib/monitor';
 import { shortId } from '@/lib/studio';
 import { MonitorActions, ResolveAlertButton } from '../_components/monitor-actions';
+import { OptimizeRunButton } from '../_components/run-controls';
 import { Empty, PageHeader, Panel, fmtAgo, fmtDate, fmtNum } from '../_components/ui';
 
 const seconds = (s: number | null | undefined) => s == null ? '—' : `${s.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} giây`;
@@ -32,7 +33,7 @@ export default async function MonitorPage() {
       {found.pipelines.length === 0 ? <Empty icon={<Gauge size={20} />} title="Chưa có pipeline nào được deploy">
         Duyệt một run để ghi project ra Dagster local (<code>make dagster</code>), rồi quay lại đây sau lần chạy theo lịch đầu tiên.
       </Empty> : <Panel flush title="Pipeline đã deploy"><div className="table-scroll"><table>
-        <thead><tr><th>Pipeline</th><th>Tình trạng</th><th>Lần chạy gần nhất</th><th>Thời gian</th><th>Gold</th><th>Test fail</th><th>Bản ghi mới ở nguồn</th></tr></thead>
+        <thead><tr><th>Pipeline</th><th>Tình trạng</th><th>Lần chạy gần nhất</th><th>Thời gian</th><th>Gold</th><th>Test fail</th><th>Bản ghi mới ở nguồn</th>{user?.role === 'Engineer' && <th>Thao tác</th>}</tr></thead>
         <tbody>{found.pipelines.map(p => {
           const last = p.last;
           const badges = findingBadges(p.findings);
@@ -48,6 +49,7 @@ export default async function MonitorPage() {
             <td className="mono">{fmtNum(last?.gold_rows ?? null)}</td>
             <td className="mono">{last?.tests == null ? '—' : `${last.tests_failed ?? 0}/${last.tests}`}</td>
             <td className="small">{newRecordsText(last)}</td>
+            {user?.role === 'Engineer' && <td><OptimizeRunButton model={p.model} /></td>}
           </tr>;
         })}</tbody>
       </table></div></Panel>}

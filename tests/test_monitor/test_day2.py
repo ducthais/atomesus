@@ -10,7 +10,7 @@ from src.agents import regression
 from src.monitor import alerts, day2, runs
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import load_policy
-from src.run_report import RunReport, save_run_report
+from src.run_report import RunReport, get_run_report, save_run_report
 from src.run_report.store import FIXTURES_DIR
 from tests.test_agents.test_graph import PLAN, SPEC, FakeLLM, deps
 
@@ -146,6 +146,37 @@ async def test_alert_api(client, env, monkeypatch):
         assert (await client.get("/api/v1/monitor/alerts")).json() == []
         assert json.dumps((await client.get("/api/v1/monitor/alerts?include_resolved=true")).json()).count('"id"') == 1
         assert (await client.post("/api/v1/monitor/alerts/999/resolve")).status_code == 404
+    finally:
+        app.dependency_overrides.pop(auth.settings, None)
+        app.dependency_overrides.pop(routes.agent_deps, None)
+
+
+@pytest.mark.asyncio
+async def test_manual_optimize_api_is_engineer_only_and_starts_person_three_flow(client, env, monkeypatch):
+    from src.api import routes
+    from src.main import app
+    from src.pipeline import auth
+
+    app.dependency_overrides[auth.settings] = lambda: env.settings
+    app.dependency_overrides[routes.agent_deps] = lambda: deps(FakeLLM(SPEC), policy=env.policy)
+    monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
+    try:
+        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
+        forbidden = await client.post(f"/api/v1/pipelines/{MODEL}/optimize")
+        assert forbidden.status_code == 403
+
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+        assert (await client.post("/api/v1/pipelines/missing/optimize")).status_code == 404
+        response = await client.post(f"/api/v1/pipelines/{MODEL}/optimize")
+
+        assert response.status_code == 202
+        started = response.json()
+        assert started["trigger"] == "manual_optimize" and started["created_by"] == "minh"
+        saved = get_run_report(env.settings.store_path, started["run_id"])
+        assert saved is not None and saved.status in {"READY_FOR_REVIEW", "NO_IMPROVEMENT"}
+        assert saved.parent_run_id == env.report.run_id
+        assert saved.regression["kind"] == "manual_optimize"
+        assert saved.regression["verdict"]["improved"] is (saved.status == "READY_FOR_REVIEW")
     finally:
         app.dependency_overrides.pop(auth.settings, None)
         app.dependency_overrides.pop(routes.agent_deps, None)

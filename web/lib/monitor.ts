@@ -26,7 +26,7 @@ export const RULE_LABEL: Record<Finding['rule'], string> = {
   runtime_regression: 'Đang chậm', cost_regression: 'Chi phí tăng', test_degradation: 'Test fail tăng', freshness_breach: 'Không đủ tươi',
 };
 export const ALERT_LABEL: Record<Alert['kind'], string> = {
-  source_stalled: 'Nguồn ngừng cấp dữ liệu', no_improvement: 'Không có bản sửa tốt hơn', needs_human: 'Run sửa cần người xử lý',
+  source_stalled: 'Nguồn ngừng cấp dữ liệu', no_improvement: 'Không có bản tốt hơn', needs_human: 'Run sửa cần người xử lý',
 };
 
 /** Nhãn hiển thị của các luật đang kích hoạt; nguồn ngừng cấp tách thành nhãn riêng kèm tên nguồn. */

@@ -1,13 +1,35 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src.agents.nodes.common import AgentDeps
+from src.agents.regression import start_manual_optimize
 from src.api.routes import agent_deps
 from src.monitor import alerts, day2, runs
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
+from src.run_report import RunReport
 
 router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(current_user)])
+pipelines_router = APIRouter(prefix="/pipelines", tags=["pipelines"])
+
+
+@pipelines_router.post("/{model}/optimize", status_code=202, response_model=RunReport)
+def optimize_pipeline(
+    model: str,
+    background: BackgroundTasks,
+    user: dict = Depends(current_user),
+    config: PipelineSettings = Depends(settings),
+    deps: AgentDeps = Depends(agent_deps),
+) -> RunReport:
+    """Engineer yêu cầu tối ưu pipeline đã deploy; tác vụ chạy nền bằng luồng Người 3."""
+    if user["role"] != "Engineer":
+        raise HTTPException(403, "Chỉ Engineer được yêu cầu tối ưu pipeline.")
+    parent = runs.deployed_report(config.store_path, model)
+    if parent is None:
+        raise HTTPException(404, f"Pipeline '{model}' chưa được deploy.")
+    started, job = start_manual_optimize(parent, user["id"], deps, config.store_path)
+    background.add_task(job)
+    return started
 
 
 @router.post("/collect")
