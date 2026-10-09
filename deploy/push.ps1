@@ -23,11 +23,12 @@ if ($LASTEXITCODE) { throw "scp lỗi" }
 Remove-Item $archive
 
 # Xóa code cũ (trừ .env, data/) để file đã bị xóa trong repo không còn trên VM, giống rsync --delete của workflow.
+# Caddy mount từng file Caddyfile: file mới (inode mới) chỉ được đọc sau khi khởi động lại Caddy.
 # Lệnh gửi dạng tham số, chỉ ký tự ASCII: PowerShell 5.1 làm hỏng BOM / tiếng Việt khi pipe chuỗi vào ssh.
 $remote = 'set -e; cd ~/atomesus; ' +
     'find . -mindepth 1 -maxdepth 1 ! -name .env ! -name data -exec rm -rf {} +; ' +
     'tar -xzf ~/atomesus-deploy.tar.gz; rm ~/atomesus-deploy.tar.gz; ' +
-    'setsid -f sh -c ''docker compose --env-file .env -f deploy/compose.yml up -d --build --remove-orphans --wait --wait-timeout 900; echo EXIT=$?; docker image prune -f'' > ~/deploy.log 2>&1 < /dev/null'
+    'setsid -f sh -c ''docker compose --env-file .env -f deploy/compose.yml up -d --build --remove-orphans --wait --wait-timeout 900 && docker compose --env-file .env -f deploy/compose.yml restart caddy; echo EXIT=$?; docker image prune -f'' > ~/deploy.log 2>&1 < /dev/null'
 ssh -i $Key $target $remote
 if ($LASTEXITCODE) { throw "ssh lỗi" }
 Write-Host "Đang build trên VM (10-25 phút lần đầu, vài phút các lần sau)."

@@ -65,9 +65,10 @@ jobs:
             ./ "$USER_NAME@$HOST:atomesus/"
 
       - name: Build and restart
+        # Caddy mount từng file Caddyfile: rsync thay file (inode mới), Caddy chỉ đọc bản mới sau khi khởi động lại.
         run: |
           ssh -i ~/.ssh/deploy_key "$USER_NAME@$HOST" \
-            'cd atomesus && docker compose --env-file .env -f deploy/compose.yml up -d --build --remove-orphans --wait --wait-timeout 600 && docker image prune -f'
+            'cd atomesus && docker compose --env-file .env -f deploy/compose.yml up -d --build --remove-orphans --wait --wait-timeout 600 && docker compose --env-file .env -f deploy/compose.yml restart caddy && docker image prune -f'
 
       - name: Check
         # Qua đúng đường người dùng đi: HTTPS → Caddy → web → backend.
