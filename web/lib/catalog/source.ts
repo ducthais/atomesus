@@ -52,7 +52,7 @@ export async function backend<T>(path: string, init?: RequestInit): Promise<T> {
 export const listUsers = cache(async (): Promise<Person[]> => {
   if (MOCK) return PEOPLE;
   const users = await backend<User[]>('/pipeline/users');
-  return users.map(u => ({ id: u.id, name: u.name, email: u.id, role: u.role }));
+  return users.map(u => ({ id: u.id, name: u.name, email: u.username ?? u.id, role: u.role }));
 });
 
 /** Người dùng đang đăng nhập; null khi chưa đăng nhập hoặc phiên hết hạn. */
@@ -63,7 +63,7 @@ export const currentUser = cache(async (): Promise<Person | null> => {
   }
   try {
     const user = await backend<User>('/pipeline/session');
-    return { id: user.id, name: user.name, email: user.id, role: user.role };
+    return { id: user.id, name: user.name, email: user.username ?? user.id, role: user.role };
   } catch (err) {
     if (err instanceof BackendError && err.status === 401) return null;
     throw err;

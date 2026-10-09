@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useActionState, useTransition } from 'react';
-import { Activity, BookOpenText, Compass, Gauge, Layers3, LogIn, LogOut, Network, Plus, ShieldCheck, Waypoints } from 'lucide-react';
-import { signIn, signOut } from '../actions';
+import { useActionState, useState, useTransition } from 'react';
+import { Activity, BookOpenText, Compass, Gauge, Layers3, LogIn, LogOut, Network, Plus, ShieldCheck, UserPlus, Waypoints } from 'lucide-react';
+import { signIn, signOut, signUp } from '../actions';
 import type { Person } from '@/lib/catalog/types';
 import { initials } from './ui';
 
@@ -40,23 +40,50 @@ export function UserMenu({ user }: { user: Person }) {
 }
 
 export function LoginScreen() {
-  const [state, action, pending] = useActionState(signIn, null);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [loginState, loginAction, loginPending] = useActionState(signIn, null);
+  const [registerState, registerAction, registerPending] = useActionState(signUp, null);
   return <main className="login">
     <div className="login-card">
       <span className="brand-mark"><Layers3 size={20} aria-hidden /></span>
       <h1>Atomesus</h1>
       <p className="muted">Đăng nhập để truy cập Pipeline Studio. Engineer tạo pipeline; Reviewer kiểm tra và phê duyệt.</p>
-      <form action={action} className="login-form">
-        <label className="field" htmlFor="username">Tên đăng nhập
-          <input id="username" name="username" autoComplete="username" required autoFocus placeholder="engineer hoặc reviewer" disabled={pending} />
-        </label>
-        <label className="field" htmlFor="password">Mật khẩu
-          <input id="password" name="password" type="password" autoComplete="current-password" required disabled={pending} />
-        </label>
-        <button className="button primary" type="submit" disabled={pending}><LogIn size={15} aria-hidden />{pending ? 'Đang đăng nhập…' : 'Đăng nhập'}</button>
-      </form>
-      {state?.error && <p className="form-error" role="alert">{state.error}</p>}
-      <p className="login-help">Tài khoản local: <code>engineer</code> hoặc <code>reviewer</code>.</p>
+      <div className="auth-tabs" role="tablist" aria-label="Tài khoản">
+        <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Đăng nhập</button>
+        <button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Đăng ký</button>
+      </div>
+      {mode === 'login' ? <>
+        <form action={loginAction} className="login-form">
+          <label className="field" htmlFor="login-username">Tên đăng nhập
+            <input id="login-username" name="username" autoComplete="username" required autoFocus placeholder="engineer hoặc reviewer" disabled={loginPending} />
+          </label>
+          <label className="field" htmlFor="login-password">Mật khẩu
+            <input id="login-password" name="password" type="password" autoComplete="current-password" required disabled={loginPending} />
+          </label>
+          <button className="button primary" type="submit" disabled={loginPending}><LogIn size={15} aria-hidden />{loginPending ? 'Đang đăng nhập…' : 'Đăng nhập'}</button>
+        </form>
+        {loginState?.error && <p className="form-error" role="alert">{loginState.error}</p>}
+        <p className="login-help">Tài khoản mẫu: <code>engineer</code> hoặc <code>reviewer</code>.</p>
+      </> : <>
+        <form action={registerAction} className="login-form">
+          <label className="field" htmlFor="register-name">Họ và tên
+            <input id="register-name" name="name" autoComplete="name" minLength={2} maxLength={80} required autoFocus disabled={registerPending} />
+          </label>
+          <label className="field" htmlFor="register-username">Tên đăng nhập
+            <input id="register-username" name="username" autoComplete="username" minLength={3} maxLength={32} pattern="[a-z][a-z0-9_.-]+" title="Bắt đầu bằng chữ thường; chỉ dùng chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang" required disabled={registerPending} />
+          </label>
+          <label className="field" htmlFor="register-password">Mật khẩu
+            <input id="register-password" name="password" type="password" autoComplete="new-password" minLength={8} required disabled={registerPending} />
+            <small className="muted">Ít nhất 8 ký tự, gồm chữ hoa, chữ thường và chữ số.</small>
+          </label>
+          <label className="field" htmlFor="register-confirm">Nhập lại mật khẩu
+            <input id="register-confirm" name="confirm_password" type="password" autoComplete="new-password" minLength={8} required disabled={registerPending} />
+          </label>
+          <button className="button primary" type="submit" disabled={registerPending}><UserPlus size={15} aria-hidden />{registerPending ? 'Đang tạo tài khoản…' : 'Tạo tài khoản Engineer'}</button>
+        </form>
+        {registerState?.error && <p className="form-error" role="alert">{registerState.error}</p>}
+        <p className="login-help">Tài khoản đăng ký mới có quyền Engineer. Quyền Reviewer phải được cấp riêng để bảo vệ bước phê duyệt.</p>
+      </>}
     </div>
   </main>;
 }

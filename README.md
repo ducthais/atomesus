@@ -155,6 +155,9 @@ Kiểm tra mọi thứ đã sẵn sàng (phải ra "Sẵn sàng demo."): `python
 - `engineer` / `Engineer@123` — **Minh · Engineer**, tạo và chạy thử pipeline.
 - `reviewer` / `Reviewer@123` — **An · Reviewer**, kiểm tra và phê duyệt.
 
+Hoặc chọn **Đăng ký** trên màn hình đăng nhập để tạo tài khoản Engineer mới. Tài khoản được lưu trong SQLite,
+mật khẩu chỉ lưu dạng PBKDF2 có salt; quyền Reviewer không thể tự đăng ký vì có quyền phê duyệt và deploy pipeline.
+
 Muốn đổi vai trò, đăng xuất rồi đăng nhập bằng tài khoản còn lại. Có thể đổi hai mật khẩu mặc định bằng
 `PIPELINE_ENGINEER_PASSWORD` và `PIPELINE_REVIEWER_PASSWORD` trong `.env`.
 
@@ -236,6 +239,7 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 | Method | Path | Làm gì |
 |---|---|---|
 | POST | `/agent/runs` | Gửi yêu cầu; trả ngay, agent lập kế hoạch ở nền rồi dừng chờ xác nhận (DRAFT, stage `confirm`) |
+| POST | `/pipeline/register` | Đăng ký tài khoản Engineer và tạo phiên đăng nhập ngay |
 | POST | `/agent/runs/{id}/confirm-plan` | Engineer sửa (tùy chọn) và xác nhận kế hoạch; body `{review_mapping, plan?}` |
 | POST | `/agent/runs/{id}/continue` | Chạy thử bản nháp với Spec đã xác nhận / sửa |
 | GET | `/runs`, `/runs/{id}` | Sổ bằng chứng |

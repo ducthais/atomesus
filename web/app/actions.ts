@@ -43,6 +43,36 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
   redirect('/');
 }
 
+/** Đăng ký tài khoản Engineer mới; backend băm mật khẩu, lưu SQLite và trả phiên đăng nhập ngay. */
+export async function signUp(_: ActionState, form: FormData): Promise<ActionState> {
+  const name = String(form.get('name') ?? '').trim();
+  const username = String(form.get('username') ?? '').trim().toLowerCase();
+  const password = String(form.get('password') ?? '');
+  const confirmPassword = String(form.get('confirm_password') ?? '');
+  if (name.length < 2) return { error: 'Họ tên phải có ít nhất 2 ký tự.' };
+  if (!/^[a-z][a-z0-9_.-]{2,31}$/.test(username)) return { error: 'Tên đăng nhập gồm 3–32 ký tự: chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang; bắt đầu bằng chữ.' };
+  if (password !== confirmPassword) return { error: 'Mật khẩu nhập lại không khớp.' };
+  if (password.length < 8 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+    return { error: 'Mật khẩu cần ít nhất 8 ký tự, gồm chữ hoa, chữ thường và chữ số.' };
+  }
+  if (MOCK) return { error: 'Đăng ký cần backend thật. Tắt CATALOG_MOCK rồi thử lại.' };
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND}/api/v1/pipeline/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, username, password }), cache: 'no-store',
+    });
+  } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const detail = body?.detail;
+    return { error: typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((item: { msg: string }) => item.msg).join('; ') : 'Đăng ký thất bại.' };
+  }
+  const token = response.headers.getSetCookie().map(cookie => cookie.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
+  if (!token) return { error: 'Backend không trả cookie phiên.' };
+  (await cookies()).set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
+  redirect('/');
+}
+
 export async function signOut(): Promise<void> {
   const jar = await cookies();
   if (!MOCK) await backend('/pipeline/session', { method: 'DELETE' }).catch(() => null);

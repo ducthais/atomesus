@@ -1,4 +1,4 @@
-export type User = { id: string; name: string; role: 'Engineer' | 'Reviewer' };
+export type User = { id: string; username?: string; name: string; role: 'Engineer' | 'Reviewer' };
 export const COLUMN_TYPES = ['bigint', 'integer', 'decimal(18,2)', 'double', 'varchar', 'boolean', 'date', 'timestamp'] as const;
 /** `date_formats`: định dạng strptime thử lần lượt cho cột ngày ghi nhiều kiểu; không có thì ép kiểu nghiêm. */
 export type ColumnRule = { from: string; as: string; type: typeof COLUMN_TYPES[number]; date_formats?: string[] };

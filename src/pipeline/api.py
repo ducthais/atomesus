@@ -5,6 +5,7 @@ Mỗi run ghi một `RunReport` vào sổ bằng chứng; đọc lại qua `GET 
 
 import hashlib
 import secrets
+import sqlite3
 import time
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -21,11 +22,13 @@ from src.pipeline.auth import (
     USERS,
     current_user,
     demo_only,
+    hash_password,
     session_digest,
     settings,
+    verify_password,
 )
 from src.pipeline.cleaning import clean_rows
-from src.pipeline.models import LoginRequest, RunRequest
+from src.pipeline.models import LoginRequest, RegisterRequest, RunRequest
 from src.pipeline.settings import PipelineSettings
 from src.run_report import Check, Cost, GateResult, RunReport, Timing, save_run_report
 
@@ -37,23 +40,11 @@ MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema ngu�
 
 
 @router.get("/users", dependencies=[Depends(current_user)])
-def users():
-    return list(USERS.values())
+def users(config: PipelineSettings = Depends(settings)):
+    return [*USERS.values(), *store.list_users(config.store_path)]
 
 
-@router.post("/session", dependencies=[Depends(demo_only)])
-def login(body: LoginRequest, response: Response, config: PipelineSettings = Depends(settings)):
-    username = body.username.strip().lower()
-    user_id = ACCOUNTS.get(username)
-    expected = {
-        "engineer": config.engineer_password.get_secret_value(),
-        "reviewer": config.reviewer_password.get_secret_value(),
-    }.get(username, "")
-    if get_settings().app_env == "staging" and expected in DEFAULT_PASSWORDS:
-        # Bản demo đã deploy ra Internet: mật khẩu mặc định ai cũng biết, và ai đăng nhập được là tiêu được tiền LLM.
-        raise HTTPException(503, "Môi trường staging phải đặt PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD.")
-    if not user_id or not secrets.compare_digest(body.password, expected):
-        raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
+def _start_session(response: Response, user_id: str, config: PipelineSettings) -> None:
     token = secrets.token_urlsafe(32)
     with store.database(config.store_path) as conn:
         conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
@@ -66,11 +57,55 @@ def login(body: LoginRequest, response: Response, config: PipelineSettings = Dep
         token,
         httponly=True,
         samesite="strict",
-        secure=get_settings().app_env not in ("development", "test"),  # bản deploy chạy sau HTTPS
+        secure=get_settings().app_env not in ("development", "test"),
         max_age=SESSION_SECONDS,
         path=COOKIE_PATH,
     )
-    return USERS[user_id]
+
+
+@router.post("/session", dependencies=[Depends(demo_only)])
+def login(body: LoginRequest, response: Response, config: PipelineSettings = Depends(settings)):
+    username = body.username.strip().lower()
+    registered = store.get_user_by_username(config.store_path, username)
+    if registered is not None:
+        user, encoded = registered
+        valid = verify_password(body.password, encoded)
+    else:
+        user_id = ACCOUNTS.get(username)
+        user = USERS.get(user_id or "")
+        expected = {
+            "engineer": config.engineer_password.get_secret_value(),
+            "reviewer": config.reviewer_password.get_secret_value(),
+        }.get(username, "")
+        valid = bool(user_id) and secrets.compare_digest(body.password, expected)
+    if registered is None and get_settings().app_env == "staging" and expected in DEFAULT_PASSWORDS:
+        # Bản demo đã deploy ra Internet: mật khẩu mặc định ai cũng biết, và ai đăng nhập được là tiêu được tiền LLM.
+        raise HTTPException(503, "Môi trường staging phải đặt PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD.")
+    if user is None or not valid:
+        raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
+    _start_session(response, user["id"], config)
+    return user
+
+
+@router.post("/register", status_code=201, dependencies=[Depends(demo_only)])
+def register(body: RegisterRequest, response: Response, config: PipelineSettings = Depends(settings)):
+    """Tạo tài khoản Engineer bền vững và đăng nhập ngay; quyền Reviewer không tự cấp qua API công khai."""
+    if body.username in ACCOUNTS or body.username in USERS:
+        raise HTTPException(409, "Tên đăng nhập này đã được sử dụng.")
+    try:
+        user = store.create_user(
+            config.store_path,
+            user_id=f"user_{uuid4().hex}",
+            username=body.username,
+            name=body.name,
+            role="Engineer",
+            password_hash=hash_password(body.password),
+            created_at=time.time(),
+        )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "Tên đăng nhập này đã được sử dụng.") from exc
+    _start_session(response, user["id"], config)
+    return user
 
 
 @router.get("/session")

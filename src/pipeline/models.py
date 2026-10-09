@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 IDENTIFIER = r"^[a-z][a-z0-9_]{0,62}$"
 # Định dạng strptime: chỉ chỉ thị % và dấu phân cách thường gặp, vì được ghép vào câu SQL DuckDB.
@@ -46,3 +46,33 @@ class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
+
+
+class RegisterRequest(BaseModel):
+    """Đăng ký công khai chỉ tạo Engineer; Reviewer là quyền duyệt và phải được cấp riêng."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=2, max_length=80)
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-z][a-z0-9_.-]+$")
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def _clean_username(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("password")
+    @classmethod
+    def _strong_password(cls, value: str) -> str:
+        if not any(char.islower() for char in value):
+            raise ValueError("Mật khẩu phải có ít nhất một chữ thường.")
+        if not any(char.isupper() for char in value):
+            raise ValueError("Mật khẩu phải có ít nhất một chữ hoa.")
+        if not any(char.isdigit() for char in value):
+            raise ValueError("Mật khẩu phải có ít nhất một chữ số.")
+        return value

@@ -15,11 +15,11 @@ npm test
 npm run build
 ```
 
-Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy hệ thống"). Đăng nhập bằng `engineer` / `Engineer@123` hoặc `reviewer` / `Reviewer@123`; muốn đổi vai trò thì đăng xuất và đăng nhập lại.
+Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy hệ thống"). Đăng nhập bằng `engineer` / `Engineer@123` hoặc `reviewer` / `Reviewer@123`; muốn đổi vai trò thì đăng xuất và đăng nhập lại. Tab **Đăng ký** tạo tài khoản Engineer mới; quyền Reviewer không được tự cấp qua form công khai.
 
 **Phiên kết nối nguồn:** bấm Kết nối thành công thì tên nguồn được nhớ trong cookie `catalog_connections` (chỉ tên nguồn, không có credential, hết hạn cùng phiên đăng nhập 8 giờ). Mở lại form Yêu cầu pipeline hay trang Quan hệ thì tự kết nối lại (danh sách bảng vẫn đọc mới từ nguồn). Nút Ngắt hoặc Đăng xuất thì quên.
 
-**Phiên đăng nhập:** Server Action gửi username/password tới `POST /pipeline/session`. Backend xác thực, đặt cookie HttpOnly `pipeline_session` với `Path=/api/v1`; action lấy token và đặt lại cookie với `Path=/` để mọi lời gọi backend từ server (`lib/catalog/source.ts`) gửi kèm token này. Mật khẩu có thể đổi bằng `PIPELINE_ENGINEER_PASSWORD` / `PIPELINE_REVIEWER_PASSWORD`.
+**Phiên đăng nhập:** Server Action gửi username/password tới `POST /pipeline/session`. Đăng ký gửi tên, username và password tới `POST /pipeline/register`; backend lưu tài khoản trong SQLite với PBKDF2 + salt và tạo phiên ngay. Backend đặt cookie HttpOnly `pipeline_session` với `Path=/api/v1`; action lấy token và đặt lại cookie với `Path=/` để mọi lời gọi backend từ server (`lib/catalog/source.ts`) gửi kèm token này. Mật khẩu hai tài khoản mẫu có thể đổi bằng `PIPELINE_ENGINEER_PASSWORD` / `PIPELINE_REVIEWER_PASSWORD`.
 
 ## Màn hình
 
