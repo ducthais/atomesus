@@ -276,7 +276,7 @@ export const RUNS: CatalogRun[] = [
       log('l3', 4, 'success', 'Spec lần 2 hợp lệ', '2026-10-01T07:58:14Z'),
       log('l4', 9, 'success', 'dlt nạp 12.480 dòng vào bronze.raw_orders', '2026-10-01T07:58:21Z'),
       log('l5', 11, 'success', 'dbt build: 6 model/test đạt', '2026-10-01T07:58:30Z'),
-      log('l6', 14, 'success', 'Lan Phạm duyệt; ghi project Dagster vào data/dagster_local/fct_daily_revenue', '2026-10-01T10:20:00Z'),
+      log('l6', 14, 'success', 'Lan Phạm duyệt; PR #12 đã merge, deployer xác nhận đã lên production.', '2026-10-01T10:28:00Z'),
     ],
     specRetries: 1, sqlRetries: 0, llmCalls: 3, updatedAt: '2026-10-01T10:20:00Z', usd: 0.0031, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 5,
     assets: [
@@ -285,6 +285,10 @@ export const RUNS: CatalogRun[] = [
       { name: 'gold.fct_daily_revenue', layer: 'Gold', kind: 'Model dbt', rows: '365', state: 'Đạt' },
     ],
     approval: { decision: 'approved', reviewer: 'lan', files_hash: 'sha256:5f2a9c81d04be7a3c6e1', version: 1, at: '2026-10-01T10:20:00Z', comment: 'Số khớp, ok deploy.' },
+    deployment: { repo: 'atomesus/pipelines', branch: 'pipeline/fct_daily_revenue/v1', pr_number: 12,
+      pr_url: 'https://github.com/atomesus/pipelines/pull/12', head_sha: 'a'.repeat(40), state: 'merged', opened_at: '2026-10-01T10:21:00Z',
+      ci_conclusion: 'success', ci_url: 'https://github.com/atomesus/pipelines/actions/runs/120', ci_at: '2026-10-01T10:24:00Z',
+      merged_at: '2026-10-01T10:26:00Z', merge_commit_sha: 'b'.repeat(40), deployed_commit_sha: 'b'.repeat(40), deployed_at: '2026-10-01T10:28:00Z' },
     error: null, question: null,
     files: {
       'dagster/definitions.py': dagster('fct_daily_revenue'),
@@ -395,6 +399,17 @@ group by c.customer_id, c.full_name
     error: 'Tỷ lệ dòng bị tách 4,24% vượt ngưỡng 1% (objectives.yml sales.quality.max_reject_pct).', question: null, files: {},
   },
 ];
+
+/** Giữ run chờ duyệt, thêm một version đã duyệt có PR đang mở để kiểm tra luồng Deploy. */
+RUNS.push({
+  ...RUNS[1], id: 'c28f4a90-6b1d-4e2c-9012-a3456789b012', status: 'APPROVED',
+  approval: { decision: 'approved', reviewer: 'lan', files_hash: RUNS[1].filesHash, version: 1, at: '2026-10-02T09:20:00Z', comment: 'Đã đối chiếu, mở PR.' },
+  deployment: { repo: 'atomesus/pipelines', branch: 'pipeline/fct_customer_revenue/v1', pr_number: 13,
+    pr_url: 'https://github.com/atomesus/pipelines/pull/13', head_sha: 'c'.repeat(40), state: 'open', opened_at: '2026-10-02T09:21:00Z',
+    ci_url: 'https://github.com/atomesus/pipelines/actions/runs/130' },
+  logs: [...RUNS[1].logs, log('m5', 14, 'success', 'Đã duyệt; PR #13 đang mở, chờ CI và merge.', '2026-10-02T09:21:00Z')],
+  updatedAt: '2026-10-02T09:21:00Z',
+});
 
 export const POLICY: PolicyFile[] = [
   { name: 'domains.yml', description: 'Domain, nguồn được phép đọc, thực thể và steward.', content: `# Domain, nguồn và thực thể (SPEC §8.4). Steward sở hữu file này; sửa qua pull request.

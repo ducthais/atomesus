@@ -69,6 +69,14 @@ export type AgentPlan = {
   concepts?: { term: string; column?: string | null }[];
 };
 export type Approval = { decision: string; reviewer: string; files_hash: string; version: number; at: string; comment: string };
+/** Pull request và tiến độ do webhook / deployer ghi (src/run_report/models.py). */
+export type Deployment = {
+  repo: string; branch: string; pr_number: number; pr_url: string; head_sha: string;
+  state: 'open' | 'merged' | 'closed'; opened_at: string;
+  ci_conclusion?: string | null; ci_url?: string | null; ci_at?: string | null;
+  merged_at?: string | null; merge_commit_sha?: string | null; closed_at?: string | null;
+  deployed_commit_sha?: string | null; deployed_at?: string | null;
+};
 export type OptimizationVerdict = {
   improved: boolean; reason?: string; label?: string;
   comparison?: { rule: string; before?: unknown; after?: unknown; better: boolean; gain_pct?: number; detail?: string }[];
@@ -80,7 +88,7 @@ export type RunReport = {
   // Run làm sạch thủ công lưu body RunRequest; run do agent tạo lưu Spec đầy đủ.
   spec: RunRequest | AgentSpec | null; plan?: AgentPlan | null;
   // spec_history cũng là dict tự do: agent ghi {attempt, errors}, run mẫu cũ ghi {version, reason}.
-  spec_history?: { attempt?: number; errors?: string[]; version?: number; reason?: string }[];
+  spec_history?: { attempt?: number; errors?: string[]; version?: number; reason?: string; deployment?: Deployment | null }[];
   files?: Record<string, string>; files_hash?: string | null;
   gates: { name: string; result: 'pass' | 'fail'; detail: string; observed: Record<string, unknown> }[];
   checks: { name: string; source_id: string | null; result: 'pass' | 'fail'; observed: Record<string, unknown> }[];
@@ -92,6 +100,7 @@ export type RunReport = {
   error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string; need_tables?: string[] }[];
   /** Nguồn và bảng người dùng chọn khi tạo run; null = agent chọn trong mọi nguồn. */
   source_scope?: { source_ref: string; tables: string[] }[] | null; approval: Approval | null;
+  deployment?: Deployment | null;
   regression?: { verdict?: OptimizationVerdict; [key: string]: unknown } | null;
   review_history?: Approval[];
   timeline?: { event: string; at: string; actor?: string | null }[];

@@ -34,7 +34,7 @@ export function CodeViewer({ files }: { files: Record<string, string> }) {
   </div>;
 }
 
-/** Duyệt / từ chối đúng bộ file đã xem (files_hash). Duyệt xong backend ghi project Dagster local. */
+/** Duyệt / từ chối đúng bộ file đã xem (files_hash); duyệt chỉ ghi chữ ký. */
 export function ReviewPanel({ runId, approval, eligible, reason, filesHash, version, impact = [], compareHref }: { runId: string; approval: Approval | null; eligible: boolean; reason: string; filesHash: string; version: number; impact?: string[]; compareHref?: string }) {
   const [comment, setComment] = useState('');
   const [state, setState] = useState<ActionState>(null);
@@ -44,7 +44,7 @@ export function ReviewPanel({ runId, approval, eligible, reason, filesHash, vers
   const requestChanges = () => start(async () => setState(await requestRunChanges(runId, filesHash, version, comment)));
   if (approval) return <section className="panel review done"><div className="panel-head"><h2>{approval.decision === 'approved' ? 'Đã duyệt' : approval.decision === 'changes_requested' ? 'Đã yêu cầu sửa' : 'Đã từ chối'} v{approval.version}</h2></div>
     <p>bởi <strong>{approval.reviewer}</strong> · files_hash <code>{approval.files_hash.replace('sha256:', '').slice(0, 12)}</code></p>{approval.comment && <blockquote>{approval.comment}</blockquote>}
-    {state?.message && <p className="muted small" role="status">{state.message}</p>}</section>;
+    {state && <p className="small" role={state.error ? 'alert' : 'status'}>{state.error ?? state.message}</p>}</section>;
   return <section className="panel review">
     <div className="panel-head"><h2>Review v{version}</h2><code className="muted">{hash}</code></div>
     <p className="muted">{reason}</p>

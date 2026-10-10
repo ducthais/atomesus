@@ -1,8 +1,23 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { CircleAlert, LoaderCircle, Sparkles, XCircle } from 'lucide-react';
-import { cancelRun, optimizePipeline, type ActionState } from '../actions';
+import { CircleAlert, GitPullRequest, LoaderCircle, Sparkles, XCircle } from 'lucide-react';
+import { cancelRun, deployRun, optimizePipeline, type ActionState } from '../actions';
+
+export function DeployRunButton({ runId, reason }: { runId: string; reason: string | null }) {
+  const [state, setState] = useState<ActionState>(null);
+  const [pending, start] = useTransition();
+  return <div className="deploy-controls" aria-busy={pending}>
+    <button type="button" className="button primary" disabled={!!reason || pending} aria-describedby={reason ? 'deploy-reason' : undefined}
+      onClick={() => start(async () => setState(await deployRun(runId)))}>
+      {pending ? <LoaderCircle size={15} className="spin" aria-hidden /> : <GitPullRequest size={15} aria-hidden />}
+      {pending ? 'Đang mở pull request…' : 'Deploy'}
+    </button>
+    {reason && <p id="deploy-reason" className="small">{reason}</p>}
+    {pending && <p className="small" role="status">Đang gửi Deploy để mở pull request…</p>}
+    {state && !pending && <div className={`callout ${state.error ? 'bad' : 'info'}`} role={state.error ? 'alert' : 'status'}>{state.error ?? state.message}</div>}
+  </div>;
+}
 
 export function CancelRunButton({ runId }: { runId: string }) {
   const [state, setState] = useState<ActionState>(null);
