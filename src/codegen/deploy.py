@@ -17,16 +17,24 @@ from src.spec.models import Spec
 DBT_PARSE_TIMEOUT_SEC = 120
 
 
+def _is_project_dir(name: str) -> bool:
+    """Thư mục project thật: không ẩn, không phải bản tạm/sao lưu `<model>.tmp-<token>`/`<model>.old-<token>`."""
+    return not (name.startswith(".") or ".tmp-" in name or ".old-" in name)
+
+
 def write_workspace(deploy_dir: str) -> Path:
     """Ghi `<deploy_dir>/workspace.yaml`: mỗi project đã deploy là một code location của Dagster.
 
     `make dagster` nạp file này; deploy thêm pipeline thì bấm "Reload" trong Dagster UI là thấy.
+    Bỏ qua thư mục tạm/sao lưu của deploy_local vì chúng bị xóa ngay sau khi ghi file này.
     """
     root = Path(deploy_dir)
     root.mkdir(parents=True, exist_ok=True)
     lines = ["# Sinh tự động bởi src/codegen/deploy.py; không sửa tay.", "load_from:"]
     for module in sorted(root.glob("*/infra/dagster/generated/*_asset.py")):
         project = module.parents[3]
+        if not _is_project_dir(project.name):
+            continue
         lines += [
             "  - python_module:",
             f"      module_name: infra.dagster.generated.{module.stem}",
