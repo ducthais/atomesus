@@ -19,9 +19,11 @@ async def request_and_verify(client, payload):
     return response
 
 
-@pytest_asyncio.fixture
-async def registration(client, tmp_path, monkeypatch):
-    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+@pytest_asyncio.fixture(params=[True], ids=["email-verification"])
+async def registration(request, client, tmp_path, monkeypatch):
+    config = PipelineSettings(
+        _env_file=None, store_path=str(tmp_path / "runs.sqlite3"), registration_email_verification=request.param
+    )
     app.dependency_overrides[auth.settings] = lambda: config
     environment = SimpleNamespace(app_env="test")
     monkeypatch.setattr(auth, "get_settings", lambda: environment)
@@ -273,3 +275,34 @@ async def test_rejected_registration_does_not_use_the_ip_slot(registration, monk
 def test_client_ip_trusts_forwarded_header_only_from_private_proxy(peer, forwarded, expected):
     request = SimpleNamespace(client=SimpleNamespace(host=peer), headers={"x-forwarded-for": forwarded})
     assert api.client_ip(request) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registration", [False], ids=["direct"], indirect=True)
+async def test_direct_registration_creates_engineer_and_starts_session(registration):
+    client, config = registration
+    response = await client.post("/api/v1/pipeline/register", json=payload_for("linh.data"))
+    assert response.status_code == 201, response.text
+    user = response.json()
+    assert user["role"] == "Engineer" and user["username"] == "linh.data" and user["email"] == "linh.data@example.com"
+    assert "development_code" not in user
+    assert (await client.get("/api/v1/pipeline/session")).json() == user
+    assert store.get_pending_registration(config.store_path, "linh.data@example.com") is None
+
+    await client.delete("/api/v1/pipeline/session")
+    login = await client.post("/api/v1/pipeline/session", json={"username": "LINH.DATA", "password": "StrongPass9"})
+    assert login.status_code == 200 and login.json()["id"] == user["id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registration", [False], ids=["direct"], indirect=True)
+async def test_direct_registration_keeps_duplicate_and_ip_limits(registration):
+    client, _config = registration
+    assert (await client.post("/api/v1/pipeline/register", json=payload_for("linh.data"))).status_code == 201
+    other_ip = {"X-Forwarded-For": "203.0.113.9"}
+    duplicate = await client.post("/api/v1/pipeline/register", json=payload_for("linh.data"), headers=other_ip)
+    assert duplicate.status_code == 409
+    assert (await client.post("/api/v1/pipeline/register", json=payload_for("minh.data"))).status_code == 429
+    assert (
+        await client.post("/api/v1/pipeline/register", json=payload_for("minh.data"), headers=other_ip)
+    ).status_code == 201

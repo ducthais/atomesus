@@ -45,7 +45,15 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
   redirect('/');
 }
 
-/** Gửi OTP email; backend chỉ giữ bản băm mật khẩu trong yêu cầu đăng ký tạm thời. */
+/** Lưu cookie phiên backend trả về (đăng ký hoặc xác thực xong) rồi vào trang chủ. */
+async function startSession(response: Response): Promise<{ error: string }> {
+  const token = response.headers.getSetCookie().map(cookie => cookie.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
+  if (!token) return { error: 'Backend không trả cookie phiên.' };
+  (await cookies()).set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
+  redirect('/');
+}
+
+/** Đăng ký Engineer. Backend tắt xác thực email: tạo tài khoản và đăng nhập ngay (201). Bật: gửi OTP (202). */
 export async function signUp(_: RegistrationState, form: FormData): Promise<RegistrationState> {
   const name = String(form.get('name') ?? '').trim();
   const email = String(form.get('email') ?? '').trim().toLowerCase();
@@ -74,6 +82,7 @@ export async function signUp(_: RegistrationState, form: FormData): Promise<Regi
     const detail = body?.detail;
     return { error: typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((item: { msg: string }) => item.msg).join('; ') : 'Đăng ký thất bại.' };
   }
+  if (response.status === 201) return startSession(response);
   const result = await response.json() as { email: string; development_code?: string };
   return { email: result.email, developmentCode: result.development_code };
 }
@@ -94,10 +103,7 @@ export async function verifySignUp(_: ActionState, form: FormData): Promise<Acti
     const body = await response.json().catch(() => null);
     return { error: typeof body?.detail === 'string' ? body.detail : 'Xác thực email thất bại.' };
   }
-  const token = response.headers.getSetCookie().map(cookie => cookie.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
-  if (!token) return { error: 'Backend không trả cookie phiên.' };
-  (await cookies()).set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
-  redirect('/');
+  return startSession(response);
 }
 
 export async function signOut(): Promise<void> {

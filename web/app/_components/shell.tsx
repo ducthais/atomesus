@@ -96,7 +96,6 @@ function RegisterForm({ onReset }: { onReset: () => void }) {
           </label>
           <label className="field" htmlFor="register-email">Email
             <input id="register-email" name="email" type="email" autoComplete="email" maxLength={254} required disabled={registerPending} />
-            <small className="muted">Chúng tôi sẽ gửi mã xác thực gồm 6 chữ số.</small>
           </label>
           <label className="field" htmlFor="register-username">Tên đăng nhập
             <input id="register-username" name="username" autoComplete="username" minLength={3} maxLength={32} pattern="[a-z][a-z0-9_.-]+" title="Bắt đầu bằng chữ thường; chỉ dùng chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang" required disabled={registerPending} />
@@ -108,9 +107,9 @@ function RegisterForm({ onReset }: { onReset: () => void }) {
           <label className="field" htmlFor="register-confirm">Nhập lại mật khẩu
             <input id="register-confirm" name="confirm_password" type="password" autoComplete="new-password" minLength={8} required disabled={registerPending} />
           </label>
-          <button className="button primary" type="submit" disabled={registerPending}><UserPlus size={15} aria-hidden />{registerPending ? 'Đang gửi mã…' : 'Gửi mã xác thực'}</button>
+          <button className="button primary" type="submit" disabled={registerPending}><UserPlus size={15} aria-hidden />{registerPending ? 'Đang đăng ký…' : 'Đăng ký'}</button>
         </form>
         {registerState?.error && <p className="form-error" role="alert">{registerState.error}</p>}
-        <p className="login-help">Tài khoản chỉ được tạo sau khi email được xác thực và có quyền Engineer. Quyền Reviewer phải được Admin cấp riêng.</p>
+        <p className="login-help">Tài khoản mới có quyền Engineer. Quyền Reviewer phải được Admin cấp riêng.</p>
       </>;
 }

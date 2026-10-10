@@ -145,8 +145,12 @@ def client_ip(request: Request) -> str:
 
 
 @router.post("/register", status_code=202, dependencies=[Depends(demo_only)])
-def register(body: RegisterRequest, request: Request, config: PipelineSettings = Depends(settings)):
-    """Gửi mã email; chưa tạo tài khoản cho tới khi mã được xác thực. Mỗi IP một lần mỗi REGISTRATION_IP_SECONDS."""
+def register(body: RegisterRequest, request: Request, response: Response, config: PipelineSettings = Depends(settings)):
+    """Đăng ký tài khoản Engineer. Mỗi IP một lần mỗi REGISTRATION_IP_SECONDS.
+
+    `registration_email_verification` tắt: tạo tài khoản, đăng nhập ngay và trả 201. Bật: gửi mã email, trả 202,
+    tài khoản chỉ được tạo ở /register/verify.
+    """
     if body.username in ACCOUNTS or body.username in USERS:
         raise HTTPException(409, "Tên đăng nhập này đã được sử dụng.")
     if store.email_or_username_exists(config.store_path, body.email, body.username):
@@ -160,6 +164,25 @@ def register(body: RegisterRequest, request: Request, config: PipelineSettings =
             f"Vui lòng thử lại sau {math.ceil(wait / 60)} phút.",
             headers={"Retry-After": str(math.ceil(wait))},
         )
+
+    if not config.registration_email_verification:
+        try:
+            user = store.create_user(
+                config.store_path,
+                user_id=f"user_{uuid4().hex}",
+                username=body.username,
+                name=body.name,
+                role="Engineer",
+                password_hash=hash_password(body.password),
+                created_at=time.time(),
+                email=body.email,
+            )
+        except sqlite3.IntegrityError as exc:  # request đồng thời vừa lấy cùng email/username
+            store.release_registration_slot(config.store_path, ip)
+            raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.") from exc
+        _start_session(response, user["id"], config)
+        response.status_code = 201
+        return user
 
     code = f"{secrets.randbelow(1_000_000):06d}"
     store.save_pending_registration(

@@ -17,6 +17,8 @@ class PipelineSettings(BaseSettings):
     smtp_password: SecretStr = SecretStr("")
     smtp_from: str = "noreply@atomesus.local"
     smtp_starttls: bool = True
+    # Bật thì đăng ký phải nhập mã gửi qua email (cần SMTP ở staging); tắt thì tạo tài khoản và đăng nhập ngay.
+    registration_email_verification: bool = False
     # Sprint 1: duyệt xong thì ghi project Dagster ra đây (Sprint 3 chuyển sang pull request).
     deploy_dir: str = "data/dagster_local"
     # Dagster local (make dagster): trang dataset đọc trạng thái run qua GraphQL ở đây.
