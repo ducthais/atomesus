@@ -168,7 +168,7 @@ async def test_deploy_opens_pull_request_and_keeps_approved(logged_in, approved_
     assert report["status"] == "APPROVED" and report["stage_reached"] == "deploy"
     deployment = report["deployment"]
     assert deployment["repo"] == "acme/atomesus-pipelines"
-    assert deployment["branch"] == f"pipeline/fct_daily_orders/v{approved_run.version}"
+    assert deployment["branch"] == f"pipeline/fct_daily_orders/{READY_RUN_ID[:8]}-v{approved_run.version}"
     assert deployment["pr_number"] == 1 and deployment["pr_url"].endswith("/pull/1")
     assert deployment["state"] == "open" and deployment["head_sha"] and deployment["opened_at"]
     stored = (await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")).json()

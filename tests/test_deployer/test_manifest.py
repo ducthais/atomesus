@@ -67,10 +67,36 @@ def test_verify_rejects_forged_files_hash_and_incomplete_manifest():
         verify_manifest({**manifest(), "manifest_version": 99}, FILES)
 
 
-@pytest.mark.parametrize("path", ["../escape.sql", "/abs.sql", "a\\b.sql", "manifest.json", "run_report.json", ""])
+UNSAFE_PATHS = [
+    "../escape.sql",
+    "a/../../escape.sql",
+    "/abs.sql",
+    "a\\b.sql",
+    "..\\escape.sql",
+    "C:/outside.sql",
+    "c:x.sql",
+    "C:\\outside.sql",
+    "//server/share/x.sql",
+    "manifest.json",
+    "run_report.json",
+    "",
+]
+
+
+@pytest.mark.parametrize("path", UNSAFE_PATHS)
 def test_unsafe_paths_are_rejected(path):
     with pytest.raises(ManifestError, match="Đường dẫn"):
         manifest(files={**FILES, path: "x"})
+
+
+@pytest.mark.parametrize("path", UNSAFE_PATHS)
+def test_verify_rejects_manifest_listing_unsafe_path(path):
+    # Manifest giả mạo trên nhánh: kể cả khi bộ file khớp từng sha256, đường dẫn ra ngoài thư mục vẫn bị từ chối.
+    files = {**FILES, path: "x"}
+    forged = {**manifest(), "files": hash_files(files)[0], "files_hash": hash_files(files)[1]}
+
+    with pytest.raises(ManifestError, match="Đường dẫn"):
+        verify_manifest(forged, files)
 
 
 @pytest.mark.parametrize("model_name", ["../x", "Fct", "fct/x", ""])

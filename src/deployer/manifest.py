@@ -37,9 +37,12 @@ def hash_files(files: dict[str, str]) -> tuple[dict[str, str], str]:
 
 
 def _check_paths(paths) -> None:
+    # Chỉ nhận đường dẫn tương đối kiểu POSIX nằm trong thư mục pipeline: không '/' đầu, không '\', không '..', không
+    # ':' (ổ đĩa Windows như C:/x.sql hay c:x.sql).
     for path in paths:
         parts = PurePosixPath(path).parts
-        if not path or path.startswith("/") or "\\" in path or ".." in parts or path in (MANIFEST_FILE, REPORT_FILE):
+        unsafe = not path or path.startswith("/") or "\\" in path or ":" in path or ".." in parts
+        if unsafe or path in (MANIFEST_FILE, REPORT_FILE):
             raise ManifestError(f"Đường dẫn file '{path}' không hợp lệ trong bộ file đã duyệt.")
 
 

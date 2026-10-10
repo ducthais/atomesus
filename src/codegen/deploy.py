@@ -1,8 +1,8 @@
 """P16 deploy (SPEC §9.5): mở pull request chứa đúng bộ file Reviewer đã duyệt vào repo pipeline.
 
-Nhánh `pipeline/<model_name>/v<version>` tạo từ nhánh mặc định; một commit ghi `pipelines/<model_name>/` gồm 4 + N
-file đã duyệt, `run_report.json` và `manifest.json` (src/deployer/manifest.py). Backend chỉ mở pull request: CI của
-repo pipeline kiểm manifest, người có quyền merge, service deployer cài lên Dagster production (src/deployer/).
+Nhánh `pipeline/<model_name>/<8 ký tự đầu run_id>-v<version>` tạo từ nhánh mặc định; một commit ghi
+`pipelines/<model_name>/` gồm 4 + N file đã duyệt, `run_report.json` và `manifest.json` (src/deployer/manifest.py).
+Backend chỉ mở pull request: CI của repo pipeline kiểm manifest, người có quyền merge, service deployer cài lên Dagster production (src/deployer/).
 Gọi lại khi pull request đã mở thì trả pull request cũ; nhánh đã có mà chưa có pull request thì mở trên nhánh đó.
 Mọi lần dùng lại nhánh có sẵn đều kiểm trước nội dung đầu nhánh khớp chữ ký duyệt của chính run này.
 """
@@ -17,8 +17,9 @@ from src.deployer.manifest import MANIFEST_FILE, REPORT_FILE, ManifestError, bui
 from src.run_report.models import Deployment, RunReport
 
 
-def branch_name(model_name: str, version: int) -> str:
-    return f"pipeline/{model_name}/v{version}"
+def branch_name(model_name: str, run_id: str, version: int) -> str:
+    # Version đánh số riêng trong từng run nên tên nhánh phải có run_id: hai run cùng model không trùng nhánh.
+    return f"pipeline/{model_name}/{run_id[:8]}-v{version}"
 
 
 def _body(report: RunReport, model_name: str, report_url: str) -> str:
@@ -59,8 +60,8 @@ def _verify_branch(
 ) -> None:
     """Nhánh đã có chỉ được dùng lại khi đầu nhánh chứa đúng bộ file đã ký của chính run này.
 
-    Version đánh số riêng trong từng run nên hai run cùng model có thể trùng tên nhánh; nhánh của run khác, của chữ ký
-    khác hay bị sửa sau khi mở đều ra ManifestError (409), không bao giờ trả pull request của nó cho run này.
+    Tên nhánh chỉ lấy 8 ký tự đầu run_id nên vẫn có thể trùng với run khác; nhánh của run khác, của chữ ký khác hay bị
+    sửa sau khi mở đều ra ManifestError (409), không bao giờ trả pull request của nó cho run này.
     """
     folder = project_dir(manifest["model_name"])
     blobs = {
@@ -144,7 +145,7 @@ def open_pull_request(report: RunReport, files: dict[str, str], github: GithubCl
     signed = approval.files_hash == report.files_hash == manifest["files_hash"] and approval.version == report.version
     if not signed:
         raise ManifestError("Bộ file không khớp chữ ký duyệt nên không mở pull request.")
-    branch = branch_name(model_name, report.version)
+    branch = branch_name(model_name, report.run_id, report.version)
     try:
         repo = github.repository()
         base = repo["default_branch"]

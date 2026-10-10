@@ -167,8 +167,8 @@ def test_pull_request_contains_signed_files_report_and_manifest():
 
     deployment = open_pull_request(report, files, github.client())
 
-    branch = branch_name("fct_daily_orders", report.version)
-    assert branch == "pipeline/fct_daily_orders/v3"
+    branch = branch_name("fct_daily_orders", report.run_id, report.version)
+    assert branch == "pipeline/fct_daily_orders/3f6c1a2e-v3"
     assert deployment.model_dump(exclude={"opened_at"}) == {
         "repo": REPO,
         "branch": branch,
@@ -218,7 +218,7 @@ def test_existing_branch_without_pull_request_gets_one_on_that_branch():
     github = FakeGithub(fail={"POST /pulls": 500})
     with pytest.raises(GithubError):
         open_pull_request(report, files, github.client())
-    branch = branch_name("fct_daily_orders", report.version)
+    branch = branch_name("fct_daily_orders", report.run_id, report.version)
     head, writes = github.refs[branch], len(github.writes())
     github.fail = {}
 
@@ -245,13 +245,34 @@ def signed_copy(report: RunReport, files: dict[str, str], **update) -> RunReport
 
 
 def other_runs():
-    """Run khác cùng model và version: cùng bộ file nhưng khác run_id, hoặc cùng run_id nhưng bộ file khác."""
+    """Run khác trùng nhánh (cùng model, version và 8 ký tự đầu run_id): cùng bộ file nhưng khác run_id, hoặc cùng
+    run_id nhưng bộ file khác."""
     report, files = approved_report()
     changed = {**files, next(iter(files)): files[next(iter(files))] + "\n-- bản khác\n"}
     return [
-        (report, files, signed_copy(report, files, run_id="9d1e2f3a-0000-4000-8000-000000000002"), files),
+        (report, files, signed_copy(report, files, run_id="3f6c1a2e-0000-4000-8000-000000000002"), files),
         (report, files, signed_copy(report, changed), changed),
     ]
+
+
+def test_two_runs_of_same_model_and_version_open_separate_pull_requests():
+    report, files = approved_report()
+    changed = {**files, next(iter(files)): files[next(iter(files))] + "\n-- bản khác\n"}
+    other = signed_copy(report, changed, run_id="9d1e2f3a-0000-4000-8000-000000000002")
+    github = FakeGithub()
+
+    first = open_pull_request(report, files, github.client())
+    second = open_pull_request(other, changed, github.client())
+
+    assert first.branch == "pipeline/fct_daily_orders/3f6c1a2e-v3"
+    assert second.branch == "pipeline/fct_daily_orders/9d1e2f3a-v3"
+    assert (first.pr_number, second.pr_number) == (1, 2) and len(github.pulls) == 2
+    for deployment, run, run_files in ((first, report, files), (second, other, changed)):
+        pull = github.pulls[deployment.pr_number - 1]
+        assert pull["head"]["ref"] == deployment.branch and run.run_id in pull["body"]
+        tree = github.files_at(deployment.branch)
+        assert {p: tree[f"{FOLDER}/{p}"] for p in run_files} == run_files
+        assert json.loads(tree[f"{FOLDER}/manifest.json"])["run_id"] == run.run_id
 
 
 @pytest.mark.parametrize(("first", "first_files", "second", "second_files"), other_runs())
@@ -284,7 +305,7 @@ def test_branch_of_other_signed_run_without_pull_request_is_not_reused(first, fi
 def test_branch_with_unrelated_content_is_not_reused():
     report, files = approved_report()
     github = FakeGithub()
-    github.refs[branch_name("fct_daily_orders", report.version)] = "c0"
+    github.refs[branch_name("fct_daily_orders", report.run_id, report.version)] = "c0"
 
     with pytest.raises(ManifestError):
         open_pull_request(report, files, github.client())
@@ -296,7 +317,7 @@ def test_pull_request_changed_after_opening_is_not_returned():
     report, files = approved_report()
     github = FakeGithub()
     open_pull_request(report, files, github.client())
-    branch = branch_name("fct_daily_orders", report.version)
+    branch = branch_name("fct_daily_orders", report.run_id, report.version)
     tree = dict(github.files_at(branch))
     tree[f"{FOLDER}/{next(iter(files))}"] = "-- sửa thẳng trên nhánh\n"
     github.trees["t_sua"] = tree
@@ -322,7 +343,8 @@ def test_branch_created_concurrently_by_other_run_is_not_used(first, first_files
     github = FakeGithub(fail={"POST /pulls": 500})
     with pytest.raises(GithubError):
         open_pull_request(first, first_files, github.client())
-    branch = branch_name("fct_daily_orders", first.version)
+    branch = branch_name("fct_daily_orders", first.run_id, first.version)
+    assert branch == branch_name("fct_daily_orders", second.run_id, second.version)
     winner = github.refs.pop(branch)
     github.fail = {}
     github.race_ref = lambda sha: winner
@@ -340,7 +362,7 @@ def test_files_of_previous_version_no_longer_signed_are_removed():
 
     open_pull_request(report, files, github.client())
 
-    tree = github.files_at(branch_name("fct_daily_orders", report.version))
+    tree = github.files_at(branch_name("fct_daily_orders", report.run_id, report.version))
     assert f"{FOLDER}/old_model.sql" not in tree
     assert tree["pipelines/other/a.sql"] == "a\n", "không đụng pipeline khác"
 
