@@ -1,0 +1,8 @@
+{
+  "id": "ambiguous_revenue_target",
+  "group": "ambiguous",
+  "request": "So sánh doanh thu từng ngày với chỉ tiêu",
+  "sources": [{ "source_ref": "sales_pg", "tables": ["orders"] }],
+  "expected": { "status": "NEEDS_HUMAN", "stage": "plan" },
+  "note": "không nguồn nào có chỉ tiêu doanh thu: agent phải hỏi chỉ tiêu lấy ở đâu"
+}

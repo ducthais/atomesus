@@ -1,0 +1,8 @@
+{
+  "id": "ambiguous_profit_margin",
+  "group": "ambiguous",
+  "request": "Biên lợi nhuận theo ngày",
+  "sources": [{ "source_ref": "sales_pg", "tables": ["orders"] }],
+  "expected": { "status": "NEEDS_HUMAN", "stage": "plan" },
+  "note": "bảng đơn hàng không có giá vốn: lợi nhuận không tính được, agent phải hỏi chứ không lặng lẽ thay bằng doanh thu"
+}

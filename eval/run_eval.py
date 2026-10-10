@@ -1,18 +1,24 @@
-"""Chấm điểm agent trên các ca có kết quả đúng (SPEC §18): chạy thật từng ca rồi so bảng gold với golden, từng dòng.
+"""Chấm điểm agent trên 15 ca của SPEC §18.2: chạy thật từng ca bằng LLM thật và nguồn thật.
 
-Mỗi ca: lập kế hoạch → tự xác nhận (P2) → viết Spec → chạy thử trong sandbox, bằng LLM thật và nguồn thật (cần
-Postgres nguồn và `make mock-api` đang chạy). Bảng gold được lấy nguyên vẹn ngay trong sandbox trước khi sandbox bị xóa
-(bọc `reference.read_gold`, không sửa code sản phẩm). Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn dữ liệu demo.
+Cần Postgres nguồn và `make mock-api` đang chạy. Mỗi ca: lập kế hoạch → tự xác nhận (P2) → viết Spec → chạy thử
+trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn dữ liệu demo.
 
-So với golden (eval/golden/*.json): tên cột do LLM đặt nên ghép theo giá trị.
+| Nhóm      | Số ca | File            | Đạt khi                                                               |
+|-----------|-------|-----------------|-----------------------------------------------------------------------|
+| hợp lệ    | 6     | eval/golden/    | tới READY_FOR_REVIEW và bảng gold khớp golden từng dòng               |
+| vi phạm   | 6     | eval/cases/     | dừng đúng mã `BLOCKED_*` mong đợi (2 ca mỗi cổng semantic, budget, ast_guard) |
+| mơ hồ     | 3     | eval/cases/     | dừng NEEDS_HUMAN ở bước `plan` kèm câu hỏi làm rõ, không đoán         |
+
+So với golden: tên cột do LLM đặt nên ghép theo giá trị. Bảng gold được lấy nguyên vẹn ngay trong sandbox trước khi
+sandbox bị xóa (bọc `reference.read_gold`, không sửa code sản phẩm).
 - Cột khóa: cột có đúng tập giá trị của một trong các khóa của ca (`key`), và gold có đúng số dòng.
 - Mỗi chỉ số (`measures`): cột số khớp golden ở mọi dòng, sai số ≤ 0,01% (tối thiểu 0,005). Chỉ số golden bằng 0 khớp
   cả với NULL (LEFT JOIN không có bản ghi), theo ghi chú của ca.
-Ca khớp khi run tới READY_FOR_REVIEW và mọi chỉ số khớp. Kết quả ghi kèm mẫu số và tách theo loại nguồn (SPEC §18.3).
 
-Ca vi phạm / mơ hồ (`eval/cases/`, Người 3 viết) chưa có: khi có, thêm vào `load_cases`.
+Ca vi phạm có thể hạ trần ngân sách cho riêng lượt chạy (`policy`, `spent_today_usd`) vì dữ liệu seed không đủ lớn để
+vượt trần thật; báo cáo ghi rõ điều này. Kết quả luôn ghi kèm mẫu số (SPEC §18.3).
 
-Chạy: python eval/run_eval.py [--only <id>,<id>] [--store data/eval/runs.sqlite3]
+Chạy: python eval/run_eval.py [--only <id>,<id>] [--group valid|violation|ambiguous] [--store data/eval/runs.sqlite3]
 """
 
 import argparse
@@ -28,7 +34,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 GOLDEN_DIR = ROOT / "eval" / "golden"
+CASES_DIR = ROOT / "eval" / "cases"
 RESULTS_DIR = ROOT / "eval" / "results"
+GROUPS = ("valid", "violation", "ambiguous")
 REL_TOLERANCE, ABS_TOLERANCE = Decimal("0.0001"), Decimal("0.005")
 
 
@@ -125,12 +133,59 @@ def summarize(results: list[dict]) -> dict:
     }
 
 
+def score_outcome(case: dict, status: str, stage: str, last_error: dict) -> dict:
+    """Ca vi phạm / mơ hồ: dừng đúng trạng thái (và phase nếu ca nêu); ca mơ hồ phải có câu hỏi làm rõ."""
+    expected, problems = case["expected"], []
+    if status != expected["status"]:
+        problems.append(f"mong đợi {expected['status']}, ra {status} ({stage})")
+    elif expected.get("stage") and stage != expected["stage"]:
+        problems.append(f"đúng {status} nhưng dừng ở {stage}, mong đợi {expected['stage']}")
+    if case["group"] == "ambiguous" and status == "NEEDS_HUMAN" and not last_error.get("question"):
+        problems.append("dừng chờ người nhưng không có câu hỏi làm rõ")
+    return {"matched": not problems, "problems": problems}
+
+
+def with_policy(policy, overrides: dict | None):
+    """Chính sách của riêng một ca: thay vài trần trong budgets (per_run / per_day), phần còn lại giữ nguyên."""
+    budgets = policy.budgets
+    for section, values in (overrides or {}).items():
+        budgets = budgets.model_copy(update={section: getattr(budgets, section).model_copy(update=values)})
+    return policy.model_copy(update={"budgets": budgets})
+
+
+def _ratio(results: list[dict]) -> str:
+    return f"{sum(r['matched'] for r in results)}/{len(results)}"
+
+
+def summarize_all(results: list[dict]) -> dict:
+    """Chỉ số SPEC §18.3 theo nhóm, luôn kèm mẫu số; ca vi phạm tách theo cổng."""
+    by_group = {g: [r for r in results if r["group"] == g] for g in GROUPS}
+    violations = by_group["violation"]
+    gates = sorted({r["gate"] for r in violations})
+    valid = by_group["valid"]
+    return {
+        "valid": summarize(valid) if valid else None,
+        "blocked": _ratio(violations) if violations else None,
+        "blocked_by_gate": {g: _ratio([r for r in violations if r["gate"] == g]) for g in gates},
+        "asked": _ratio(by_group["ambiguous"]) if by_group["ambiguous"] else None,
+        "avg_spec_repairs": round(sum(r["spec_attempts"] for r in valid) / len(valid), 2) if valid else None,
+        "total": _ratio(results),
+        "llm_usd": round(sum(r["llm_usd"] for r in results), 6),
+        "seconds": round(sum(r["seconds"] for r in results), 1),
+    }
+
+
 # ---------- chạy thật ----------
 
 
-def load_cases(only: set[str] | None = None) -> list[dict]:
-    cases = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(GOLDEN_DIR.glob("*.json"))]
-    return [c for c in cases if not only or c["id"] in only]
+def load_cases(only: set[str] | None = None, groups: set[str] | None = None) -> list[dict]:
+    """15 ca: 6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm và 3 ca mơ hồ (eval/cases)."""
+    golden = [
+        {**json.loads(p.read_text(encoding="utf-8")), "group": "valid"} for p in sorted(GOLDEN_DIR.glob("*.json"))
+    ]
+    others = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(CASES_DIR.glob("*.json"))]
+    others.sort(key=lambda c: GROUPS.index(c["group"]))
+    return [c for c in golden + others if (not only or c["id"] in only) and (not groups or c["group"] in groups)]
 
 
 def capturing_sandbox(captured: dict) -> Callable:
@@ -163,24 +218,43 @@ def run_case(case: dict, store: str) -> dict:
 
     captured: dict = {}
     settings = PipelineSettings().model_copy(update={"store_path": store})
-    deps = AgentDeps(llm=openai_llm(), policy=load_policy(), settings=settings, sandbox=capturing_sandbox(captured))
+    deps = AgentDeps(
+        llm=openai_llm(),
+        policy=with_policy(load_policy(), case.get("policy")),
+        settings=settings,
+        sandbox=capturing_sandbox(captured),
+    )
+    if "spent_today_usd" in case:  # ca ngân sách ngày: coi như hôm nay đã tiêu đúng số này
+        deps.spent_today = lambda _settings: case["spent_today_usd"]
     started = time.perf_counter()
-    report = plan_agent(case["request"], "eval", deps, store, sources=case["sources"])
+    report = plan_agent(case["request"], "eval", deps, store, sources=case.get("sources"))
     if awaiting_plan(report):
         report = confirm_plan(report, "eval", deps, store)
-    gold = captured.get("gold") or []
-    scored = match_case(case, gold) if report.status == "READY_FOR_REVIEW" and gold else None
-    problems = scored["problems"] if scored else [f"run dừng ở {report.status} ({report.stage_reached})"]
-    if not scored and report.error_trace:
-        problems.append(str(report.error_trace[-1].get("error", ""))[:300])
+    last = report.error_trace[-1] if report.error_trace else {}
+    mapping = None
+    if case["group"] == "valid":
+        gold = captured.get("gold") or []
+        scored = match_case(case, gold) if report.status == "READY_FOR_REVIEW" and gold else None
+        matched = bool(scored and scored["matched"])
+        problems = scored["problems"] if scored else [f"run dừng ở {report.status} ({report.stage_reached})"]
+        if not scored and last:
+            problems.append(str(last.get("error", ""))[:300])
+        mapping = scored and {"key": scored["key"], "measures": scored["measures"]}
+    else:
+        scored = score_outcome(case, report.status, report.stage_reached, last)
+        matched, problems = scored["matched"], scored["problems"]
     return {
         "id": case["id"],
-        "source_kinds": case["source_kinds"],
+        "group": case["group"],
+        "gate": case.get("gate"),
+        "source_kinds": case.get("source_kinds", []),
         "run_id": report.run_id,
         "status": report.status,
-        "matched": bool(scored and scored["matched"]),
-        "mapping": scored and {"key": scored["key"], "measures": scored["measures"]},
+        "stage": report.stage_reached,
+        "matched": matched,
+        "mapping": mapping,
         "problems": problems,
+        "evidence": str(last.get("question") or last.get("error") or "")[:300],
         "spec_attempts": report.attempts.spec,
         "llm_calls": report.llm_calls,
         "llm_usd": report.cost.llm_usd,
@@ -188,35 +262,63 @@ def run_case(case: dict, store: str) -> dict:
     }
 
 
+GROUP_TITLES = {"valid": "Hợp lệ", "violation": "Vi phạm", "ambiguous": "Mơ hồ"}
+
+
+def _note(result: dict) -> str:
+    if result["problems"]:
+        return "; ".join(result["problems"])
+    if result["mapping"]:
+        measures = ", ".join(f"{k}→`{v}`" for k, v in result["mapping"]["measures"].items())
+        return f"khóa `{result['mapping']['key']['gold']}`, chỉ số {measures}"
+    return result["evidence"]
+
+
+def summary_lines(summary: dict) -> list[str]:
+    """Các dòng chỉ số dùng chung cho latest.md và report.md."""
+    lines = [f"- **Tổng: {summary['total']} ca đạt**"]
+    if summary["valid"]:
+        valid = summary["valid"]
+        kinds = ", ".join(f"{k} {v}" for k, v in valid["by_kind"].items())
+        lines.append(f"- Khớp golden: **{valid['matched']}** ca hợp lệ (theo loại nguồn: {kinds})")
+        lines.append(
+            f"- Chạy được ngay lần viết Spec đầu: {valid['first_try']}; tự sửa Spec trung bình "
+            f"{summary['avg_spec_repairs']} lần mỗi ca"
+        )
+    if summary["blocked"]:
+        gates = ", ".join(f"{k} {v}" for k, v in summary["blocked_by_gate"].items())
+        lines.append(f"- Chặn đúng: **{summary['blocked']}** ca vi phạm ({gates})")
+    if summary["asked"]:
+        lines.append(f"- Hỏi lại thay vì đoán: **{summary['asked']}** ca mơ hồ")
+    lines.append(f"- Tiền LLM cả lượt: ${summary['llm_usd']:.4f}; tổng thời gian {summary['seconds']} giây")
+    return lines
+
+
 def write_report(results: list[dict], summary: dict) -> Path:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    (RESULTS_DIR / "golden_latest.json").write_text(
+    (RESULTS_DIR / "latest.json").write_text(
         json.dumps({"at": stamp, "summary": summary, "results": results}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     lines = [
-        "# Kết quả chấm golden (ca hợp lệ)",
+        "# Kết quả chấm 15 ca (SPEC §18)",
         "",
-        f"Chạy lúc {stamp} bằng `python eval/run_eval.py`; số liệu đầy đủ ở `golden_latest.json`.",
+        f"Chạy lúc {stamp} bằng `python eval/run_eval.py`; số liệu đầy đủ ở `latest.json`.",
         "",
-        f"- **Khớp golden: {summary['matched']} ca**; khớp ngay lần viết Spec đầu: {summary['first_try']}",
-        "- Theo loại nguồn: " + ", ".join(f"{k} {v}" for k, v in summary["by_kind"].items()),
-        f"- Tiền LLM cả lượt: ${summary['llm_usd']:.4f}",
+        *summary_lines(summary),
         "",
-        "| Ca | Nguồn | Trạng thái | Khớp | Sửa Spec | Gọi LLM | Thời gian | Ghi chú |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Nhóm | Ca | Mong đợi | Kết quả | Đạt | Sửa Spec | Gọi LLM | Thời gian | Ghi chú |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
-        note = "; ".join(r["problems"]) or (
-            f"khóa `{r['mapping']['key']['gold']}`, chỉ số "
-            + ", ".join(f"{k}→`{v}`" for k, v in r["mapping"]["measures"].items())
-        )
+        expected = "khớp golden" if r["group"] == "valid" else r["expected"]
         lines.append(
-            f"| `{r['id']}` | {' + '.join(r['source_kinds'])} | {r['status']} | {'✅' if r['matched'] else '❌'} | "
-            f"{r['spec_attempts']} | {r['llm_calls']} | {r['seconds']} giây | {note.replace('|', '/')} |"
+            f"| {GROUP_TITLES[r['group']]} | `{r['id']}` | {expected} | {r['status']} ({r['stage']}) | "
+            f"{'✅' if r['matched'] else '❌'} | {r['spec_attempts']} | {r['llm_calls']} | {r['seconds']} giây | "
+            f"{_note(r).replace('|', '/')} |"
         )
-    path = RESULTS_DIR / "golden_latest.md"
+    path = RESULTS_DIR / "latest.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -224,21 +326,22 @@ def write_report(results: list[dict], summary: dict) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--only", default="", help="chỉ chạy các ca này (id, phân cách bằng dấu phẩy)")
+    parser.add_argument("--group", default="", help="chỉ chạy các nhóm này: valid, violation, ambiguous")
     parser.add_argument("--store", default="data/eval/runs.sqlite3", help="sổ bằng chứng riêng cho lượt chấm")
     args = parser.parse_args()
     Path(args.store).parent.mkdir(parents=True, exist_ok=True)
-    cases = load_cases({c for c in args.only.split(",") if c} or None)
+    only = {c for c in args.only.split(",") if c} or None
+    cases = load_cases(only, {g for g in args.group.split(",") if g} or None)
     results = []
     for case in cases:
-        print(f"→ {case['id']} …", flush=True)
+        print(f"→ [{case['group']}] {case['id']} …", flush=True)
         result = run_case(case, args.store)
-        print(
-            f"  {result['status']} · {'khớp' if result['matched'] else 'KHÔNG khớp'} · {result['seconds']} giây",
-            flush=True,
-        )
+        result["expected"] = case["expected"]["status"] if "expected" in case else "khớp golden"
+        verdict = "đạt" if result["matched"] else "KHÔNG đạt"
+        print(f"  {result['status']} · {verdict} · {result['seconds']} giây", flush=True)
         results.append(result)
-    summary = summarize(results)
-    print(f"Khớp golden {summary['matched']} · theo loại nguồn {summary['by_kind']}")
+    summary = summarize_all(results)
+    print("\n".join(summary_lines(summary)))
     print(f"Báo cáo: {write_report(results, summary).relative_to(ROOT)}")
     return 0
 

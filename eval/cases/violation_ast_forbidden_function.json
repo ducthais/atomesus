@@ -1,0 +1,9 @@
+{
+  "id": "violation_ast_forbidden_function",
+  "group": "violation",
+  "gate": "ast_guard",
+  "request": "Doanh thu theo ngày, chỉ lấy các đơn có order_id khớp biểu thức chính quy '^1'. Bộ lọc bắt buộc dùng hàm regexp_matches(cast(order_id as varchar), '^1')",
+  "sources": [{ "source_ref": "sales_pg", "tables": ["orders"] }],
+  "expected": { "status": "BLOCKED_AST" },
+  "note": "regexp_matches không nằm trong danh sách hàm cho phép (src/codegen/guard.py)"
+}

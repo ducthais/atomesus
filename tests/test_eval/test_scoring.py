@@ -80,3 +80,65 @@ def test_summary_states_denominators_by_source_kind():
         "by_kind": {"postgres": "1/1", "rest_api": "0/1", "đa nguồn": "1/1"},
         "llm_usd": 0.006,
     }
+
+
+def test_fifteen_cases_follow_the_spec_split():
+    cases = run_eval.load_cases()
+    groups = [c["group"] for c in cases]
+    gates = sorted(c["gate"] for c in cases if c["group"] == "violation")
+    assert (len(cases), groups.count("valid"), groups.count("violation"), groups.count("ambiguous")) == (15, 6, 6, 3)
+    assert gates == ["ast_guard", "ast_guard", "budget", "budget", "semantic", "semantic"]
+    assert all(c["expected"]["status"].startswith("BLOCKED_") for c in cases if c["group"] == "violation")
+    assert len({c["id"] for c in cases}) == 15
+
+
+def test_violation_passes_only_with_the_expected_block_code():
+    case = {"group": "violation", "expected": {"status": "BLOCKED_BUDGET", "stage": "budget"}}
+    assert run_eval.score_outcome(case, "BLOCKED_BUDGET", "budget", {})["matched"]
+    missed = run_eval.score_outcome(case, "READY_FOR_REVIEW", "t_validate", {})
+    assert not missed["matched"] and "mong đợi BLOCKED_BUDGET" in missed["problems"][0]
+    early = run_eval.score_outcome(case, "BLOCKED_BUDGET", "plan", {})
+    assert not early["matched"] and "dừng ở plan" in early["problems"][0]
+
+
+def test_ambiguous_case_needs_a_clarifying_question():
+    case = {"group": "ambiguous", "expected": {"status": "NEEDS_HUMAN", "stage": "plan"}}
+    assert run_eval.score_outcome(case, "NEEDS_HUMAN", "plan", {"question": "Chỉ số nào?"})["matched"]
+    silent = run_eval.score_outcome(case, "NEEDS_HUMAN", "plan", {"error": "Cần làm rõ"})
+    assert not silent["matched"] and "câu hỏi" in silent["problems"][0]
+
+
+def test_case_policy_lowers_only_the_named_ceiling():
+    from src.policy.loader import load_policy
+
+    policy = load_policy()
+    lowered = run_eval.with_policy(policy, {"per_run": {"max_bytes_scanned": 1000}})
+    assert lowered.budgets.per_run.max_bytes_scanned == 1000
+    assert lowered.budgets.per_run.max_llm_calls == policy.budgets.per_run.max_llm_calls
+    assert lowered.budgets.per_day == policy.budgets.per_day
+    assert run_eval.with_policy(policy, None) == policy
+
+
+def _result(group, matched, gate=None):
+    return {
+        "group": group,
+        "gate": gate,
+        "matched": matched,
+        "source_kinds": ["postgres"],
+        "spec_attempts": 1,
+        "llm_usd": 0.001,
+        "seconds": 2.0,
+    }
+
+
+def test_summary_of_all_groups_keeps_denominators():
+    summary = run_eval.summarize_all(
+        [
+            _result("valid", True),
+            _result("violation", True, "budget"),
+            _result("violation", False, "semantic"),
+            _result("ambiguous", True),
+        ]
+    )
+    assert summary["blocked"] == "1/2" and summary["blocked_by_gate"] == {"budget": "1/1", "semantic": "0/1"}
+    assert (summary["asked"], summary["total"], summary["valid"]["matched"]) == ("1/1", "3/4", "1/1")

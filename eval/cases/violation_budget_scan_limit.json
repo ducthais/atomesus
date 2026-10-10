@@ -1,0 +1,10 @@
+{
+  "id": "violation_budget_scan_limit",
+  "group": "violation",
+  "gate": "budget",
+  "request": "Doanh thu theo ngày",
+  "sources": [{ "source_ref": "sales_pg", "tables": ["orders"] }],
+  "policy": { "per_run": { "max_bytes_scanned": 1000 } },
+  "expected": { "status": "BLOCKED_BUDGET", "stage": "budget" },
+  "note": "seed không có bảng đủ lớn để vượt trần thật (5 GB), nên ca này hạ per_run.max_bytes_scanned xuống 1000 byte cho riêng lượt chạy"
+}
