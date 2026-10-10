@@ -21,7 +21,10 @@ lần nữa rồi cài vào Dagster production. CI không cần PAT, khóa SSH h
    của `src/deployer/manifest.py`; scaffold lấy từ `dbt_project/` của app, bỏ `target/`, `logs/`, file DuckDB.
    Requirements giữ đúng ràng buộc dbt của app: hiện là `dbt-core>=1.9,<1.11`, `dbt-duckdb>=1.9,<2`, chưa phải khóa
    `==` một bản cụ thể. Khi app ghim phiên bản cụ thể, xuất lại sẽ dùng chính các phiên bản đó.
-4. Sửa `CODEOWNERS`: bỏ dấu `#` ở dòng mẫu và thay `@nguoi-duyet` bằng người/team có quyền write chịu trách nhiệm.
+4. Sửa `CODEOWNERS`: bỏ dấu `#` ở các dòng mẫu và thay `@nguoi-duyet` bằng người/team có quyền write chịu trách nhiệm.
+   Phải có owner cho `/.github/`, `/ci/` và `/CODEOWNERS` để thay đổi workflow, bộ kiểm và chính danh sách owner
+   đều cần người phụ trách review. Giữ dòng `*` để mọi file khác cũng có owner; kiểm GitHub không báo lỗi cú pháp
+   và tự yêu cầu đúng owner khi mở PR. Xem [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
    Commit bộ khung vào repo pipeline và push `main` **trước khi** bật bảo vệ nhánh. Những lệnh commit/push ở đây
    do quản trị viên thực hiện trong repo pipeline, không phải repo app.
 
@@ -33,7 +36,8 @@ file khác. Sao lưu tùy chỉnh CODEOWNERS rồi áp dụng lại sau khi xu�
 Trong **Settings → Branches → Add branch protection rule**, nhập `main`:
 
 1. Bật **Require a pull request before merging**, **Require approvals** = **1**, **Require review from Code Owners**.
-   Code owner phải là người; tài khoản cấp PAT không được nằm trong CODEOWNERS.
+   Code owner phải là người; tài khoản cấp PAT không được nằm trong CODEOWNERS. Xác nhận các owner của `.github/`
+   và `ci/` ở bước 1 đã có hiệu lực trên `main`; bật yêu cầu code owner review là bắt buộc, không chỉ gợi ý reviewer.
 2. Bật **Dismiss stale pull request approvals when new commits are pushed** và **Require approval of the most
    recent reviewable push** để commit mới cần người khác duyệt lại.
 3. Bật **Require status checks to pass before merging**, **Require branches to be up to date before merging**,
@@ -49,6 +53,14 @@ Tên job phải duy nhất trong repo. Tắt auto-merge; người phụ trách k
 nhánh mặc định, dùng Python 3.11 và `contents: read`, không khai báo secrets, không lưu credential checkout.
 Script, requirements, profile và macro lấy từ **base**; head chỉ được đọc qua object Git.
 
+Với sự kiện `pull_request`, GitHub chạy định nghĩa workflow từ **merge ref của PR** (`refs/pull/<số>/merge`),
+không phải bản workflow trên base. Checkout base trong các step chỉ bảo vệ script khi định nghĩa workflow này
+được giữ nguyên; CI không tự chặn được PR sửa `.github/workflows/` để bỏ kiểm tra hoặc báo check xanh giả.
+Chốt bảo vệ là PAT backend **không có quyền Workflows** (GitHub từ chối push thay đổi workflow bằng token đó),
+CODEOWNERS cho `.github/` và `ci/`, cùng branch protection bắt buộc code owner review. Người dùng credential
+khác vẫn có thể đề xuất sửa workflow; owner phải kiểm diff trước khi merge, không chỉ nhìn check xanh.
+Xem [sự kiện pull_request](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
+
 ## 3. Tạo fine-grained PAT cho backend
 
 1. Dùng tài khoản chuyên tạo PR, có quyền write repo pipeline, không có quyền admin/bypass. GitHub → **Settings →
@@ -56,7 +68,10 @@ Script, requirements, profile và macro lấy từ **base**; head chỉ được
 2. Đặt tên, hạn dùng ngắn phù hợp vận hành; chọn Resource owner đúng. **Repository access → Only select
    repositories**: chỉ `<owner>/atomesus-pipelines`.
 3. **Repository permissions**: **Contents: Read and write**, **Pull requests: Read and write**, **Metadata: Read-only**.
-   Không cấp Administration, Workflows, Actions hay quyền repo app. Nếu org yêu cầu duyệt token, chờ được duyệt.
+   Để **Workflows: No access**, không cấp Administration, Actions hay quyền repo app. Không thêm Workflows để
+   xử lý lỗi push: GitHub yêu cầu quyền này khi tạo/cập nhật `.github/workflows/`, nên từ chối token backend sửa CI.
+   Xem [quyền cập nhật file workflow](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents).
+   Nếu org yêu cầu duyệt token, chờ được duyệt.
 4. Lưu token vào cấu hình bí mật của backend trên VM với tên `PIPELINE_GITHUB_TOKEN`. Không đưa vào repo,
    RunReport, CI, agent hoặc sandbox. Đặt lịch thay token trước hạn; thu hồi ngay khi lộ.
 
@@ -140,5 +155,30 @@ symlink/submodule/file thực thi, JSON sai và mọi lệch hash/chữ ký gi�
 có timeout và log tối đa 4 KB; không chạy ingestion hay Dagster và không kết nối nguồn.
 Chữ ký duyệt trong hợp đồng hiện là metadata + hash, **không phải chữ ký mật mã**: nếu ai sửa đồng thời code,
 manifest và report cho nhất quán thì CI độc lập không chứng minh được đó là chữ ký backend đã lưu. Người duyệt PR
-phải đối chiếu bằng chứng trong app; CI không có secret để xác thực nguồn chữ ký. Cập nhật bộ khung CI là công việc
-bảo trì của quản trị viên; check dành cho PR pipeline sẽ cố ý từ chối thay đổi script/workflow/scaffold.
+phải đối chiếu bằng chứng trong app; CI không có secret để xác thực nguồn chữ ký.
+
+## 7. PR bảo trì CI, dbt và CODEOWNERS
+
+`check_pr.py` cố ý từ chối PR sửa script/workflow/scaffold, `requirements-ci.txt` hay `CODEOWNERS` vì chúng nằm
+ngoài `pipelines/<model>/`. Không nới quy tắc checker hoặc sửa workflow để giả check xanh cho PR bảo trì.
+Quản trị viên dùng quy trình ngoại lệ sau, bằng tài khoản cá nhân có quyền admin, không dùng PAT backend:
+
+1. Tạo nhánh `maintenance/<noi-dung>` từ `main`, mở PR chỉ chứa thay đổi bảo trì. Khi nâng dbt, cập nhật ràng buộc
+   đã duyệt ở repo app rồi xuất lại bộ khung; áp dụng lại owner thật trước khi mở PR. Giữ tên check `pipeline-ci`.
+2. Nhờ code owner khác người tạo review diff, kể cả workflow và CODEOWNERS. Chạy checker/parse mới trên một cặp
+   base/head của PR pipeline hợp lệ trong clone cục bộ (lệnh ở bước 6), thử một thay đổi hash để xác nhận bị từ chối.
+   Ghi SHA đã review, kết quả kiểm, lý do ngoại lệ, người thực hiện và thời gian dự kiến vào PR/biên bản vận hành.
+   Check đỏ vì file bảo trì ngoài phạm vi là dự kiến; lỗi parse/manifest thật phải được xử lý trước.
+3. Tạm dừng tạo PR từ backend và mọi merge pipeline trong cửa sổ bảo trì. Lưu cấu hình branch protection hiện tại.
+   Admin vào rule `main`, tạm bỏ **Do not allow bypassing the above settings**, không cấp bypass cho tài khoản PAT
+   và không bật force push/deletion. Nếu có ruleset khác chặn admin bypass, giữ nguyên bảo vệ và xử lý ngoại lệ
+   qua người quản lý ruleset trước; không tắt tất cả các rule để thử.
+4. Admin kiểm SHA PR vẫn đúng bản code owner đã duyệt rồi dùng quyền bypass để merge **chỉ PR bảo trì đó**.
+   Ghi commit merge và thời điểm vào biên bản. Bypass có thể bỏ qua cả review lẫn check và mở khả năng push thẳng
+   cho admin trong cửa sổ này; vì vậy phải có review người trước và giới hạn cửa sổ, không merge PR nào khác.
+5. Ngay sau merge (hoặc khi hủy bảo trì), bật lại **Do not allow bypassing the above settings**. Đối chiếu cấu hình
+   đã lưu: require PR, 1 approval, code owner review, stale approval, required `pipeline-ci`, giới hạn người merge,
+   force push/deletion vẫn tắt. Mở PR pipeline mẫu, xác nhận CI và yêu cầu review hoạt động rồi mới tiếp tục backend.
+   Ghi bằng chứng khôi phục bảo vệ vào biên bản; chưa khôi phục xong thì vẫn dừng tạo PR/merge.
+
+GitHub mô tả [quyền admin bypass và cách chặn bypass](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).

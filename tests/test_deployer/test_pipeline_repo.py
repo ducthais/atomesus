@@ -135,6 +135,46 @@ def test_export_is_generated_byte_exact_and_preserves_other_files(tmp_path):
     assert (repo / "unrelated.txt").exists()
 
 
+def test_export_does_not_check_symlinks_above_destination(tmp_path, monkeypatch):
+    repo = tmp_path / "exported"
+    original = Path.is_symlink
+
+    def is_symlink(entry):
+        # Mô phỏng tổ tiên symlink mà không cần quyền tạo symlink trên Windows.
+        if entry == tmp_path:
+            pytest.fail("Không được kiểm symlink của tổ tiên ngoài thư mục đích.")
+        return original(entry)
+
+    monkeypatch.setattr(Path, "is_symlink", is_symlink)
+    written = export_pipeline_repo(repo)
+    assert "ci/manifest.py" in written
+    assert (repo / "ci/manifest.py").read_bytes() == (ROOT / "src/deployer/manifest.py").read_bytes()
+
+
+def test_export_resolves_destination_symlink(tmp_path, monkeypatch):
+    repo = tmp_path / "exported"
+    link = tmp_path / "linked"
+    original_resolve, original_is_symlink = Path.resolve, Path.is_symlink
+    monkeypatch.setattr(Path, "resolve", lambda entry: repo if entry == link else original_resolve(entry))
+    monkeypatch.setattr(Path, "is_symlink", lambda entry: entry == link or original_is_symlink(entry))
+    written = export_pipeline_repo(link)
+    assert "ci/manifest.py" in written
+    assert (repo / "ci/manifest.py").read_bytes() == (ROOT / "src/deployer/manifest.py").read_bytes()
+    assert not link.exists()
+
+
+@pytest.mark.parametrize("name", ["README.md", "ci", "ci/check_pr.py", "_scaffold/dbt_project"])
+def test_export_rejects_symlinks_inside_destination_before_writing(tmp_path, monkeypatch, name):
+    repo = tmp_path / "exported"
+    link = repo / name
+    original = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda entry: entry == link or original(entry))
+    with pytest.raises(ValueError) as error:
+        export_pipeline_repo(repo)
+    assert str(link) in str(error.value) and "symlink" in str(error.value)
+    assert not repo.exists()
+
+
 def test_workflow_reads_base_uses_minimal_permissions_and_fixed_check():
     workflow = yaml.safe_load((ROOT / "deploy/pipeline-repo/.github/workflows/ci.yml").read_text(encoding="utf-8"))
     events = workflow.get("on", workflow.get(True))
@@ -258,6 +298,24 @@ def test_check_rejects_report_signature_mismatch(pipeline_repo, field, value):
     result = check(pr, snapshot(pr.repo))
     assert result.returncode != 0
     assert path in result.stderr
+
+
+@pytest.mark.parametrize("created_by", ["missing", None, "", "   ", 123, "reviewer"])
+def test_check_rejects_invalid_report_creator(pipeline_repo, created_by):
+    pr = pipeline_repo
+    path = f"{FOLDER}/run_report.json"
+    report = json.loads((pr.repo / path).read_text(encoding="utf-8"))
+    if created_by == "missing":
+        report.pop("created_by")
+    elif created_by == "reviewer":
+        report["created_by"] = report["approval"]["reviewer"]
+    else:
+        report["created_by"] = created_by
+    save(pr.repo, path, json.dumps(report))
+    result = check(pr, snapshot(pr.repo))
+    assert result.returncode != 0
+    assert path in result.stderr
+    assert ("người duyệt khác người tạo" if created_by == "reviewer" else "created_by") in result.stderr
 
 
 @pytest.mark.parametrize("text", ["{", "[]", '{"version":1,"version":2}'])

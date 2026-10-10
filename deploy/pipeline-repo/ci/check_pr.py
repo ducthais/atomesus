@@ -133,7 +133,10 @@ def pipeline_files(repo: Path, head: str, model: str, entries: dict | None = Non
         raise ManifestError(
             f"{folder}{REPORT_FILE}: approval.at không khớp approved_at hợp lệ trong manifest."
         ) from None
-    if report.get("status") != "APPROVED" or report.get("created_by") == manifest["reviewer"]:
+    created_by = report.get("created_by")
+    if not isinstance(created_by, str) or not created_by.strip():
+        raise ManifestError(f"{folder}{REPORT_FILE}: thiếu created_by hợp lệ của người tạo run.")
+    if report.get("status") != "APPROVED" or created_by == manifest["reviewer"]:
         raise ManifestError(f"{folder}{REPORT_FILE}: cần trạng thái APPROVED và người duyệt khác người tạo run.")
     if report.get("files") != manifest["files"]:
         raise ManifestError(f"{folder}{REPORT_FILE}: danh sách files không khớp manifest.")

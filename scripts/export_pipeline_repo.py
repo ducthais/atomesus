@@ -38,10 +38,12 @@ def export_pipeline_repo(destination: Path, source: Path = ROOT) -> list[str]:
             raise ValueError(f"{path}: scaffold không được chứa symlink.")
         if path.is_file():
             files[f"_scaffold/dbt_project/{relative.as_posix()}"] = path.read_bytes()
-    destination = destination.absolute()
+    # Resolve thư mục đích (có thể là symlink); chỉ chặn symlink bên trong repo được xuất.
+    destination = destination.resolve()
     for name in files:
-        target = destination / name
-        for entry in (target, *target.parents):
+        parts = Path(name).parts
+        for depth in range(1, len(parts) + 1):
+            entry = destination.joinpath(*parts[:depth])
             if entry.is_symlink():
                 raise ValueError(f"{entry}: đích xuất không được đi qua symlink.")
     for name, content in files.items():
