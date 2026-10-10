@@ -278,6 +278,18 @@ async def test_deploy_refuses_persisted_signature_mismatch_with_409(logged_in, a
 
 
 @pytest.mark.asyncio
+async def test_branch_moved_while_opening_pull_request_is_409_without_deployment(logged_in, approved_run, github):
+    branch = f"pipeline/fct_daily_orders/{READY_RUN_ID[:8]}-v{approved_run.version}"
+    github.before = {"POST /pulls": lambda: github.push(branch, "pipelines/fct_daily_orders/x.sql", "select 2\n")}
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 409 and "vừa bị đổi" in response.json()["detail"]
+    stored = (await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")).json()
+    assert stored["status"] == "APPROVED" and stored["deployment"] is None
+
+
+@pytest.mark.asyncio
 async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logged_in, approved_run, github, store_path):
     """Request A đọc run rồi chờ GitHub; trong lúc đó request B mở pull request và lưu deployment; sau đó A lỗi."""
     import httpx

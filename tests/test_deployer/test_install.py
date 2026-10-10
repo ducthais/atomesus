@@ -29,6 +29,20 @@ def test_install_replaces_project_and_lists_it_in_workspace(tmp_path, monkeypatc
     assert sorted(p.name for p in tmp_path.iterdir()) == ["fct_x", "workspace.yaml"], "không còn thư mục tạm/backup"
 
 
+def test_reinstall_lists_only_live_project_not_its_backup(tmp_path, monkeypatch):
+    monkeypatch.setattr(install, "prepare_project", fake_project)
+    monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", ""))
+    asset = {"infra/dagster/generated/fct_x_asset.py": "# asset\n"}
+    install.install_project("fct_x", asset, str(tmp_path))
+
+    install.install_project("fct_x", {"infra/dagster/generated/fct_x_asset.py": "# asset v2\n"}, str(tmp_path))
+
+    workspace = (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
+    directories = [line.split(": ", 1)[1] for line in workspace.splitlines() if "working_directory:" in line]
+    assert directories == ["./fct_x"] and workspace.count("location_name:") == 1
+    assert (tmp_path / directories[0]).is_dir()
+
+
 def test_empty_workspace_is_valid_yaml(tmp_path):
     path = install.write_workspace(str(tmp_path / "deploy"))
 

@@ -4,7 +4,8 @@ Nhánh `pipeline/<model_name>/<8 ký tự đầu run_id>-v<version>` tạo từ 
 `pipelines/<model_name>/` gồm 4 + N file đã duyệt, `run_report.json` và `manifest.json` (src/deployer/manifest.py).
 Backend chỉ mở pull request: CI của repo pipeline kiểm manifest, người có quyền merge, service deployer cài lên Dagster production (src/deployer/).
 Gọi lại khi pull request đã mở thì trả pull request cũ; nhánh đã có mà chưa có pull request thì mở trên nhánh đó.
-Mọi lần dùng lại nhánh có sẵn đều kiểm trước nội dung đầu nhánh khớp chữ ký duyệt của chính run này.
+Mọi lần dùng lại nhánh có sẵn đều kiểm trước nội dung đầu nhánh khớp chữ ký duyệt của chính run này; pull request
+trả về phải trỏ đúng commit đã kiểm (hoặc vừa tạo), nhánh bị đổi giữa chừng thì ra ManifestError.
 """
 
 import json
@@ -43,13 +44,19 @@ def _body(report: RunReport, model_name: str, report_url: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _deployment(github: GithubClient, branch: str, pull: dict) -> Deployment:
+def _deployment(github: GithubClient, branch: str, pull: dict, head_sha: str) -> Deployment:
+    """Chỉ ghi nhận pull request khi đầu nhánh của nó đúng là commit vừa kiểm (hoặc vừa tạo) cho chữ ký duyệt."""
+    if pull["head"]["sha"] != head_sha:
+        raise ManifestError(
+            f"Nhánh {branch} trên repo pipeline vừa bị đổi trong lúc mở pull request nên không còn chắc là bộ file đã "
+            "duyệt. Kiểm tra pull request đó trên repo pipeline rồi Deploy lại."
+        )
     return Deployment(
         repo=github.repo,
         branch=branch,
         pr_number=pull["number"],
         pr_url=pull["html_url"],
-        head_sha=pull["head"]["sha"],
+        head_sha=head_sha,
         state="open",
         opened_at=pull.get("created_at") or datetime.now(UTC),
     )
@@ -98,8 +105,11 @@ def _verify_branch(
 
 def _commit_branch(
     report: RunReport, files: dict[str, str], manifest: dict, base: str, branch: str, github: GithubClient
-) -> None:
-    """Một commit trên nhánh mới: thư mục pipeline chứa đúng bộ file đã duyệt (file cũ không còn trong bộ bị xóa)."""
+) -> str:
+    """Một commit trên nhánh mới: thư mục pipeline chứa đúng bộ file đã duyệt (file cũ không còn trong bộ bị xóa).
+
+    Trả sha đầu nhánh đã biết chắc chứa bộ file đó.
+    """
     base_sha = github.ref_sha(base)
     if base_sha is None:
         raise GithubError(
@@ -126,6 +136,8 @@ def _commit_branch(
         if head_sha is None:
             raise
         _verify_branch(report, files, manifest, branch, head_sha, github)
+        return head_sha
+    return commit
 
 
 def open_pull_request(report: RunReport, files: dict[str, str], github: GithubClient) -> Deployment:
@@ -151,11 +163,11 @@ def open_pull_request(report: RunReport, files: dict[str, str], github: GithubCl
         base = repo["default_branch"]
         head_sha = github.ref_sha(branch)
         if head_sha is None:
-            _commit_branch(report, files, manifest, base, branch, github)
+            head_sha = _commit_branch(report, files, manifest, base, branch, github)
         else:
             _verify_branch(report, files, manifest, branch, head_sha, github)
             if opened := github.open_pull_requests(branch):
-                return _deployment(github, branch, opened[0])
+                return _deployment(github, branch, opened[0], head_sha)
         report_url = f"{repo['html_url']}/blob/{branch}/{project_dir(model_name)}/{REPORT_FILE}"
         title = f"Pipeline {model_name} v{report.version} (run {report.run_id[:8]})"
         try:
@@ -168,6 +180,6 @@ def open_pull_request(report: RunReport, files: dict[str, str], github: GithubCl
             if not opened:
                 raise
             pull = opened[0]
-        return _deployment(github, branch, pull)
+        return _deployment(github, branch, pull, head_sha)
     except (KeyError, TypeError, IndexError, ValidationError) as exc:
         raise GithubError(502, f"GitHub trả dữ liệu không đúng định dạng ({type(exc).__name__}).") from None

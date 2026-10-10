@@ -26,7 +26,9 @@ class FakeGithub:
 
     `fail`: {"METHOD đường-dẫn-đầu": mã HTTP hoặc "timeout"} để giả lập lỗi. `race_pull`: POST /pulls tạo pull request
     rồi trả 422, như khi một request Deploy khác vừa mở trước. `race_ref(sha commit vừa tạo) -> sha`: POST /git/refs
-    thấy request khác vừa tạo nhánh trỏ vào commit trả về rồi trả 422.
+    thấy request khác vừa tạo nhánh trỏ vào commit trả về rồi trả 422. `before`: {"METHOD đường-dẫn-đầu": hàm} chạy
+    trước khi xử lý request khớp, như khi có người đẩy commit lên nhánh đúng lúc đó. Đầu pull request luôn là đầu nhánh
+    hiện tại, như trên GitHub.
     """
 
     def __init__(self, fail: dict | None = None, race_pull: bool = False):
@@ -38,6 +40,7 @@ class FakeGithub:
         self.fail = fail or {}
         self.race_pull = race_pull
         self.race_ref = None
+        self.before: dict = {}
 
     def client(self) -> GithubClient:
         return GithubClient(REPO, SecretStr(TOKEN), transport=httpx.MockTransport(self.handle))
@@ -47,6 +50,18 @@ class FakeGithub:
 
     def writes(self) -> list[tuple[str, str]]:
         return [r for r in self.requests if r[0] != "GET"]
+
+    def push(self, branch: str, path: str, content: str) -> str:
+        """Commit đẩy thẳng lên nhánh (ngoài hệ thống), trả sha mới."""
+        tree = {**self.files_at(branch), path: content}
+        tree_sha, sha = f"t_push{len(self.trees)}", f"c_push{len(self.commits)}"
+        self.trees[tree_sha] = tree
+        self.commits[sha] = {"tree": tree_sha, "parents": [self.refs[branch]], "message": "đẩy thẳng"}
+        self.refs[branch] = sha
+        return sha
+
+    def _current(self, pull: dict) -> dict:
+        return {**pull, "head": {**pull["head"], "sha": self.refs[pull["head"]["ref"]]}}
 
     def _pull(self, head: str, base: str, title: str, body: str) -> dict:
         number = len(self.pulls) + 1
@@ -68,6 +83,9 @@ class FakeGithub:
         assert request.url.path.startswith(f"/repos/{REPO}")
         method, path = request.method, request.url.path.removeprefix(f"/repos/{REPO}")
         self.requests.append((method, path))
+        for key, hook in self.before.items():
+            if f"{method} {path}".startswith(key):
+                hook()
         for key, status in self.fail.items():
             if f"{method} {path}".startswith(key):
                 if status == "timeout":
@@ -119,7 +137,7 @@ class FakeGithub:
             owner, branch = request.url.params["head"].split(":", 1)
             assert owner == "acme" and request.url.params["state"] == "open"
             return httpx.Response(
-                200, json=[p for p in self.pulls if p["head"]["ref"] == branch and p["state"] == "open"]
+                200, json=[self._current(p) for p in self.pulls if p["head"]["ref"] == branch and p["state"] == "open"]
             )
         if method == "POST" and path == "/pulls":
             exists = any(p["head"]["ref"] == body["head"] and p["state"] == "open" for p in self.pulls)
@@ -326,6 +344,35 @@ def test_pull_request_changed_after_opening_is_not_returned():
 
     with pytest.raises(ManifestError):
         open_pull_request(report, files, github.client())
+
+
+@pytest.mark.parametrize(
+    ("setup", "moment"),
+    [
+        ("pr_open", "GET /pulls"),  # trả pull request đã mở
+        ("new_branch", "POST /pulls"),  # pull request vừa tạo trên nhánh vừa commit
+        ("branch_only", "POST /pulls"),  # pull request vừa tạo trên nhánh có sẵn đã kiểm
+        ("race_pull", "GET /pulls"),  # phục hồi sau 422: pull request request khác vừa mở
+    ],
+)
+def test_branch_moved_between_check_and_pull_request_is_rejected(setup, moment):
+    report, files = approved_report()
+    github = FakeGithub(race_pull=setup == "race_pull")
+    branch = branch_name("fct_daily_orders", report.run_id, report.version)
+    if setup == "pr_open":
+        open_pull_request(report, files, github.client())
+    if setup == "branch_only":
+        github.fail = {"POST /pulls": 500}
+        with pytest.raises(GithubError):
+            open_pull_request(report, files, github.client())
+        github.fail = {}
+    github.before = {moment: lambda: github.push(branch, f"{FOLDER}/{next(iter(files))}", "-- đẩy thẳng\n")}
+
+    with pytest.raises(ManifestError) as caught:
+        open_pull_request(report, files, github.client())
+
+    assert "vừa bị đổi" in str(caught.value)
+    assert github.refs[branch].startswith("c_push"), "nhánh đã bị đổi đúng lúc lấy/tạo pull request"
 
 
 def test_branch_created_concurrently_with_same_signed_files_is_used():
