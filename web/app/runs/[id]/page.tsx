@@ -12,6 +12,7 @@ import { RunChat } from '../../_components/run-chat';
 import { EffortPanel } from '../../_components/effort';
 import { StagingEvidenceView } from '../../_components/staging-evidence';
 import { CancelRunButton, OptimizeRunButton } from '../../_components/run-controls';
+import { DeployPanel } from '../../_components/deploy-panel';
 import { isAgentSpec } from '@/lib/postgres-api';
 import { RunCompareView, impactNotes } from '../../_components/run-compare';
 import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, StatusBadge, Tabs, fmtDate, statusTone } from '../../_components/ui';
@@ -71,7 +72,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const messages = tab === 'chat' ? await runMessages(run.id) : [];
   const base = `/runs/${shortId(run.id)}`;
   const eligible = canReview(run, user.role, user.id);
-  const reviewReason = eligible ? 'Duyệt sẽ ghi đúng bộ file này thành project Dagster local.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
+  const reviewReason = eligible ? 'Duyệt chỉ ghi chữ ký cho đúng bộ file này. Sau đó bấm Deploy để mở pull request.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
   const blocked = statusTone(run.status) === 'bad';
   const canCancel = user.role === 'Engineer' && user.id === run.owner && ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'].includes(run.status);
   const canOptimize = user.role === 'Engineer' && run.status === 'DEPLOYED' && run.plan.model !== '—';
@@ -84,11 +85,13 @@ export default async function RunPage({ params, searchParams }: { params: Promis
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
 
-    {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Run dừng ở “{STAGES[run.stage]}”</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
+    {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>{run.status === 'DEPLOY_FAILED' ? 'Triển khai lỗi' : `Run dừng ở “${STAGES[run.stage]}”`}</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
     {run.status === 'CANCELLED' && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>Run đã được Engineer hủy ở phase “{STAGES[run.stage]}”. Bằng chứng đã ghi trước đó vẫn được giữ lại.</span></div>}
     {run.status === 'NO_IMPROVEMENT' && <div className="callout warn"><Sparkles size={16} aria-hidden /><div><strong>Không có bản tốt hơn</strong><p>{run.optimization?.verdict?.reason ?? 'Bản đề xuất không cải thiện pipeline đang chạy nên không được chuyển sang hàng đợi duyệt.'}</p></div></div>}
 
     {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={progressFrom} specRetries={run.specRetries} />}
+
+    <DeployPanel run={run} role={user.role} />
 
     <Tabs base={base} active={tab} tabs={tabs} />
 

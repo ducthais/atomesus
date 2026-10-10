@@ -556,6 +556,17 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 
 /* ── Mapping bản nháp & schema drift ── */
 .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.deployment-panel { min-width: 0; overflow-wrap: anywhere; }
+.deploy-controls { display: grid; justify-items: start; gap: 8px; margin-top: 14px; }
+.deploy-controls .button { max-width: 100%; white-space: normal; }
+.deploy-controls .callout { margin: 0; }
+.deployment-steps { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 14px; }
+.deployment-steps li { display: flex; gap: 10px; align-items: flex-start; }
+.deployment-steps li > div { min-width: 0; }
+.deployment-steps .q-icon { flex: none; color: var(--ink-2); background: var(--neutral-soft); }
+.deployment-steps p { color: var(--ink-2); margin-top: 4px; }
+.deployment-link { display: block; width: fit-content; max-width: 100%; padding: 4px 0; }
+.deployment-panel .callout > div { min-width: 0; }
 .run-cancel { position: relative; display: inline-flex; align-items: center; }
 .action-error { position: absolute; top: calc(100% + 6px); right: 0; z-index: 4; width: max-content; max-width: 320px; display: flex; gap: 5px; align-items: center; padding: 7px 9px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); font-size: 12px; box-shadow: var(--shadow); }
 .plan-editor { display: grid; gap: 16px; }

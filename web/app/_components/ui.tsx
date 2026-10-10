@@ -28,7 +28,7 @@ export function PlatformTag({ platform }: { platform: Platform }) {
 }
 
 export const statusTone = (status: Status) => status.startsWith('BLOCKED') || ['NEEDS_HUMAN', 'REJECTED', 'CANCELLED', 'INFRA_ERROR', 'INTERNAL_ERROR', 'DEPLOY_FAILED'].includes(status)
-  ? 'bad' : [...RUNNING, 'READY_FOR_REVIEW'].includes(status) ? 'wait' : 'good';
+  ? 'bad' : [...RUNNING, 'READY_FOR_REVIEW', 'APPROVED'].includes(status) ? 'wait' : 'good';
 export function StatusBadge({ status }: { status: Status }) {
   return <span className={`badge tone-${statusTone(status)}`}><span className="dot" />{STATUS_LABEL[status]}</span>;
 }

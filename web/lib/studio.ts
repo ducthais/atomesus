@@ -37,6 +37,7 @@ export type Run = {
   llmUsd: number; llmTokens: number; llmUnpriced: number;
   fileCount: number; assets: Asset[]; approval: Approval | null; error: string | null; question: string | null;
   staging?: StagingEvidence[]; reviewHistory?: Approval[];
+  deployment?: RunReport['deployment']; deploymentHistory?: RunReport['spec_history']; deployError?: string | null;
   optimization?: RunReport['regression'];
   /** Bảng `nguồn.bảng` tích sẵn khi bấm "Sửa & chạy lại": phạm vi đã chọn + bảng kế hoạch cần mà chưa chọn. */
   retryTables?: string[];
@@ -46,7 +47,7 @@ export type Run = {
 
 export const STATUS_LABEL: Record<Status, string> = {
   DRAFT: 'Nháp', PLAN_CONFIRMED: 'Đã xác nhận kế hoạch', GENERATING: 'Đang chạy', VALIDATING: 'Đang kiểm tra',
-  READY_FOR_REVIEW: 'Chờ duyệt', APPROVED: 'Đã duyệt', DEPLOYED: 'Đã deploy', NEEDS_HUMAN: 'Cần kỹ sư',
+  READY_FOR_REVIEW: 'Chờ duyệt', APPROVED: 'Đã duyệt, chờ deploy', DEPLOYED: 'Đã lên production', NEEDS_HUMAN: 'Cần kỹ sư',
   BLOCKED_SEMANTIC_CONFLICT: 'Chặn ngữ nghĩa', BLOCKED_BUDGET: 'Vượt ngân sách', BLOCKED_AST: 'SQL bị chặn',
   REJECTED: 'Đã từ chối', INFRA_ERROR: 'Lỗi hạ tầng', INTERNAL_ERROR: 'Lỗi hệ thống', DEPLOY_FAILED: 'Deploy lỗi',
   CANCELLED: 'Đã hủy', NO_IMPROVEMENT: 'Không có bản tốt hơn',
@@ -167,7 +168,7 @@ function toStaging(report: RunReport): StagingEvidence[] {
 /** RunReport (sổ bằng chứng) → mô hình hiển thị của Studio. Không thêm số liệu nào không có trong report. */
 export function toStudioRun(report: RunReport): Run {
   const status = (report.status in STATUS_LABEL ? report.status : 'INTERNAL_ERROR') as Status;
-  const stage = ['READY_FOR_REVIEW', 'APPROVED', 'DEPLOYED'].includes(status) ? stageIndex('report') : stageIndex(report.stage_reached);
+  const stage = ['READY_FOR_REVIEW', 'APPROVED', 'DEPLOYED', 'DEPLOY_FAILED'].includes(status) ? stageIndex('report') : stageIndex(report.stage_reached);
   const last = report.error_trace.at(-1);
   return {
     id: report.run_id, title: report.user_request.length > 60 ? report.user_request.slice(0, 57) + '…' : report.user_request,
@@ -182,6 +183,8 @@ export function toStudioRun(report: RunReport): Run {
     llmUnpriced: (report.llm_usage ?? []).filter(c => c.usd === null).length,
     fileCount: Object.keys(report.files ?? {}).length, assets: toAssets(report), approval: report.approval,
     staging: toStaging(report), reviewHistory: report.review_history ?? [], optimization: report.regression ?? null,
+    deployment: report.deployment ?? null, deploymentHistory: (report.spec_history ?? []).filter(item => item.deployment),
+    deployError: report.error_trace.filter(item => item.stage === 'deploy').map(traceText).at(-1) ?? null,
     error: last ? (last.question ? `Cần làm rõ: ${last.question}` : traceText(last)) : null, question: last?.question ?? null,
     retryTables: [...new Set([...(report.source_scope ?? []).flatMap(s => s.tables.map(t => `${s.source_ref}.${t}`)), ...(last?.need_tables ?? [])])],
   };

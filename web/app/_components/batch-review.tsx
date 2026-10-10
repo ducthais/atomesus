@@ -55,7 +55,7 @@ export function BatchReview({ rows }: { rows: BatchRow[] }) {
         <textarea rows={2} maxLength={500} value={comment} disabled={pending} onChange={e => setComment(e.target.value)} placeholder="Áp dụng cho mọi run đã chọn" />
       </label>
       <div className="form-actions">
-        <span className="muted small">Đã chọn {chosen.length}/{eligible.length} run duyệt được. Duyệt sẽ ghi từng pipeline ra Dagster local.</span>
+        <span className="muted small">Đã chọn {chosen.length}/{eligible.length} run duyệt được. Duyệt chỉ ghi chữ ký; mở từng run và bấm Deploy để mở pull request.</span>
         <button className="button danger" disabled={!chosen.length || pending || !comment.trim()} onClick={() => decide('reject')}><X size={15} aria-hidden /> Từ chối {chosen.length || ''}</button>
         <button className="button primary" disabled={!chosen.length || pending} onClick={() => decide('approve')}>
           {pending ? <LoaderCircle size={15} className="spin" aria-hidden /> : <Check size={15} aria-hidden />} Duyệt {chosen.length || ''}

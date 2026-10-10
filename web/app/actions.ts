@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { refresh } from 'next/cache';
 import type { ColumnRule, RunReport, User } from '@/lib/postgres-api';
 import { chatPayload, type ChatResponse } from '@/lib/studio';
+import { APPROVAL_MESSAGE, requestDeployment } from '@/lib/deploy';
 import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, discoverObjects } from '@/lib/catalog/source';
 import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections';
 import type { Discovery } from '@/lib/catalog/types';
@@ -160,15 +161,28 @@ export async function submitRequest(_: ActionState, form: FormData): Promise<Act
   redirect(`/runs/${report.run_id.slice(0, 8)}`);
 }
 
-/** Reviewer duyệt / từ chối đúng bộ file đã xem (files_hash). Duyệt xong backend ghi project Dagster local. */
+/** Reviewer duyệt / từ chối đúng bộ file đã xem (files_hash); duyệt chỉ ghi chữ ký. */
 export async function reviewRun(runId: string, decision: 'approve' | 'reject', filesHash: string, comment: string): Promise<ActionState> {
-  if (MOCK) return { message: `Mock: đã ghi ${decision === 'approve' ? 'duyệt' : 'từ chối'} trên trình duyệt.` };
+  if (MOCK) return { message: decision === 'approve' ? `Mock: ${APPROVAL_MESSAGE}` : 'Mock: đã ghi từ chối trên trình duyệt.' };
   try {
-    const report = await backend<RunReport>(`/runs/${encodeURIComponent(runId)}/${decision}`, { method: 'POST', body: JSON.stringify({ files_hash: filesHash || null, comment }) });
+    await backend<RunReport>(`/runs/${encodeURIComponent(runId)}/${decision}`, { method: 'POST', body: JSON.stringify({ files_hash: filesHash || null, comment }) });
     refresh();
-    return { message: report.status === 'DEPLOYED' ? 'Đã duyệt và ghi project Dagster local. Dagster khởi động lại để nạp pipeline mới, mất khoảng 20 giây cho mỗi pipeline đang chạy (UI Dagster tạm không vào được trong lúc này), rồi xem ở mục Jobs.' : report.status === 'DEPLOY_FAILED' ? 'Đã duyệt nhưng ghi project Dagster thất bại, xem log.' : 'Đã ghi quyết định.' };
+    return { message: decision === 'approve' ? APPROVAL_MESSAGE : 'Đã ghi quyết định từ chối.' };
   } catch (err) {
     if (err instanceof BackendError && err.status === 409) refresh(); // run đã đổi: tải lại để thấy trạng thái mới
+    return failure(err);
+  }
+}
+
+/** Deploy là thao tác riêng; backend kiểm Reviewer, APPROVED và chữ ký trước khi mở PR. */
+export async function deployRun(runId: string): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: chưa gọi backend để mở pull request.' };
+  try {
+    await requestDeployment(runId, backend);
+    refresh();
+    return { message: 'Đã gửi Deploy. Xem pull request và tiến độ triển khai bên dưới.' };
+  } catch (err) {
+    if (err instanceof BackendError && err.status === 409) refresh();
     return failure(err);
   }
 }
@@ -339,7 +353,7 @@ export async function reviewRuns(items: { runId: string; filesHash: string }[], 
   if (items.length > 50) return { error: 'Mỗi lượt chỉ được duyệt tối đa 50 run.' };
   if (new Set(items.map(item => item.runId)).size !== items.length) return { error: 'Mỗi run chỉ được chọn một lần.' };
   if (decision === 'reject' && !comment.trim()) return { error: 'Từ chối nhiều run cần ghi lý do.' };
-  if (MOCK) return { results: items.map(i => ({ runId: i.runId, ok: true, message: 'Mock: chưa gọi backend.' })) };
+  if (MOCK) return { results: items.map(i => ({ runId: i.runId, ok: true, message: decision === 'approve' ? `Mock: ${APPROVAL_MESSAGE}` : 'Mock: chưa gọi backend.' })) };
   try {
     const result = await backend<{ results: { run_id: string; ok: boolean; status?: string | null; message: string }[] }>('/runs/batch-review', {
       method: 'POST',
@@ -348,7 +362,8 @@ export async function reviewRuns(items: { runId: string; filesHash: string }[], 
       }),
     });
     refresh();
-    return { results: result.results.map(item => ({ runId: item.run_id, ok: item.ok, status: item.status, message: item.message })) };
+    return { results: result.results.map(item => ({ runId: item.run_id, ok: item.ok, status: item.status,
+      message: item.ok && decision === 'approve' ? APPROVAL_MESSAGE : item.message })) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Duyệt hàng loạt thất bại.' };
   }
