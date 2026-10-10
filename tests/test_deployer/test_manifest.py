@@ -100,6 +100,13 @@ UNSAFE_PATHS = [
     ".",
     "Manifest.JSON",
     "RUN_REPORT.json",
+    "./Manifest.JSON",
+    "././run_report.json",
+    "a\0b.sql",
+    "manifest.json.",
+    "run_report.json ",
+    "a/.. /b.sql",
+    "a./b.sql",
 ]
 
 
@@ -119,7 +126,7 @@ def test_verify_rejects_manifest_listing_unsafe_path(path):
         verify_manifest(forged, files)
 
 
-@pytest.mark.parametrize("model_name", ["../x", "Fct", "fct/x", ""])
+@pytest.mark.parametrize("model_name", ["../x", "Fct", "fct/x", "", "fct_x\n", None, 1])
 def test_model_name_must_be_an_identifier(model_name):
     with pytest.raises(ManifestError, match="Tên model"):
         manifest(model_name=model_name)
@@ -156,10 +163,24 @@ def test_verify_rejects_file_contents_that_are_not_text():
         verify_manifest(manifest(), {**FILES, "ingestion/fct_x_pipeline.py": b"print('el')\n"})
 
 
-@pytest.mark.parametrize("text", ["{", "[1, 2]", '"chuoi"', "null", pytest.param("[" * 100000, id="long-nested")])
+@pytest.mark.parametrize(
+    "text", ["{", "[1, 2]", '"chuoi"', "null", None, {}, 1, pytest.param("[" * 100000, id="long-nested")]
+)
 def test_load_json_rejects_broken_or_non_object_json(text):
     with pytest.raises(ManifestError, match="manifest.json"):
         load_json(text, "manifest.json")
+
+
+@pytest.mark.parametrize("files", [None, [], "files", {1: "x"}])
+def test_verify_rejects_invalid_file_collection(files):
+    with pytest.raises(ManifestError, match="Bộ file"):
+        verify_manifest(manifest(), files)
+
+
+def test_case_aliases_cannot_overwrite_a_signed_file():
+    files = {"a.sql": "select 1", "A.sql": "select 2"}
+    with pytest.raises(ManifestError, match="Đường dẫn"):
+        manifest(files=files)
 
 
 def signed_report(built: dict) -> dict:

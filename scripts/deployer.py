@@ -38,7 +38,9 @@ def cycle(config: Config, reinstall: bool) -> dict | None:
         log.error("%s", exc)
         return None
     except Exception as exc:  # không để một chu kỳ lỗi làm tắt deployer
-        log.exception("Chu kỳ deployer lỗi: %s", type(exc).__name__)
+        log.error(
+            "Chu kỳ deployer lỗi (%s); kiểm tra cấu hình và quyền volume, chu kỳ sau thử lại.", type(exc).__name__
+        )
         return None
     if summary["models"] or summary["pending"]:
         log.info(

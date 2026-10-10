@@ -60,6 +60,7 @@ GIT_TIMEOUT_SEC = 120
 DETAIL_MAX = 500
 HEAD_REF = "refs/deployer/head"
 REGULAR_FILE = "100644"
+DEFAULT_KNOWN_HOSTS = str(Path(__file__).with_name("github_known_hosts").resolve())
 INSTALL_ATTEMPTS = 3
 # Trạng thái từng pipeline trong state.json. Chỉ `done` (đã cài và backend nhận `deployed`, hoặc thư mục đã bị xóa)
 # là xong; `reporting` chờ báo, `retry` chờ cài lại; `failed`, `refused`, `unreported` chờ nội dung mới / --reinstall.
@@ -78,8 +79,8 @@ class Config:
     deploy_dir: str = "data/dagster_local"
     state_dir: str = "data/deployer"
     backend_url: str = "http://backend:8000"
-    ssh_key: str = ""
-    known_hosts: str = ""
+    ssh_key: str = field(default="", repr=False)
+    known_hosts: str = field(default="", repr=False)
     interval: int = 60
 
     @classmethod
@@ -105,6 +106,9 @@ class Config:
             raise DeployerError(
                 "Không đọc được file khóa SSH ở DEPLOYER_SSH_KEY; kiểm tra mount chỉ đọc của deploy key."
             )
+        known_hosts = env.get("DEPLOYER_KNOWN_HOSTS", "") or DEFAULT_KNOWN_HOSTS
+        if not Path(known_hosts).is_file():
+            raise DeployerError("Không đọc được DEPLOYER_KNOWN_HOSTS; cần file khóa host SSH đã xác minh.")
         return cls(
             repo_url=repo_url,
             secret=secret,
@@ -112,7 +116,7 @@ class Config:
             state_dir=env.get("DEPLOYER_STATE_DIR", "data/deployer"),
             backend_url=backend_url,
             ssh_key=ssh_key,
-            known_hosts=env.get("DEPLOYER_KNOWN_HOSTS", ""),
+            known_hosts=known_hosts,
             interval=interval,
         )
 
@@ -170,11 +174,9 @@ def save_state(config: Config, state: dict) -> None:
 
 
 def _git_env(config: Config) -> dict[str, str]:
-    known_hosts = config.known_hosts or str(Path(config.state_dir).resolve() / "known_hosts")
-    # Có file known_hosts cấu hình sẵn thì chỉ tin đúng host trong đó; chưa có thì tin lần đầu và ghi vào volume.
-    checking = "yes" if config.known_hosts else "accept-new"
-    ssh = ["ssh", "-o", "BatchMode=yes", "-o", f"StrictHostKeyChecking={checking}"]
-    ssh += ["-o", f"UserKnownHostsFile={known_hosts}"]
+    known_hosts = config.known_hosts or DEFAULT_KNOWN_HOSTS
+    ssh = ["ssh", "-F", os.devnull, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+    ssh += ["-o", f"UserKnownHostsFile={known_hosts}", "-o", f"GlobalKnownHostsFile={os.devnull}"]
     if config.ssh_key:
         ssh += ["-i", config.ssh_key, "-o", "IdentitiesOnly=yes"]
     return {**os.environ, "GIT_SSH_COMMAND": shlex.join(ssh), "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
@@ -190,8 +192,14 @@ def _git(config: Config, *args: str) -> bytes:
     except OSError as exc:
         raise DeployerError(f"Không chạy được git ({type(exc).__name__}); image cần có git và ssh.") from None
     if done.returncode:
-        detail = done.stderr.decode("utf-8", "replace").replace(config.repo_url, "<repo pipeline>").strip()
-        raise DeployerError(f"git {args[0]} lỗi (mã {done.returncode}): {detail[-DETAIL_MAX:]}")
+        # stderr của git/ssh có thể chứa URL, username hoặc đường dẫn khóa; chỉ chuyển lỗi quen thuộc sang câu cố định.
+        error = done.stderr.decode("utf-8", "replace").lower()
+        detail = "Không truy cập được <repo pipeline>; kiểm tra kết nối và cấu hình Git/SSH."
+        if "permission denied (publickey)" in error:
+            detail = "Permission denied (publickey); kiểm tra deploy key chỉ đọc."
+        elif "host key verification failed" in error or "host identification has changed" in error:
+            detail = "Host key verification failed; kiểm tra khóa host SSH đã ghim."
+        raise DeployerError(f"git {args[0]} lỗi (mã {done.returncode}): {detail}")
     return done.stdout
 
 
@@ -378,7 +386,9 @@ def apply_pipeline(config: Config, head: str, model: str) -> tuple[str, dict | N
             return "rejected", None
         return "rejected", _payload(identity, model, head, "failed", f"Manifest không hợp lệ: {exc}")
     try:
-        install.install_project(model, files, config.deploy_dir)
+        target = install.install_project(model, files, config.deploy_dir)
+        if target is None:
+            raise OSError("Cài project không trả về code location.")
     except (OSError, subprocess.SubprocessError, ManifestError) as exc:
         log.error("Cài %s lỗi, giữ bản đang chạy: %s", model, exc)
         return "install_failed", _payload(

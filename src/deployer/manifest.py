@@ -25,7 +25,7 @@ class ManifestError(ValueError):
 
 def project_dir(model_name: str) -> str:
     """Thư mục của pipeline trong repo pipeline."""
-    if not MODEL_NAME.match(model_name):
+    if not isinstance(model_name, str) or not MODEL_NAME.fullmatch(model_name):
         raise ManifestError(f"Tên model '{model_name}' không hợp lệ.")
     return f"pipelines/{model_name}"
 
@@ -42,21 +42,26 @@ def _check_paths(paths) -> None:
     # ':' (ổ đĩa Windows như C:/x.sql hay c:x.sql). Đường dẫn phải ở dạng chuẩn (không './', '//', '/' cuối) để không
     # có bí danh: './manifest.json' hay 'a/./b.sql' trỏ cùng file với tên khác. Tên dành riêng so không phân biệt hoa
     # thường vì hệ file không phân biệt (Windows, macOS) coi 'Manifest.json' là cùng một file.
+    seen = set()
     for path in paths:
         if not isinstance(path, str):
             raise ManifestError("Đường dẫn file trong bộ file đã duyệt phải là chuỗi.")
-        parts = PurePosixPath(path).parts
-        unsafe = not parts or path.startswith("/") or "\\" in path or ":" in path or ".." in parts
-        reserved = path.casefold() in (MANIFEST_FILE, REPORT_FILE)
-        if unsafe or str(PurePosixPath(path)) != path or reserved:
+        normalized = PurePosixPath(path)
+        parts = normalized.parts
+        unsafe = not parts or path.startswith("/") or "\\" in path or ":" in path or ".." in parts or "\0" in path
+        # Windows bỏ dấu chấm/khoảng trắng cuối tên và không phân biệt hoa thường: không nhận các bí danh này.
+        unsafe = unsafe or any(part.rstrip(". ") != part for part in parts) or path.casefold() in seen
+        reserved = str(normalized).casefold() in (MANIFEST_FILE, REPORT_FILE)
+        if unsafe or str(normalized) != path or reserved:
             raise ManifestError(f"Đường dẫn file '{path}' không hợp lệ trong bộ file đã duyệt.")
+        seen.add(path.casefold())
 
 
 def load_json(text: str, name: str) -> dict:
     """Đọc một file JSON object của repo pipeline (manifest.json, run_report.json); hỏng hay sai kiểu ra ManifestError."""
     try:
         data = json.loads(text)
-    except (ValueError, RecursionError):
+    except (TypeError, ValueError, RecursionError):
         raise ManifestError(f"{name} không phải JSON hợp lệ.") from None
     if not isinstance(data, dict):
         raise ManifestError(f"{name} phải là một JSON object.")
@@ -104,8 +109,11 @@ def verify_manifest(manifest: dict, files: dict[str, str]) -> None:
     _check_paths(expected)
     if not all(isinstance(digest, str) for digest in expected.values()):
         raise ManifestError("sha256 của từng file trong manifest phải là chuỗi.")
-    if not all(isinstance(path, str) and isinstance(text, str) for path, text in files.items()):
+    if not isinstance(files, dict) or not all(
+        isinstance(path, str) and isinstance(text, str) for path, text in files.items()
+    ):
         raise ManifestError("Bộ file cần kiểm phải gồm đường dẫn và nội dung dạng chuỗi.")
+    _check_paths(files)
     hashes, files_hash = hash_files(files)
     missing, extra = sorted(set(expected) - set(hashes)), sorted(set(hashes) - set(expected))
     if missing or extra:

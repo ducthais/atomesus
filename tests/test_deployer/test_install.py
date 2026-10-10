@@ -4,6 +4,7 @@ import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -146,3 +147,78 @@ def test_production_dbt_results_reach_day2_test_degradation(tmp_path):
     assert "test_degradation" in found_rules
     assert sorted(p.name for p in (home / "day2_dbt").iterdir()) == [model], "chỉ pipeline đang cài"
     assert sorted(p.name for p in deploy.iterdir()) == [model, "workspace.yaml"], "không ghi gì vào code location"
+
+
+def test_readonly_dagster_starts_without_dev_parse_and_writes_artifacts_outside_code(tmp_path, monkeypatch):
+    module = _dagster_local()
+    deploy = tmp_path / "code"
+    workspace = install.write_workspace(str(deploy))
+    home = tmp_path / "home"
+    monkeypatch.setattr(module, "READ_ONLY", True)
+    monkeypatch.setattr(module, "HOME", home)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "PipelineSettings", lambda: PipelineSettings(_env_file=None, deploy_dir=str(deploy)))
+    monkeypatch.setattr(module, "credentials_env", lambda *args: {})
+    monkeypatch.setenv("DAGSTER_IS_DEV_CLI", "1")
+    calls = []
+    monkeypatch.setattr(module.subprocess, "Popen", lambda command, **kwargs: calls.append((command, kwargs)))
+
+    _, returned = module.start()
+
+    assert returned == workspace.resolve() and len(calls) == 2
+    assert "dagster-webserver" in calls[0][0][0] and "dagster-daemon" in calls[1][0][0]
+    for _, kwargs in calls:
+        assert "DAGSTER_IS_DEV_CLI" not in kwargs["env"]
+        assert kwargs["env"]["DBT_TARGET_PATH"] == str(home / "dbt_target")
+        assert kwargs["cwd"] == deploy.resolve()
+    assert list(deploy.iterdir()) == [workspace], "không ghi project hoặc kết quả dbt vào volume code"
+
+
+def test_workspace_replacement_restarts_dagster(tmp_path, monkeypatch):
+    module = _dagster_local()
+    workspace = install.write_workspace(str(tmp_path))
+    started, stopped = [], []
+
+    def start():
+        processes = []
+        started.append(processes)
+        return processes, workspace
+
+    def tick(_seconds):
+        if len(started) > 1:
+            raise KeyboardInterrupt
+        # Cài version mới có thể giữ nguyên nội dung YAML, nhưng thay file và mtime vẫn yêu cầu nạp lại code.
+        old = workspace.stat().st_mtime
+        install.write_workspace(str(tmp_path))
+        os.utime(workspace, (old + 10, old + 10))
+
+    monkeypatch.setattr(module, "start", start)
+    monkeypatch.setattr(module, "stop", stopped.append)
+    monkeypatch.setattr(module.time, "sleep", tick)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 0)
+
+    assert module.main() == 0
+    assert len(started) == 2 and stopped == started
+
+
+def test_day2_bridge_matches_real_dagster_dbt_artifact_names(tmp_path, monkeypatch):
+    from dagster_dbt import DbtCliResource
+
+    model, home = "fct_x", tmp_path / "home"
+    deploy = tmp_path / "code"
+    (deploy / model).mkdir(parents=True)
+    monkeypatch.setenv("DBT_TARGET_PATH", str(home / "dbt_target"))
+    resource = DbtCliResource(project_dir=ROOT / "dbt_project")
+    context = SimpleNamespace(
+        op_execution_context=SimpleNamespace(op=SimpleNamespace(name=f"{model}_transform")),
+        run=SimpleNamespace(run_id="abcdef012345"),
+    )
+    target = resource._get_unique_target_path(context=context)
+    at = datetime(2026, 10, 10, tzinfo=UTC).timestamp()
+    _dbt_results(home / "dbt_target", target.name, at, failed=1)
+    settings = PipelineSettings(_env_file=None, deploy_dir=str(deploy))
+
+    view = _dagster_local().day2_settings(settings, home=home)
+
+    assert target.parent == home / "dbt_target" and target.name.startswith(f"{model}_transform-abcdef0-")
+    assert runs.dbt_results(Path(view.deploy_dir) / model, at, at + 60) == {"tests": 4, "tests_failed": 1}

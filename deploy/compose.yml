@@ -111,7 +111,7 @@ services:
       PIPELINE_DEPLOYER_SECRET: ${PIPELINE_DEPLOYER_SECRET:-}
       DEPLOYER_INTERVAL_SEC: ${DEPLOYER_INTERVAL_SEC:-60}
       DEPLOYER_SSH_KEY: /run/secrets/deployer/deploy_key
-      DEPLOYER_KNOWN_HOSTS: /run/secrets/deployer/known_hosts
+      DEPLOYER_KNOWN_HOSTS: ${DEPLOYER_KNOWN_HOSTS:-/app/src/deployer/github_known_hosts}
       DEPLOYER_STATE_DIR: /app/state
       DEPLOYER_BACKEND_URL: http://backend:8000
       PIPELINE_DEPLOY_DIR: /app/data/dagster_local

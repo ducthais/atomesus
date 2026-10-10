@@ -155,6 +155,9 @@ Image này mang sẵn `workspace.yaml` rỗng và thư mục trạng thái thu�
 `deployer_state` lần đầu mount vào deployer được Docker chép nội dung và chủ sở hữu từ image, nên không cần bước
 `chown` nào bằng root. Dagster ghi kết quả dbt từng lần chạy vào `data/dagster_home/dbt_target` (không ghi vào code
 location); Day 2 gom `run_results.json` theo pipeline ở `data/dagster_home/day2_dbt` để đếm test.
+Khóa host Ed25519 của `github.com` được ghim sẵn trong `src/deployer/github_known_hosts`, theo
+[khóa SSH GitHub công bố](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
+Deployer luôn dùng `StrictHostKeyChecking=yes`, không tự tin host mới hoặc lấy khóa qua `ssh-keyscan`.
 
 Cần có trước: repo pipeline và branch protection (xem `.harness/plans/DEPLOY-PR.md`).
 
@@ -164,8 +167,6 @@ ngoài `data/` vì backend đọc được):
 ```bash
 sudo mkdir -p /etc/atomesus-deployer
 sudo ssh-keygen -t ed25519 -N '' -C atomesus-deployer -f /etc/atomesus-deployer/deploy_key
-ssh-keyscan github.com | sudo tee /etc/atomesus-deployer/known_hosts >/dev/null
-ssh-keygen -lf /etc/atomesus-deployer/known_hosts   # so với fingerprint GitHub công bố trong docs "GitHub's SSH key fingerprints"
 sudo chown -R 1000:1000 /etc/atomesus-deployer    # uid của user `app` trong container
 sudo chmod 600 /etc/atomesus-deployer/deploy_key
 sudo cat /etc/atomesus-deployer/deploy_key.pub
@@ -181,7 +182,12 @@ Repo pipeline → **Settings → Deploy keys → Add deploy key**: dán nội du
 | `DEPLOYER_REPO_URL` | URL SSH repo pipeline, vd. `git@github.com:<owner>/atomesus-pipelines.git` |
 | `PIPELINE_DEPLOYER_SECRET` | `openssl rand -hex 32`; backend đọc cùng biến này từ `.env` để kiểm chữ ký callback |
 | `DEPLOYER_INTERVAL_SEC` | tùy chọn, chu kỳ kéo repo (mặc định `60`, tối thiểu `5`) |
-| `DEPLOYER_SSH_DIR` | tùy chọn, thư mục chứa `deploy_key` và `known_hosts` (mặc định `/etc/atomesus-deployer`) |
+| `DEPLOYER_SSH_DIR` | tùy chọn, thư mục chứa `deploy_key` (mặc định `/etc/atomesus-deployer`) |
+| `DEPLOYER_KNOWN_HOSTS` | tùy chọn cho Git host khác: đường dẫn **trong container**, vd. `/run/secrets/deployer/known_hosts`; đặt file khóa host đã xác minh vào `DEPLOYER_SSH_DIR`. Mặc định dùng khóa GitHub ghim trong image. |
+
+Compose đặt `DEPLOYER_SSH_KEY=/run/secrets/deployer/deploy_key`, `DEPLOYER_STATE_DIR=/app/state`,
+`PIPELINE_DEPLOY_DIR=/app/data/dagster_local` và `DEPLOYER_BACKEND_URL=http://backend:8000`. Khi chạy script ngoài
+Compose có thể cấu hình các biến này; khóa SSH luôn đọc từ file, không truyền nội dung khóa trong dòng lệnh.
 
 Deployer không ghi URL repo, khóa hay secret ra log.
 
@@ -193,7 +199,8 @@ docker compose --env-file .env -f deploy/compose.yml up -d --build deployer   # 
 docker compose --env-file .env -f deploy/compose.yml exec deployer sh -c 'git --version && ssh -V'
 # Thử deploy key: GitHub trả "Hi <owner>/<repo>! You've successfully authenticated" (mã thoát 1 là bình thường)
 docker compose --env-file .env -f deploy/compose.yml exec deployer ssh -T -i /run/secrets/deployer/deploy_key \
-  -o UserKnownHostsFile=/run/secrets/deployer/known_hosts -o StrictHostKeyChecking=yes git@github.com
+  -F /dev/null -o UserKnownHostsFile=/app/src/deployer/github_known_hosts \
+  -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes git@github.com
 docker compose --env-file .env -f deploy/compose.yml logs -f deployer
 docker compose --env-file .env -f deploy/compose.yml exec dagster cat /app/data/dagster_local/workspace.yaml
 docker compose --env-file .env -f deploy/compose.yml exec deployer cat /app/state/state.json
@@ -218,7 +225,7 @@ không bị bỏ qua ở chu kỳ sau. Một pipeline lỗi không chặn pipeli
 | `Backend từ chối kết quả …` → `refused` | Backend trả 400/409/422 (run không còn `APPROVED` hoặc không khớp chữ ký). Pipeline đã cài nhưng không gửi lại cùng kết quả; kiểm run trên app, xong thì `--reinstall` như trên hoặc Deploy version mới. |
 | `Deployer chưa bật: Thiếu DEPLOYER_REPO_URL …` | Thiếu biến ở bước 2; sửa `.env` rồi `up -d deployer`. |
 | `git fetch lỗi … Permission denied (publickey)` | Deploy key chưa thêm vào repo pipeline, sai `DEPLOYER_REPO_URL`, hoặc file khóa không thuộc uid 1000 / không phải quyền 600. |
-| `Host key verification failed` | `known_hosts` thiếu hoặc sai host; tạo lại ở bước 1. |
+| `Host key verification failed` | Host khác GitHub cần file khóa host đã xác minh và `DEPLOYER_KNOWN_HOSTS`. Nếu GitHub đổi khóa, xác minh trên tài liệu chính thức rồi cập nhật khóa ghim và build lại image; không tắt kiểm host. |
 | `Không đọc được file khóa SSH` | Chưa có `deploy_key` trong `DEPLOYER_SSH_DIR` (bước 1), hoặc đặt sai thư mục. |
 | `Không chạy được git` | Image deployer cũ chưa có `git` / `openssh-client`: `up -d --build deployer`. |
 | `state.json hỏng` | `run --rm deployer rm /app/state/state.json`; chu kỳ sau cài lại mọi pipeline ở commit mới nhất. |

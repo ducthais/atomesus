@@ -3,6 +3,8 @@
 import hashlib
 import hmac
 import json
+import os
+import shlex
 import subprocess
 import threading
 import urllib.error
@@ -379,14 +381,16 @@ def test_pending_report_blocks_new_commit_until_delivered(config, remote, instal
     assert summary["head"] is None and summary["pending"] == 1 and installs == ["fct_x"]
 
 
-def test_refused_callback_stays_unresolved_without_resending(config, remote, installs):
+@pytest.mark.parametrize("status", [400, 409, 422])
+def test_refused_callback_stays_unresolved_without_resending(config, remote, installs, status, caplog):
     head = remote.commit("fct_x", signed(files_v(1), 1))
-    backend = Backend(409)
+    backend = Backend(status)
 
     summary = run(config, backend)
 
     assert summary["applied"] is None and summary["pending"] == 0 and backend.calls == []
     assert summary["unresolved"] == {"fct_x": "refused"}
+    assert f"HTTP {status}" in caplog.text and "Backend từ chối" in caplog.text
     again = Backend()
     assert run(config, again)["applied"] is None and again.calls == [], "backend đã từ chối: không gửi lại"
 
@@ -517,3 +521,86 @@ def test_corrupt_state_is_reported_not_silently_reset(config):
 
     with pytest.raises(DeployerError, match="state.json"):
         service.load_state(config)
+
+
+def test_install_returning_none_is_retried_without_deployed_callback(config, remote, monkeypatch):
+    remote.commit("fct_x", signed(files_v(1), 1))
+    monkeypatch.setattr(install, "install_project", lambda *args: None)
+    backend = Backend()
+
+    summary = run(config, backend)
+
+    assert summary["applied"] is None and summary["unresolved"] == {"fct_x": "retry"}
+    assert backend.calls == []
+
+
+def test_ssh_uses_pinned_hosts_and_never_accepts_new_hosts(config):
+    env = service._git_env(config)
+    options = shlex.split(env["GIT_SSH_COMMAND"])
+
+    assert "StrictHostKeyChecking=yes" in options
+    assert f"UserKnownHostsFile={service.DEFAULT_KNOWN_HOSTS}" in options
+    assert f"GlobalKnownHostsFile={os.devnull}" in options and options[1:3] == ["-F", os.devnull]
+    assert "accept-new" not in env["GIT_SSH_COMMAND"] and env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_git_errors_never_include_key_paths_or_expanded_remote(config, monkeypatch):
+    config = Config(**{**config.__dict__, "ssh_key": "/private/key-secret"})
+    stderr = (
+        b"Identity file /private/key-secret inaccessible; git@github.com:private/repo: Permission denied (publickey)."
+    )
+    monkeypatch.setattr(
+        service.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 128, b"", stderr)
+    )
+
+    with pytest.raises(DeployerError) as error:
+        service._git(config, "fetch", config.repo_url)
+
+    assert "Permission denied (publickey)" in str(error.value)
+    assert "key-secret" not in str(error.value) and "private/repo" not in str(error.value)
+    assert config.ssh_key not in repr(config)
+
+
+def test_config_rejects_unreadable_known_hosts():
+    with pytest.raises(DeployerError, match="DEPLOYER_KNOWN_HOSTS"):
+        Config.from_env({"DEPLOYER_REPO_URL": "u", "PIPELINE_DEPLOYER_SECRET": "s", "DEPLOYER_KNOWN_HOSTS": "/missing"})
+
+
+def test_compose_has_only_one_code_location_writer_and_a_separate_git_image():
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    compose = yaml.safe_load((root / "deploy/compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    writers, readers = [], []
+    for name, spec in services.items():
+        for volume in spec.get("volumes", []):
+            if isinstance(volume, dict) and volume.get("source") == "dagster_code":
+                (readers if volume.get("read_only") else writers).append(name)
+                if volume.get("read_only"):
+                    assert volume["volume"]["nocopy"] is True
+            elif isinstance(volume, str) and volume.split(":")[0] == "dagster_code":
+                (readers if volume.endswith(":ro") else writers).append(name)
+    assert writers == ["deployer"] and sorted(readers) == ["backend", "dagster"]
+    deployer = services["deployer"]
+    assert "env_file" not in deployer
+    assert not ({"OPENAI_API_KEY", "PIPELINE_DATABASE_URL", "POSTGRES_PASSWORD"} & deployer["environment"].keys())
+    dockerfile = deployer["build"]["dockerfile_inline"]
+    assert "FROM app" in dockerfile and "git openssh-client" in dockerfile
+    assert dockerfile.strip().endswith("USER app") and "USER root" in dockerfile
+    assert deployer["build"]["additional_contexts"] == {"app": "service:backend"}
+    assert any(volume.endswith(":/run/secrets/deployer:ro") for volume in deployer["volumes"])
+    assert "github_known_hosts" in deployer["environment"]["DEPLOYER_KNOWN_HOSTS"]
+    assert "openssh-client" not in (root / "Dockerfile").read_text(encoding="utf-8")
+
+
+def test_pinned_github_host_key_matches_official_fingerprint():
+    import base64
+
+    lines = Path(service.DEFAULT_KNOWN_HOSTS).read_text(encoding="utf-8").splitlines()
+    [entry] = [line for line in lines if line and not line.startswith("#")]
+    host, kind, key = entry.split()
+    digest = base64.b64encode(hashlib.sha256(base64.b64decode(key)).digest()).decode().rstrip("=")
+
+    assert host == "github.com" and kind == "ssh-ed25519"
+    assert digest == "+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
