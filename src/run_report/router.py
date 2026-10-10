@@ -12,7 +12,7 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.run_report.compare import compare, pick_base
-from src.run_report.models import Approval, Decision, RunReport, RunStatus
+from src.run_report.models import Approval, Decision, Deployment, RunReport, RunStatus
 from src.run_report.store import _database as run_report_database
 from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report, transition_run_report
 
@@ -241,6 +241,22 @@ def _record_deploy(store_path: str, signed: RunReport, change: Callable[[RunRepo
         return updated
 
 
+def _merge_deployment(current: RunReport, opened: Deployment) -> dict:
+    """Deployment cần lưu sau khi Deploy mở (hoặc tìm lại) pull request `opened`.
+
+    Cùng pull request (repo, số PR, head sha) với bản đang lưu thì giữ bản đang lưu: webhook có thể đã ghi CI / merge
+    trong lúc request này chờ GitHub, ghi đè bằng bản vừa mở sẽ làm mất tiến độ đó.
+    """
+    stored = current.deployment
+    if stored is not None and (stored.repo.lower(), stored.pr_number, stored.head_sha) == (
+        opened.repo.lower(),
+        opened.pr_number,
+        opened.head_sha,
+    ):
+        return stored.model_dump()
+    return opened.model_dump()
+
+
 @router.post("/{run_id}/deploy", response_model=RunReport)
 def deploy_run(
     run_id: str,
@@ -251,7 +267,7 @@ def deploy_run(
     """P16: mở pull request chứa đúng bộ file đã duyệt vào repo pipeline (SPEC §9.5, FR-17).
 
     Không merge, không ghi Dagster; status giữ APPROVED đến khi deploy production xong. Gọi lại an toàn: pull request
-    đã mở thì trả lại pull request đó. Lỗi GitHub ghi error_trace stage deploy và giữ APPROVED để bấm Deploy lại.
+    đã mở thì trả lại pull request đó (giữ CI / merge webhook đã ghi), đã merge thì trả run như đang lưu. Lỗi GitHub ghi error_trace stage deploy và giữ APPROVED để bấm Deploy lại.
     """
     # Import muộn: codegen.deploy import run_report.models, import sớm ở đầu file sẽ thành vòng.
     from src.codegen.deploy import open_pull_request
@@ -279,6 +295,8 @@ def deploy_run(
         or not report.spec
     ):
         raise HTTPException(409, "Chữ ký duyệt không khớp bộ file hoặc version hiện tại nên không deploy được.")
+    if report.deployment is not None and report.deployment.state == "merged":
+        return report  # pull request đã merge, chờ deployer: không mở lại
     files = get_run_files(config.store_path, run_id, report.version)
     if not files or file_hashes(files)[1] != report.files_hash:
         raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không deploy được.")
@@ -301,7 +319,7 @@ def deploy_run(
         config.store_path,
         report,
         lambda current: RunReport.model_validate(
-            {**current.model_dump(), "stage_reached": "deploy", "deployment": deployment.model_dump()}
+            {**current.model_dump(), "stage_reached": "deploy", "deployment": _merge_deployment(current, deployment)}
         ),
     )
     if opened is None:

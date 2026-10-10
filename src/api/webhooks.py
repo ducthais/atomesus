@@ -4,8 +4,9 @@ Không dùng phiên đăng nhập: mọi request phải ký HMAC-SHA256 trên ng
 ký → 401, cả hai trước khi đọc body; body lớn hơn MAX_BODY_BYTES → 413; chữ ký không khớp → 401 trước khi parse.
 
 - `POST /webhooks/github` (X-Hub-Signature-256, PIPELINE_GITHUB_WEBHOOK_SECRET): pull request merge → deployment
-  merged, status vẫn APPROVED chờ deployer; đóng không merge hoặc CI đỏ → version mới về P4 (vòng người); CI xanh chỉ
-  ghi lại. Mỗi X-GitHub-Delivery chỉ áp một lần, ghi cùng giao dịch với thay đổi của run.
+  merged, status vẫn APPROVED chờ deployer; đóng không merge hoặc CI đỏ (kể cả sau merge) → version mới về P4 (vòng
+  người); CI xanh chỉ ghi lại. Mỗi X-GitHub-Delivery, kể cả sự kiện bỏ qua, chỉ xử lý một lần, ghi cùng giao dịch với
+  thay đổi của run.
 - `POST /deployments/callback` (X-Atomesus-Signature, PIPELINE_DEPLOYER_SECRET): deployer báo deployed / failed →
   DEPLOYED / DEPLOY_FAILED (hợp đồng chung trong kế hoạch DEPLOY-PR).
 
@@ -29,7 +30,7 @@ from src.codegen.github import GithubSettings
 from src.pipeline.auth import settings
 from src.pipeline.settings import PipelineSettings
 from src.run_report.models import RunReport
-from src.run_report.store import get_run_report, list_run_reports, record_webhook_delivery, update_run_report
+from src.run_report.store import find_run_reports, get_run_report, record_webhook_delivery, update_run_report
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["webhooks"])
@@ -41,6 +42,7 @@ PIPELINE_BRANCH_PREFIX = "pipeline/"
 CI_FAILED = frozenset({"failure", "cancelled", "timed_out"})
 DETAIL_LIMIT = 2000
 DELIVERY_LIMIT = 200
+DUPLICATE = {"status": "duplicate", "detail": "Delivery này đã được xử lý."}
 
 
 class DeployerSettings(BaseSettings):
@@ -193,7 +195,10 @@ def _handle_github(
     """Áp một sự kiện vào run khớp, ghi cùng giao dịch với delivery. Trả (kết quả, run sau khi đổi, việc chạy nền)."""
     from src.agents.service import deploy_rework  # import muộn: src.agents import gói src.run_report
 
-    found = next((r for r in list_run_reports(store_path, "APPROVED", limit=1000) if _matches(r, repo, signal)), None)
+    # Tìm theo head sha trên mọi run APPROVED (không giới hạn lịch sử) rồi kiểm đủ repo / số PR.
+    found = next(
+        (r for r in find_run_reports(store_path, "APPROVED", signal.head_sha) if _matches(r, repo, signal)), None
+    )
     jobs: list[Callable] = []
 
     def change(current: RunReport) -> RunReport | None:
@@ -203,7 +208,8 @@ def _handle_github(
         deployment = current.deployment
         if signal.kind == "ci":
             ci = {"ci_conclusion": signal.conclusion, "ci_url": signal.url, "ci_at": signal.at}
-            if signal.conclusion in CI_FAILED and deployment.state == "open":
+            if signal.conclusion in CI_FAILED:
+                # CI đỏ về P4 kể cả khi webhook merge đến trước (run vẫn APPROVED chờ deployer).
                 marked = _with_deployment(current, **ci)
             elif deployment.ci_conclusion == signal.conclusion and deployment.ci_url == signal.url:
                 return None
@@ -251,25 +257,29 @@ async def github_webhook(
         raise HTTPException(400, "Nội dung webhook không phải JSON.") from None
     if not isinstance(payload, dict):
         raise HTTPException(400, "Nội dung webhook phải là một object JSON.")
-    if str(_field(payload, "repository", "full_name") or "").lower() != repo.lower():
-        response.status_code = 202
-        return {"status": "ignored", "detail": "Sự kiện không thuộc repo pipeline đã cấu hình."}
-    try:
-        signal = _signal(event, payload)
-    except ValidationError:
-        raise HTTPException(400, f"Nội dung sự kiện {event} thiếu trường hoặc sai kiểu.") from None
-    if isinstance(signal, str):
-        response.status_code = 202
-        return {"status": "ignored", "detail": signal}
     delivery = request.headers.get("x-github-delivery", "").strip()
     if not delivery or len(delivery) > DELIVERY_LIMIT:
         raise HTTPException(400, "Thiếu X-GitHub-Delivery hoặc giá trị không hợp lệ.")
+    if str(_field(payload, "repository", "full_name") or "").lower() != repo.lower():
+        signal: _Signal | str = "Sự kiện không thuộc repo pipeline đã cấu hình."
+    else:
+        try:
+            signal = _signal(event, payload)
+        except ValidationError:
+            raise HTTPException(400, f"Nội dung sự kiện {event} thiếu trường hoặc sai kiểu.") from None
+    if isinstance(signal, str):
+        # Sự kiện bỏ qua cũng ghi delivery: GitHub gửi lại thì trả "duplicate" như mọi delivery khác.
+        outcome, _ = await run_in_threadpool(record_webhook_delivery, config.store_path, delivery, event)
+        if outcome == "duplicate":
+            return DUPLICATE
+        response.status_code = 202
+        return {"status": "ignored", "detail": signal}
     outcome, updated, job = await run_in_threadpool(
         _handle_github, config.store_path, repo, delivery, event, signal, make_deps
     )
     log.info("Webhook GitHub %s delivery %s: %s", event, delivery, outcome)
     if outcome == "duplicate":
-        return {"status": "duplicate", "detail": "Delivery này đã được xử lý."}
+        return DUPLICATE
     if outcome == "ignored":
         response.status_code = 202
         return {"status": "ignored", "detail": "Không có run đã duyệt nào khớp pull request / commit này."}

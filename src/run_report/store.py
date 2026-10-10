@@ -177,7 +177,7 @@ def record_webhook_delivery(
     """Ghi nhận một delivery webhook và áp thay đổi của nó vào run trong cùng một giao dịch ghi.
 
     Delivery đã ghi → ("duplicate", None), không đổi gì. Không có run / `change` trả None → ghi delivery,
-    ("ignored", None). Ngược lại → ("applied", bản mới). `change` lỗi thì delivery không được ghi, GitHub gửi lại được.
+    ("ignored", None); sự kiện bỏ qua (ping, push, repo khác…) cũng ghi như vậy để gửi lại vẫn ra "duplicate". Ngược lại → ("applied", bản mới). `change` lỗi thì delivery không được ghi, GitHub gửi lại được.
     Delivery cũ hơn DELIVERY_RETENTION_DAYS được dọn để bảng không phình mãi.
     """
     now = datetime.now(UTC)
@@ -261,6 +261,26 @@ def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HI
     with _database(path) as conn:
         rows = conn.execute(query + " ORDER BY created_at DESC, rowid DESC LIMIT ?", [*params, limit]).fetchall()
     return [RunReport.model_validate_json(row[0]) for row in rows]
+
+
+def find_run_reports(path: str, status: RunStatus, text: str) -> list[RunReport]:
+    """Mọi run ở `status` có JSON chứa `text` (vd. head sha của pull request), mới nhất trước, không giới hạn lịch sử.
+
+    Lọc thô trong SQL để không phải đọc mọi run; người gọi tự kiểm lại trường cần khớp. Bản không đọc được bị bỏ qua.
+    """
+    with _database(path) as conn:
+        rows = conn.execute(
+            "SELECT report FROM run_reports WHERE status = ? AND instr(report, ?) > 0"
+            " ORDER BY created_at DESC, rowid DESC",
+            (status, text),
+        ).fetchall()
+    reports = []
+    for (raw,) in rows:
+        try:
+            reports.append(RunReport.model_validate_json(raw))
+        except ValidationError:
+            continue
+    return reports
 
 
 def abandon_unfinished(path: str, stale_before: datetime | None = None) -> list[str]:

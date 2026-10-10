@@ -324,6 +324,59 @@ async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logge
     assert stored.status == "APPROVED" and stored.error_trace[-1]["stage"] == "deploy"
 
 
+def _record_progress(store_path: str, **changes) -> None:
+    """Giả lập webhook GitHub ghi tiến độ (CI / merge) vào deployment đang lưu."""
+    from src.run_report.store import update_run_report
+
+    def change(current: RunReport) -> RunReport:
+        deployment = {**current.deployment.model_dump(), **changes}
+        return RunReport.model_validate({**current.model_dump(), "deployment": deployment})
+
+    assert update_run_report(store_path, READY_RUN_ID, change) is not None
+
+
+@pytest.mark.asyncio
+async def test_deploy_again_after_ci_update_keeps_ci_progress(logged_in, approved_run, github, store_path):
+    from src.run_report.store import get_run_report
+
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 200
+    _record_progress(store_path, ci_conclusion="success", ci_url="https://github.com/x/actions/runs/1")
+
+    again = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert again.status_code == 200, again.text
+    assert again.json()["deployment"]["ci_conclusion"] == "success"
+    assert get_run_report(store_path, READY_RUN_ID).deployment.ci_conclusion == "success"
+
+
+@pytest.mark.asyncio
+async def test_deploy_finishing_after_merge_webhook_keeps_merged(logged_in, approved_run, github, store_path):
+    """Request Deploy đọc run lúc PR còn mở, chờ GitHub; webhook merge ghi trong lúc đó; Deploy ghi sau không mở lại."""
+    from src.run_report.store import get_run_report
+
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 200
+    github.before = {"GET /pulls": lambda: _record_progress(store_path, state="merged", merge_commit_sha="m" * 40)}
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200, response.text
+    stored = get_run_report(store_path, READY_RUN_ID)
+    assert stored.deployment.state == "merged" and stored.deployment.merge_commit_sha == "m" * 40
+    assert response.json()["deployment"]["state"] == "merged"
+
+
+@pytest.mark.asyncio
+async def test_deploy_after_merge_returns_run_without_calling_github(logged_in, approved_run, github, store_path):
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 200
+    _record_progress(store_path, state="merged")
+    calls = len(github.requests)
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200 and response.json()["deployment"]["state"] == "merged"
+    assert len(github.requests) == calls
+
+
 @pytest.mark.asyncio
 async def test_reports_without_deployment_field_still_load(logged_in):
     old = (FIXTURES_DIR / "deployed.json").read_text(encoding="utf-8")

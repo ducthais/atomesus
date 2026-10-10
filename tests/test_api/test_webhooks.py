@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import SecretStr
@@ -283,6 +283,45 @@ async def test_red_ci_starts_new_version_from_p4(client, approved, store_path, e
 
 
 @pytest.mark.asyncio
+async def test_red_ci_after_merge_still_starts_new_version_from_p4(client, approved, store_path):
+    await send(client, "pull_request", pull_closed(merged=True), delivery="merge")
+
+    response = await send(client, "workflow_run", ci("workflow_run", "failure"), delivery="ci")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run_status"] == "GENERATING" and response.json()["version"] == 4
+    revised = get_run_report(store_path, RUN_ID)
+    assert revised.version == 4 and revised.approval is None and revised.deployment is None
+    entry = next(item for item in revised.spec_history if "deployment" in item)
+    assert entry["deployment"]["state"] == "merged" and entry["deployment"]["ci_conclusion"] == "failure"
+
+
+@pytest.mark.asyncio
+async def test_run_behind_more_than_a_thousand_approved_runs_still_matches(client, approved, store_path):
+    """Run khớp nằm sau hơn 1000 run APPROVED mới hơn cùng head sha (khác số PR): vẫn tìm ra, không bị cắt lịch sử."""
+    from src.run_report.store import _database
+
+    newer = approved.created_at + timedelta(days=1)
+    rows = []
+    for index in range(1001):
+        other = approved.model_copy(
+            update={
+                "run_id": f"other-{index}",
+                "created_at": newer,
+                "deployment": approved.deployment.model_copy(update={"pr_number": 100 + index}),
+            }
+        )
+        rows.append((other.run_id, "APPROVED", newer.isoformat(), other.model_dump_json(), newer.isoformat()))
+    with _database(store_path) as conn:
+        conn.executemany("INSERT INTO run_reports VALUES (?, ?, ?, ?, ?)", rows)
+
+    response = await send(client, "pull_request", pull_closed(merged=True))
+
+    assert response.status_code == 200 and response.json()["run_id"] == RUN_ID, response.text
+    assert get_run_report(store_path, RUN_ID).deployment.state == "merged"
+
+
+@pytest.mark.asyncio
 async def test_green_ci_only_records_the_conclusion(client, approved, store_path):
     response = await send(client, "check_suite", ci("check_suite", "success"))
 
@@ -313,6 +352,26 @@ async def test_unrelated_events_return_202_and_change_nothing(client, approved, 
     response = await send(client, event, payload)
 
     assert response.status_code == 202 and response.json()["status"] == "ignored"
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event", "payload"),
+    [
+        ("ping", {"zen": "Keep it simple.", "repository": {"full_name": REPO}}),
+        ("pull_request", pull_closed(merged=True, repo="someone/other-repo")),
+    ],
+    ids=["ping", "other-repo"],
+)
+async def test_ignored_delivery_sent_again_is_duplicate(client, approved, store_path, event, payload):
+    before = stored(store_path)
+
+    first = await send(client, event, payload, delivery="ignored-1")
+    again = await send(client, event, payload, delivery="ignored-1")
+
+    assert first.status_code == 202 and first.json()["status"] == "ignored"
+    assert again.status_code == 200 and again.json()["status"] == "duplicate"
     assert stored(store_path) == before
 
 
