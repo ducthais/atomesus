@@ -20,10 +20,19 @@ export function BatchReview({ rows }: { rows: BatchRow[] }) {
   const toggle = (id: string) => setPicked(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const all = eligible.length > 0 && eligible.every(r => picked.has(r.id));
   const chosen = rows.filter(r => picked.has(r.id));
-  const decide = (decision: 'approve' | 'reject') => start(async () => {
-    setResult(await reviewRuns(chosen.map(r => ({ runId: r.id, filesHash: r.filesHash })), decision, comment));
-    setPicked(new Set());
-  });
+  const decide = (decision: 'approve' | 'reject') => {
+    const verb = decision === 'approve' ? 'Duyệt' : 'Từ chối';
+    if (!window.confirm(`${verb} ${chosen.length} run đã chọn? Quyết định sẽ được ghi riêng vào từng run.`)) return;
+    start(async () => {
+      const response = await reviewRuns(chosen.map(r => ({ runId: r.id, filesHash: r.filesHash })), decision, comment);
+      setResult(response);
+      if ('results' in response) {
+        const failed = new Set(response.results.filter(item => !item.ok).map(item => item.runId));
+        setPicked(failed);
+        if (!failed.size) setComment('');
+      }
+    });
+  };
 
   return <div className="stack">
     <section className="panel flush"><div className="table-scroll"><table>
@@ -54,8 +63,12 @@ export function BatchReview({ rows }: { rows: BatchRow[] }) {
       </div>
       {result && ('error' in result
         ? <div className="callout bad" role="alert"><CircleAlert size={16} aria-hidden /><div><p>{result.error}</p></div></div>
-        : <ul className="plain small" role="status">{result.results.map(r => <li key={r.runId} className={r.ok ? '' : 'form-error'}>
-          <span className="mono">{r.runId.slice(0, 8)}</span> · {r.message}</li>)}</ul>)}
+        : <div className={`callout ${result.results.some(item => !item.ok) ? 'warn' : 'good'}`} role="status"><div>
+          <strong>{result.results.filter(item => item.ok).length}/{result.results.length} run xử lý thành công</strong>
+          {result.results.some(item => !item.ok) && <p>Các run lỗi vẫn được giữ lựa chọn để bạn kiểm tra và thử lại.</p>}
+          <ul className="plain small">{result.results.map(r => <li key={r.runId} className={r.ok ? '' : 'form-error'}>
+            {r.ok ? <Check size={13} aria-hidden /> : <CircleAlert size={13} aria-hidden />} <Link href={`/runs/${r.runId.slice(0, 8)}`} className="mono">{r.runId.slice(0, 8)}</Link> · {r.message}</li>)}</ul>
+        </div></div>)}
     </section>
   </div>;
 }

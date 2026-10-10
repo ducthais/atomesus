@@ -9,6 +9,14 @@ class PipelineSettings(BaseSettings):
     # Tài khoản local/demo. Production vẫn chặn đăng nhập này trong auth.demo_only.
     engineer_password: SecretStr = SecretStr("Engineer@123")
     reviewer_password: SecretStr = SecretStr("Reviewer@123")
+    admin_password: SecretStr = SecretStr("Admin@123")
+    # SMTP dùng để gửi mã xác thực đăng ký. Development/test có thể để trống để nhận mã trong response.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_from: str = "noreply@atomesus.local"
+    smtp_starttls: bool = True
     # Sprint 1: duyệt xong thì ghi project Dagster ra đây (Sprint 3 chuyển sang pull request).
     deploy_dir: str = "data/dagster_local"
     # Dagster local (make dagster): trang dataset đọc trạng thái run qua GraphQL ở đây.

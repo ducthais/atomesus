@@ -30,12 +30,14 @@ export type StagingEvidence = {
 };
 export type Run = {
   id: string; title: string; domain: string; owner: string; request: string; version: number;
+  trigger?: NonNullable<RunReport['trigger']>;
   filesHash: string; status: Status; stage: number; plan: Plan; summary: string; checks: Check[]; logs: Log[];
   specRetries: number; sqlRetries: number; llmCalls: number; updatedAt: string; usd: number;
   /** Tiền gọi LLM (USD), tổng token, và số lần gọi chưa tính được tiền (model chưa có giá trong budgets.yml). */
   llmUsd: number; llmTokens: number; llmUnpriced: number;
   fileCount: number; assets: Asset[]; approval: Approval | null; error: string | null; question: string | null;
   staging?: StagingEvidence[]; reviewHistory?: Approval[];
+  optimization?: RunReport['regression'];
   /** Bảng `nguồn.bảng` tích sẵn khi bấm "Sửa & chạy lại": phạm vi đã chọn + bảng kế hoạch cần mà chưa chọn. */
   retryTables?: string[];
   /** Run đang chờ backend trả về (POST /agent/runs chạy đồng bộ ~30 giây), chưa có trong sổ bằng chứng. */
@@ -170,6 +172,7 @@ export function toStudioRun(report: RunReport): Run {
   return {
     id: report.run_id, title: report.user_request.length > 60 ? report.user_request.slice(0, 57) + '…' : report.user_request,
     domain: report.domain, owner: report.created_by, request: report.user_request, version: report.version,
+    trigger: report.trigger ?? 'user_request',
     filesHash: report.files_hash ?? '', status, stage, plan: toPlan(report), summary: report.plan?.summary ?? '',
     checks: [...report.checks.map(toCheck), ...report.gates.map(g => ({ id: `gate:${g.name}`, name: GATE_LABEL[g.name] ?? g.name, state: g.result, value: g.result === 'pass' ? 'Đạt' : 'Không đạt', detail: g.detail }))],
     logs: toLogs(report, stage), specRetries: report.attempts?.spec ?? 0, sqlRetries: report.attempts?.sql ?? 0,
@@ -178,7 +181,7 @@ export function toStudioRun(report: RunReport): Run {
     llmTokens: (report.llm_usage ?? []).reduce((n, c) => n + (c.input_tokens ?? 0) + (c.output_tokens ?? 0), 0),
     llmUnpriced: (report.llm_usage ?? []).filter(c => c.usd === null).length,
     fileCount: Object.keys(report.files ?? {}).length, assets: toAssets(report), approval: report.approval,
-    staging: toStaging(report), reviewHistory: report.review_history ?? [],
+    staging: toStaging(report), reviewHistory: report.review_history ?? [], optimization: report.regression ?? null,
     error: last ? (last.question ? `Cần làm rõ: ${last.question}` : traceText(last)) : null, question: last?.question ?? null,
     retryTables: [...new Set([...(report.source_scope ?? []).flatMap(s => s.tables.map(t => `${s.source_ref}.${t}`)), ...(last?.need_tables ?? [])])],
   };
@@ -189,7 +192,7 @@ export function pendingRun(request: string, owner: string): Run {
   const now = new Date().toISOString();
   return {
     id: `pending-${Date.now()}`, title: request.length > 60 ? request.slice(0, 57) + '…' : request, domain: '—', owner, request,
-    version: 1, filesHash: '', status: 'GENERATING', stage: stageIndex('plan'), summary: '',
+    version: 1, trigger: 'user_request', filesHash: '', status: 'GENERATING', stage: stageIndex('plan'), summary: '',
     plan: { sources: [], tables: [], primaryKey: '—', cursor: '—', metric: '—', schedule: '—', writeMode: '—', model: '—', filters: '' },
     checks: [], logs: [{ id: 'pending', stage: stageIndex('plan'), level: 'info', message: 'Agent đang lập kế hoạch; xong sẽ dừng chờ bạn xác nhận rồi mới viết Spec và chạy thử.', at: now }],
     specRetries: 0, sqlRetries: 0, llmCalls: 0, updatedAt: now, usd: 0, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 0, assets: [], approval: null, error: null, question: null, pending: true,
@@ -213,7 +216,8 @@ export function batchReviewItems(runs: Run[], role: string, user: string): Batch
     const failed = run.checks.filter(c => c.state !== 'pass').length;
     const reason = role !== 'Reviewer' ? 'Chỉ Reviewer duyệt'
       : run.owner === user ? 'Run của bạn: không tự duyệt'
-      : failed ? `${failed} kiểm tra chưa đạt` : null;
+      : failed ? `${failed} kiểm tra chưa đạt`
+      : !run.filesHash ? 'Run chưa có bộ file để duyệt' : null;
     return { run, eligible: reason === null, reason };
   });
 }
