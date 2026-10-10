@@ -45,9 +45,7 @@ MAX_VERIFICATION_ATTEMPTS = 5
 
 @router.get("/users", dependencies=[Depends(current_user)])
 def users(config: PipelineSettings = Depends(settings)):
-    built_in = [
-        {**USERS[user_id], "username": username, "managed": False} for username, user_id in ACCOUNTS.items()
-    ]
+    built_in = [{**USERS[user_id], "username": username, "managed": False} for username, user_id in ACCOUNTS.items()]
     registered = [{**user, "managed": True} for user in store.list_users(config.store_path)]
     return [*built_in, *registered]
 

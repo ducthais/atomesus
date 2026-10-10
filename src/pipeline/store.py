@@ -127,7 +127,9 @@ def get_pending_registration(path: str, email: str) -> tuple[Any, ...] | None:
 
 def increment_verification_attempts(path: str, email: str) -> None:
     with database(path) as conn:
-        conn.execute("UPDATE pending_registrations SET attempts = attempts + 1 WHERE email = ? COLLATE NOCASE", (email,))
+        conn.execute(
+            "UPDATE pending_registrations SET attempts = attempts + 1 WHERE email = ? COLLATE NOCASE", (email,)
+        )
 
 
 def delete_pending_registration(path: str, email: str) -> None:
