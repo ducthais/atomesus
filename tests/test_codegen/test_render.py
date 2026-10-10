@@ -59,6 +59,22 @@ def test_render_is_deterministic(policy):
     assert set(hashes) == set(first) and files_hash.startswith("sha256:")
 
 
+@pytest.mark.parametrize("cron", ["0 2 * * *", "15 6 * * 1-5"])
+def test_dagster_schedule_defaults_to_running(policy, cron):
+    spec = load(SINGLE, **{"schedule/cron": cron})
+    path = f"infra/dagster/generated/{spec.transform.model_name}_asset.py"
+    dagster = render(spec, policy)[path]
+    compile(dagster, path, "exec")
+    imports = [node for node in ast.parse(dagster).body if isinstance(node, ast.ImportFrom)]
+    assert any(
+        node.module == "dagster" and any(alias.name == "DefaultScheduleStatus" for alias in node.names)
+        for node in imports
+    )
+    assert "default_status=DefaultScheduleStatus.RUNNING" in dagster
+    assert f"cron_schedule={json.dumps(spec.schedule.cron)}" in dagster
+    assert 'execution_timezone="Asia/Ho_Chi_Minh"' in dagster
+
+
 def test_single_source_pipeline_content(policy):
     files = render(load(SINGLE), policy)
     ingestion = files["ingestion/fct_daily_orders_pipeline.py"]
