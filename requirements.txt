@@ -26,8 +26,11 @@ sqlalchemy>=2.0
 dbt-core>=1.9,<1.11
 dbt-duckdb>=1.9,<2
 
-# BigQuery dry_run cho cổng budget (tùy chọn, SPEC §12; bật bằng PIPELINE_BIGQUERY_PROJECT / _DATASET)
-# google-cloud-bigquery>=3.25
+# Cổng budget đọc metadata Parquet trên Azure Blob Storage (bật bằng PIPELINE_AZURE_STORAGE_*)
+azure-storage-blob>=12.19
+
+# Test
+pytest-cov>=5
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0

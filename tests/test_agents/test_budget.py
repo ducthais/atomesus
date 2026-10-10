@@ -76,7 +76,8 @@ def test_estimate_reads_every_api_page(monkeypatch):
     estimated = budget.estimate(spec, load_policy(), PipelineSettings(_env_file=None))
     payments = estimated["sources"]["payments"]
     assert 122 * 80 < payments < 122 * 200, "122 bản ghi JSON, mỗi bản khoảng một trăm byte"
-    assert estimated["bytes"] == 2 * payments and estimated["usd"] == pytest.approx(2 * payments / 1e12 * 6.25)
+    price = load_policy().budgets.pricing.usd_per_tb  # đơn giá đọc từ budgets.yml, không ghi cứng
+    assert estimated["bytes"] == 2 * payments and estimated["usd"] == pytest.approx(2 * payments / 1e12 * price)
 
 
 def test_deps_default_to_the_real_estimator():
