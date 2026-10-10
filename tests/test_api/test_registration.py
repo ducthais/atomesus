@@ -152,7 +152,8 @@ async def test_registration_rejects_wrong_expired_and_reused_codes(registration,
     assert reused.status_code == 404
 
     second = {**payload, "email": "expired@example.com", "username": "expired.user"}
-    requested = await client.post("/api/v1/pipeline/register", json=second)
+    # Lần đăng ký thứ hai đến từ IP khác: mỗi IP chỉ được 1 lần mỗi 10 phút.
+    requested = await client.post("/api/v1/pipeline/register", json=second, headers={"X-Forwarded-For": "198.51.100.7"})
     with store.database(config.store_path) as conn:
         conn.execute("UPDATE pending_registrations SET expires = 0 WHERE email = ?", (second["email"],))
     expired = await client.post(
@@ -217,3 +218,58 @@ async def test_only_admin_can_promote_registered_user_to_reviewer(registration):
         "/api/v1/pipeline/session", json={"username": "linh.data", "password": "StrongPass9"}
     )
     assert user_login.status_code == 200 and user_login.json()["role"] == "Reviewer"
+
+
+def payload_for(name):
+    return {"name": "Người dùng", "email": f"{name}@example.com", "username": name, "password": "StrongPass9"}
+
+
+@pytest.mark.asyncio
+async def test_one_registration_per_ip_every_ten_minutes(registration):
+    client, config = registration
+    assert (await client.post("/api/v1/pipeline/register", json=payload_for("first.user"))).status_code == 202
+
+    blocked = await client.post("/api/v1/pipeline/register", json=payload_for("second.user"))
+    assert blocked.status_code == 429
+    assert "10 phút" in blocked.json()["detail"]
+    assert 0 < int(blocked.headers["Retry-After"]) <= api.REGISTRATION_IP_SECONDS
+    assert store.get_pending_registration(config.store_path, "second.user@example.com") is None
+
+    other_ip = await client.post(
+        "/api/v1/pipeline/register", json=payload_for("second.user"), headers={"X-Forwarded-For": "203.0.113.9"}
+    )
+    assert other_ip.status_code == 202
+
+    with store.database(config.store_path) as conn:
+        conn.execute("UPDATE registration_ips SET at = at - ?", (api.REGISTRATION_IP_SECONDS + 1,))
+    assert (await client.post("/api/v1/pipeline/register", json=payload_for("third.user"))).status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_rejected_registration_does_not_use_the_ip_slot(registration, monkeypatch):
+    client, _config = registration
+    duplicate = {**payload_for("engineer"), "email": "x@example.com"}
+    assert (await client.post("/api/v1/pipeline/register", json=duplicate)).status_code == 409
+
+    def smtp_down(*_args):
+        raise OSError("SMTP down")
+
+    monkeypatch.setattr(api.email_delivery, "send_verification_code", smtp_down)
+    assert (await client.post("/api/v1/pipeline/register", json=payload_for("first.user"))).status_code == 503
+    monkeypatch.undo()
+    assert (await client.post("/api/v1/pipeline/register", json=payload_for("first.user"))).status_code == 202
+
+
+@pytest.mark.parametrize(
+    ("peer", "forwarded", "expected"),
+    [
+        ("172.18.0.5", "203.0.113.9", "203.0.113.9"),  # web/Caddy trong mạng Docker chuyển tiếp IP thật
+        ("172.18.0.5", "203.0.113.9, 172.18.0.2", "203.0.113.9"),
+        ("8.8.8.8", "1.2.3.4", "8.8.8.8"),  # client Internet tự gửi header: bỏ qua
+        ("172.18.0.5", "không-phải-ip", "172.18.0.5"),
+        ("172.18.0.5", "", "172.18.0.5"),
+    ],
+)
+def test_client_ip_trusts_forwarded_header_only_from_private_proxy(peer, forwarded, expected):
+    request = SimpleNamespace(client=SimpleNamespace(host=peer), headers={"x-forwarded-for": forwarded})
+    assert api.client_ip(request) == expected

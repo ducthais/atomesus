@@ -33,6 +33,8 @@ def database(path: str):
                 " name TEXT NOT NULL, password_hash TEXT NOT NULL, verification_hash TEXT NOT NULL,"
                 " expires REAL NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)"
             )
+            # Lần đăng ký gần nhất của mỗi IP (giới hạn 1 tài khoản / IP / cửa sổ, xem api.register).
+            conn.execute("CREATE TABLE IF NOT EXISTS registration_ips (ip TEXT PRIMARY KEY, at REAL NOT NULL)")
             yield conn
     finally:
         conn.close()
@@ -135,3 +137,27 @@ def increment_verification_attempts(path: str, email: str) -> None:
 def delete_pending_registration(path: str, email: str) -> None:
     with database(path) as conn:
         conn.execute("DELETE FROM pending_registrations WHERE email = ? COLLATE NOCASE", (email,))
+
+
+def claim_registration_slot(path: str, ip: str, window: float) -> float:
+    """Giữ lượt đăng ký của `ip`: trả 0 nếu được phép (và ghi lại), ngược lại số giây còn phải chờ.
+
+    Đọc và ghi trong cùng một giao dịch ghi để hai request đồng thời từ một IP không cùng lọt qua.
+    """
+    now = time.time()
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM registration_ips WHERE at <= ?", (now - window,))
+        row = conn.execute("SELECT at FROM registration_ips WHERE ip = ?", (ip,)).fetchone()
+        if row:
+            return row[0] + window - now
+        conn.execute("INSERT INTO registration_ips (ip, at) VALUES (?, ?)", (ip, now))
+    return 0.0
+
+
+def release_registration_slot(path: str, ip: str) -> None:
+    """Trả lại lượt khi yêu cầu không gửi được mã (lỗi SMTP), để người dùng thử lại ngay."""
+    with database(path) as conn:
+        conn.execute("DELETE FROM registration_ips WHERE ip = ?", (ip,))

@@ -4,6 +4,8 @@ Mỗi run ghi một `RunReport` vào sổ bằng chứng; đọc lại qua `GET 
 """
 
 import hashlib
+import ipaddress
+import math
 import secrets
 import smtplib
 import sqlite3
@@ -41,6 +43,7 @@ SAMPLE_ROWS = 20
 MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema nguồn."
 VERIFICATION_SECONDS = 600
 MAX_VERIFICATION_ATTEMPTS = 5
+REGISTRATION_IP_SECONDS = 600  # mỗi IP đăng ký được 1 tài khoản trong cửa sổ này
 
 
 @router.get("/users", dependencies=[Depends(current_user)])
@@ -121,13 +124,42 @@ def _verification_hash(email: str, code: str, salt: str | None = None) -> str:
     return f"{salt}${digest}"
 
 
+def client_ip(request: Request) -> str:
+    """IP của người dùng gửi request.
+
+    Bản deploy đi Caddy → web → backend: Caddy thay mọi X-Forwarded-For client tự gửi bằng IP thật, web chuyển tiếp
+    nó. Chỉ tin header khi kết nối tới từ địa chỉ nội bộ (proxy); kết nối trực tiếp từ Internet dùng IP kết nối.
+    """
+    peer = request.client.host if request.client else ""
+    try:
+        trusted = ipaddress.ip_address(peer).is_private
+    except ValueError:
+        trusted = False
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if trusted and forwarded:
+        try:
+            return str(ipaddress.ip_address(forwarded))
+        except ValueError:
+            pass
+    return peer or "unknown"
+
+
 @router.post("/register", status_code=202, dependencies=[Depends(demo_only)])
-def register(body: RegisterRequest, config: PipelineSettings = Depends(settings)):
-    """Gửi mã email; chưa tạo tài khoản cho tới khi mã được xác thực."""
+def register(body: RegisterRequest, request: Request, config: PipelineSettings = Depends(settings)):
+    """Gửi mã email; chưa tạo tài khoản cho tới khi mã được xác thực. Mỗi IP một lần mỗi REGISTRATION_IP_SECONDS."""
     if body.username in ACCOUNTS or body.username in USERS:
         raise HTTPException(409, "Tên đăng nhập này đã được sử dụng.")
     if store.email_or_username_exists(config.store_path, body.email, body.username):
         raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.")
+    ip = client_ip(request)
+    wait = store.claim_registration_slot(config.store_path, ip, REGISTRATION_IP_SECONDS)
+    if wait > 0:
+        raise HTTPException(
+            429,
+            f"Mỗi địa chỉ IP chỉ được đăng ký 1 tài khoản trong {REGISTRATION_IP_SECONDS // 60} phút. "
+            f"Vui lòng thử lại sau {math.ceil(wait / 60)} phút.",
+            headers={"Retry-After": str(math.ceil(wait))},
+        )
 
     code = f"{secrets.randbelow(1_000_000):06d}"
     store.save_pending_registration(
@@ -143,11 +175,13 @@ def register(body: RegisterRequest, config: PipelineSettings = Depends(settings)
         sent = email_delivery.send_verification_code(config, body.email, code)
     except (OSError, smtplib.SMTPException) as exc:
         store.delete_pending_registration(config.store_path, body.email)
+        store.release_registration_slot(config.store_path, ip)
         raise HTTPException(503, "Không gửi được email xác thực. Vui lòng thử lại sau.") from exc
 
     environment = get_settings().app_env
     if not sent and environment not in ("development", "test"):
         store.delete_pending_registration(config.store_path, body.email)
+        store.release_registration_slot(config.store_path, ip)
         raise HTTPException(503, "Máy chủ chưa được cấu hình SMTP để gửi email xác thực.")
     result: dict[str, str | int] = {"email": body.email, "expires_in": VERIFICATION_SECONDS}
     if not sent and environment in ("development", "test"):

@@ -1,6 +1,6 @@
 'use server';
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { refresh } from 'next/cache';
 import type { ColumnRule, RunReport, User } from '@/lib/postgres-api';
@@ -62,8 +62,11 @@ export async function signUp(_: RegistrationState, form: FormData): Promise<Regi
   if (MOCK) return { error: 'Đăng ký cần backend thật. Tắt CATALOG_MOCK rồi thử lại.' };
   let response: Response;
   try {
+    // Backend giới hạn đăng ký theo IP người dùng: chuyển tiếp IP mà Caddy ghi vào X-Forwarded-For.
+    const clientIp = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim();
     response = await fetch(`${BACKEND}/api/v1/pipeline/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, username, password }), cache: 'no-store',
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(clientIp ? { 'X-Forwarded-For': clientIp } : {}) },
+      body: JSON.stringify({ name, email, username, password }), cache: 'no-store',
     });
   } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
   if (!response.ok) {
