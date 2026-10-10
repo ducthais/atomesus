@@ -14,6 +14,9 @@ from src.spec.models import Spec
 
 STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
 FUNCTION_CALL = re.compile(r"\b([a-z_][a-z0-9_]*)\s*\(", re.IGNORECASE)
+# Tham số kiểu trong phép ép kiểu (`CAST(x AS decimal(18,2))`, `AS varchar(20)`) không phải lời gọi hàm. Chỉ bỏ qua khi
+# đứng ngay sau AS và bên trong chỉ có chữ số; `decimal(...)` ở chỗ khác hay có gì khác chữ số vẫn bị kiểm như hàm.
+CAST_TYPE_PARAMS = re.compile(r"\bas\s+(decimal|numeric|varchar|char)\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\)", re.IGNORECASE)
 FORBIDDEN_WORDS = re.compile(
     r"\b(select|insert|update|delete|drop|alter|create|attach|detach|copy|pragma|install|load|call|"
     r"export|import|set|grant|truncate|union)\b",
@@ -56,7 +59,7 @@ def expression_violations(spec: Spec) -> list[str]:
     if any("{" in s or "}" in s for s in _strings(spec.model_dump(by_alias=True))):
         violations.append("Spec có ký tự '{' hoặc '}' (cú pháp Jinja của dbt), không được phép")
     for where, expression in _expressions(spec):
-        code = STRING_LITERAL.sub("''", expression)
+        code = CAST_TYPE_PARAMS.sub(r"as \1", STRING_LITERAL.sub("''", expression))
         if ";" in code or "--" in code or "/*" in code:
             violations.append(f"{where}: không được chứa ';' hoặc comment")
         if word := FORBIDDEN_WORDS.search(code):

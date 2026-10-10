@@ -165,13 +165,69 @@ def test_invalid_spec_goes_back_to_codegen_with_specific_error():
 
 
 def test_spec_loop_stops_after_policy_limit():
-    no_formats = with_column(SPEC, 3, date_formats=None)  # chuỗi → date mà thiếu date_formats
-    llm = FakeLLM(PLAN, no_formats, no_formats, no_formats)
+    wrong = with_column(SPEC, 2, **{"from": "amount"})  # cột không có ở nguồn: lỗi không sửa tất định được
+    llm = FakeLLM(PLAN, wrong, wrong, wrong)
     state = run(llm)
     assert state["status"] == "NEEDS_HUMAN" and state["stage_reached"] == "static"
     assert state["attempts"]["spec"] == 3 and state["llm_calls"] == 4
     assert "max_spec_attempts" in state["error_trace"][-1]["error"]
     assert "generated_files" not in state
+
+
+@pytest.mark.parametrize("given", [None, []])
+def test_missing_date_formats_are_filled_from_sample_rows(given):
+    """LLM bỏ hoặc để rỗng `date_formats` cho cột chuỗi → ngày: suy tất định từ dòng mẫu, không tốn vòng sửa Spec."""
+    llm = FakeLLM(PLAN, with_column(SPEC, 3, date_formats=given))
+    state = run(llm)
+    assert state["status"] == "READY_FOR_REVIEW" and state["attempts"]["spec"] == 0 and state["llm_calls"] == 2
+    column = next(c for c in state["spec"]["sources"][0]["staging"]["columns"] if c["from"] == "ordered_at_text")
+    assert column["date_formats"] == ["%Y-%m-%d"]
+
+
+def test_semantic_conflict_wins_over_a_clarifying_question():
+    """Yêu cầu vừa có câu hỏi làm rõ vừa có thực thể hai nghĩa: chặn ngay, vì trả lời câu hỏi không gỡ được xung đột."""
+    asking = {**PLAN, "question": "Gộp theo tháng bằng cột nào?"}
+    state = build_graph(deps(FakeLLM(asking))).invoke(
+        {"run_id": "r1", "version": 1, "user_request": "Tổng tiền mỗi khách đã chi", "llm_calls": 0, "error_trace": []}
+    )
+    assert state["status"] == "BLOCKED_SEMANTIC_CONFLICT" and state["stage_reached"] == "resolve"
+    assert [g["name"] for g in state["gates"]] == ["semantic"] and state["llm_calls"] == 1
+
+
+def test_plan_whose_concepts_are_not_in_the_request_asks_what_to_measure():
+    """ "Báo cáo về bán hàng" không nói đo gì: LLM tự nghĩ ra chỉ số thì hệ thống hỏi lại, không chạy."""
+    invented = {**PLAN, "concepts": [{"term": "số tiền bán hàng", "column": "orders.amount_text"}]}
+    state = build_graph(deps(FakeLLM(invented))).invoke(
+        {"run_id": "r1", "version": 1, "user_request": "Làm báo cáo về bán hàng", "llm_calls": 0, "error_trace": []}
+    )
+    assert state["status"] == "NEEDS_HUMAN" and "chưa nêu cần đo chỉ số nào" in state["error_trace"][-1]["question"]
+
+
+def test_concepts_named_in_the_request_go_ahead():
+    from src.agents.nodes.planner import grounded
+
+    assert grounded("doanh thu", "Doanh thu theo ngày") and grounded("tổng tiền hoàn", "Tổng tiền hoàn của đơn")
+    assert grounded("khách hàng", "Theo từng khách hàng: tổng tiền đơn hàng")
+    assert not grounded("số tiền bán hàng", "Làm cho tôi một báo cáo về bán hàng")
+    planned = {**PLAN, "concepts": [{"term": "doanh thu", "column": "orders.amount_text"}]}
+    assert run(FakeLLM(planned, SPEC))["status"] == "READY_FOR_REVIEW"
+
+
+def test_plain_clarifying_question_still_waits_for_the_user():
+    asking = {**PLAN, "question": "Đo chỉ số nào?"}
+    state = run(FakeLLM(asking))
+    assert state["status"] == "NEEDS_HUMAN" and state["error_trace"][-1]["question"] == "Đo chỉ số nào?"
+
+
+def test_mixed_date_styles_get_every_format_they_need():
+    from src.agents.nodes.codegen import _fix_date_formats, covering_formats
+
+    refunded_at = ["2026-01-05", "2026-01-21", "21/01/2026", "02/02/2026", "15/02/2026", "không rõ"]
+    # 02/02/2026 parse được cả ngày/tháng lẫn tháng/ngày; 21/01/2026 chỉ là ngày/tháng → chọn %d/%m/%Y, không %m/%d/%Y
+    assert set(covering_formats(refunded_at)) == {"%Y-%m-%d", "%d/%m/%Y"}
+    column = {"from": "refunded_at", "as": "refunded_date", "type": "date", "date_formats": ["%Y-%m-%d"]}
+    _fix_date_formats(column, refunded_at)
+    assert column["date_formats"] == ["%Y-%m-%d", "%d/%m/%Y"], "giữ định dạng LLM chọn, thêm định dạng còn thiếu"
 
 
 def test_llm_call_cap_comes_from_budgets():
