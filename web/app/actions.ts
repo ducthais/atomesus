@@ -3,7 +3,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { refresh } from 'next/cache';
-import type { ColumnRule, RunReport } from '@/lib/postgres-api';
+import type { ColumnRule, RunReport, User } from '@/lib/postgres-api';
 import { chatPayload, type ChatResponse } from '@/lib/studio';
 import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, discoverObjects } from '@/lib/catalog/source';
 import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections';
@@ -11,6 +11,7 @@ import type { Discovery } from '@/lib/catalog/types';
 import { toReconcile, type Reconcile } from '@/lib/catalog/explain';
 
 export type ActionState = { error?: string; message?: string } | null;
+export type RegistrationState = { error?: string; email?: string; developmentCode?: string } | null;
 const failure = (err: unknown): ActionState => ({ error: err instanceof Error ? err.message : 'Thao tác thất bại. Vui lòng thử lại.' });
 const MAX_AGE = 28800; // = SESSION_SECONDS của backend
 // Bản build (deploy sau HTTPS) chỉ gửi cookie qua HTTPS; `next dev` chạy http nên để tắt.
@@ -26,6 +27,7 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
     const accounts: Record<string, { id: string; password: string }> = {
       engineer: { id: 'minh', password: process.env.PIPELINE_ENGINEER_PASSWORD || 'Engineer@123' },
       reviewer: { id: 'an', password: process.env.PIPELINE_REVIEWER_PASSWORD || 'Reviewer@123' },
+      admin: { id: 'admin', password: process.env.PIPELINE_ADMIN_PASSWORD || 'Admin@123' },
     };
     const account = accounts[username];
     if (!account || account.password !== password) return { error: 'Tên đăng nhập hoặc mật khẩu không đúng.' };
@@ -43,13 +45,15 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
   redirect('/');
 }
 
-/** Đăng ký tài khoản Engineer mới; backend băm mật khẩu, lưu SQLite và trả phiên đăng nhập ngay. */
-export async function signUp(_: ActionState, form: FormData): Promise<ActionState> {
+/** Gửi OTP email; backend chỉ giữ bản băm mật khẩu trong yêu cầu đăng ký tạm thời. */
+export async function signUp(_: RegistrationState, form: FormData): Promise<RegistrationState> {
   const name = String(form.get('name') ?? '').trim();
+  const email = String(form.get('email') ?? '').trim().toLowerCase();
   const username = String(form.get('username') ?? '').trim().toLowerCase();
   const password = String(form.get('password') ?? '');
   const confirmPassword = String(form.get('confirm_password') ?? '');
   if (name.length < 2) return { error: 'Họ tên phải có ít nhất 2 ký tự.' };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return { error: 'Email không hợp lệ.' };
   if (!/^[a-z][a-z0-9_.-]{2,31}$/.test(username)) return { error: 'Tên đăng nhập gồm 3–32 ký tự: chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang; bắt đầu bằng chữ.' };
   if (password !== confirmPassword) return { error: 'Mật khẩu nhập lại không khớp.' };
   if (password.length < 8 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
@@ -59,13 +63,33 @@ export async function signUp(_: ActionState, form: FormData): Promise<ActionStat
   let response: Response;
   try {
     response = await fetch(`${BACKEND}/api/v1/pipeline/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, username, password }), cache: 'no-store',
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, username, password }), cache: 'no-store',
     });
   } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = body?.detail;
     return { error: typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((item: { msg: string }) => item.msg).join('; ') : 'Đăng ký thất bại.' };
+  }
+  const result = await response.json() as { email: string; development_code?: string };
+  return { email: result.email, developmentCode: result.development_code };
+}
+
+/** Xác thực OTP rồi nhận cookie phiên của tài khoản Engineer vừa được tạo. */
+export async function verifySignUp(_: ActionState, form: FormData): Promise<ActionState> {
+  const email = String(form.get('email') ?? '').trim().toLowerCase();
+  const code = String(form.get('code') ?? '').trim();
+  if (!email || !/^\d{6}$/.test(code)) return { error: 'Nhập mã xác thực gồm 6 chữ số.' };
+  if (MOCK) return { error: 'Đăng ký cần backend thật. Tắt CATALOG_MOCK rồi thử lại.' };
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND}/api/v1/pipeline/register/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, code }), cache: 'no-store',
+    });
+  } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    return { error: typeof body?.detail === 'string' ? body.detail : 'Xác thực email thất bại.' };
   }
   const token = response.headers.getSetCookie().map(cookie => cookie.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
   if (!token) return { error: 'Backend không trả cookie phiên.' };
@@ -79,6 +103,22 @@ export async function signOut(): Promise<void> {
   jar.delete(SESSION_COOKIE);
   jar.delete(CONNECTIONS_COOKIE);
   redirect('/');
+}
+
+/** Admin cấp hoặc thu hồi quyền Reviewer; kiểm tra lại phiên ngay trong Server Action và tại backend. */
+export async function updateUserRole(userId: string, role: 'Engineer' | 'Reviewer'): Promise<ActionState> {
+  if (MOCK) return { message: `Mock: đã đổi vai trò thành ${role}.` };
+  try {
+    const actor = await backend<User>('/pipeline/session');
+    if (actor.role !== 'Admin') return { error: 'Chỉ Admin được thay đổi vai trò tài khoản.' };
+    await backend<User>(`/pipeline/users/${encodeURIComponent(userId)}/role`, {
+      method: 'PATCH', body: JSON.stringify({ role }),
+    });
+    refresh();
+    return { message: `Đã cập nhật vai trò thành ${role}.` };
+  } catch (err) {
+    return failure(err);
+  }
 }
 
 /** Thêm / bỏ một nguồn khỏi phiên kết nối. Chỉ ghi cookie khi danh sách thật sự đổi. */

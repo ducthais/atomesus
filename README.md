@@ -154,9 +154,12 @@ Kiểm tra mọi thứ đã sẵn sàng (phải ra "Sẵn sàng demo."): `python
 
 - `engineer` / `Engineer@123` — **Minh · Engineer**, tạo và chạy thử pipeline.
 - `reviewer` / `Reviewer@123` — **An · Reviewer**, kiểm tra và phê duyệt.
+- `admin` / `Admin@123` — **Quản trị viên · Admin**, quản lý tài khoản và cấp quyền Reviewer.
 
-Hoặc chọn **Đăng ký** trên màn hình đăng nhập để tạo tài khoản Engineer mới. Tài khoản được lưu trong SQLite,
-mật khẩu chỉ lưu dạng PBKDF2 có salt; quyền Reviewer không thể tự đăng ký vì có quyền phê duyệt và deploy pipeline.
+Hoặc chọn **Đăng ký** trên màn hình đăng nhập, nhập email và xác nhận mã OTP 6 số để tạo tài khoản Engineer mới.
+Mã hết hạn sau 10 phút và bị khóa sau 5 lần nhập sai. Tài khoản chỉ được tạo sau khi xác thực; mật khẩu chỉ lưu dạng
+PBKDF2 có salt. Quyền Reviewer không thể tự đăng ký mà chỉ được Admin cấp vì có quyền phê duyệt và deploy pipeline.
+Development/test không cấu hình SMTP sẽ hiện mã trên giao diện; staging cần đặt các biến `PIPELINE_SMTP_*` trong `.env`.
 
 Muốn đổi vai trò, đăng xuất rồi đăng nhập bằng tài khoản còn lại. Có thể đổi hai mật khẩu mặc định bằng
 `PIPELINE_ENGINEER_PASSWORD` và `PIPELINE_REVIEWER_PASSWORD` trong `.env`.
@@ -239,7 +242,9 @@ Tiền tố `/api/v1`, đăng nhập bằng cookie phiên (`POST /pipeline/sessi
 | Method | Path | Làm gì |
 |---|---|---|
 | POST | `/agent/runs` | Gửi yêu cầu; trả ngay, agent lập kế hoạch ở nền rồi dừng chờ xác nhận (DRAFT, stage `confirm`) |
-| POST | `/pipeline/register` | Đăng ký tài khoản Engineer và tạo phiên đăng nhập ngay |
+| POST | `/pipeline/register` | Gửi mã xác thực tới email đăng ký |
+| POST | `/pipeline/register/verify` | Xác thực mã, tạo tài khoản Engineer và phiên đăng nhập |
+| PATCH | `/pipeline/users/{id}/role` | Admin cấp hoặc thu hồi quyền Reviewer của tài khoản đăng ký |
 | POST | `/agent/runs/{id}/confirm-plan` | Engineer sửa (tùy chọn) và xác nhận kế hoạch; body `{review_mapping, plan?}` |
 | POST | `/agent/runs/{id}/continue` | Chạy thử bản nháp với Spec đã xác nhận / sửa |
 | GET | `/runs`, `/runs/{id}` | Sổ bằng chứng |

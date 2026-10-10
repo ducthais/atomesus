@@ -18,7 +18,7 @@ export default async function Layout({ children }: { children: React.ReactNode }
   return <html lang="vi"><body>
     <a href="#main" className="skip-link">Bỏ qua điều hướng</a>
     <div className="shell">
-      <Sidebar reviewCount={catalog.stats().awaitingReview} live={catalog.live} backend={BACKEND} />
+      <Sidebar reviewCount={catalog.stats().awaitingReview} live={catalog.live} backend={BACKEND} role={user.role} />
       <div className="main">
         <header className="topbar">
           <form action="/" className="global-search" role="search">

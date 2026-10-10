@@ -13,8 +13,9 @@ from src.pipeline.settings import PipelineSettings
 USERS = {
     "minh": {"id": "minh", "name": "Minh", "role": "Engineer"},
     "an": {"id": "an", "name": "An", "role": "Reviewer"},
+    "admin": {"id": "admin", "name": "Quản trị viên", "role": "Admin"},
 }
-ACCOUNTS = {"engineer": "minh", "reviewer": "an"}
+ACCOUNTS = {"engineer": "minh", "reviewer": "an", "admin": "admin"}
 COOKIE = "pipeline_session"
 # Cookie phải gửi kèm mọi API dưới /api/v1, không chỉ /pipeline.
 COOKIE_PATH = "/api/v1"

@@ -15,11 +15,11 @@ npm test
 npm run build
 ```
 
-Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy hệ thống"). Đăng nhập bằng `engineer` / `Engineer@123` hoặc `reviewer` / `Reviewer@123`; muốn đổi vai trò thì đăng xuất và đăng nhập lại. Tab **Đăng ký** tạo tài khoản Engineer mới; quyền Reviewer không được tự cấp qua form công khai.
+Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy hệ thống"). Đăng nhập bằng `engineer` / `Engineer@123`, `reviewer` / `Reviewer@123` hoặc `admin` / `Admin@123`; muốn đổi vai trò thì đăng xuất và đăng nhập lại. Tab **Đăng ký** gửi mã xác thực email trước khi tạo tài khoản Engineer; quyền Reviewer chỉ được cấp từ màn **Tài khoản** của Admin.
 
 **Phiên kết nối nguồn:** bấm Kết nối thành công thì tên nguồn được nhớ trong cookie `catalog_connections` (chỉ tên nguồn, không có credential, hết hạn cùng phiên đăng nhập 8 giờ). Mở lại form Yêu cầu pipeline hay trang Quan hệ thì tự kết nối lại (danh sách bảng vẫn đọc mới từ nguồn). Nút Ngắt hoặc Đăng xuất thì quên.
 
-**Phiên đăng nhập:** Server Action gửi username/password tới `POST /pipeline/session`. Đăng ký gửi tên, username và password tới `POST /pipeline/register`; backend lưu tài khoản trong SQLite với PBKDF2 + salt và tạo phiên ngay. Backend đặt cookie HttpOnly `pipeline_session` với `Path=/api/v1`; action lấy token và đặt lại cookie với `Path=/` để mọi lời gọi backend từ server (`lib/catalog/source.ts`) gửi kèm token này. Mật khẩu hai tài khoản mẫu có thể đổi bằng `PIPELINE_ENGINEER_PASSWORD` / `PIPELINE_REVIEWER_PASSWORD`.
+**Phiên đăng nhập:** Server Action gửi username/password tới `POST /pipeline/session`. Đăng ký gửi tên, email, username và password tới `POST /pipeline/register`; backend gửi OTP 6 số và chỉ tạo tài khoản khi `POST /pipeline/register/verify` xác thực thành công. Backend lưu mật khẩu bằng PBKDF2 + salt, đặt cookie HttpOnly `pipeline_session` với `Path=/api/v1`; action lấy token và đặt lại cookie với `Path=/` để mọi lời gọi backend từ server (`lib/catalog/source.ts`) gửi kèm token này. SMTP cấu hình bằng `PIPELINE_SMTP_*`; development không có SMTP sẽ hiện mã ngay trên UI.
 
 ## Màn hình
 

@@ -378,6 +378,8 @@ a.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
 .auth-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .login-form { display: grid; gap: 14px; margin-top: 6px; }
 .login-form .button { justify-content: center; margin-top: 2px; padding: 11px 16px; }
+.verification-intro { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; padding: 12px; border: 1px solid var(--rule); border-radius: var(--r-card); background: var(--surface-2); }
+.verification-intro p { margin: 4px 0 0; font-size: 13px; }
 .login-help { color: var(--muted); font-size: 12px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -680,4 +682,8 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 .monitor-alerts li:last-child { border-bottom: 0; }
 .monitor-alerts p { margin: 4px 0; }
 @media (max-width: 760px) { .monitor-summary { grid-template-columns: 1fr; } }
+.admin-role-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 260px; }
+.admin-role-control select { min-width: 130px; }
+.admin-role-control small { display: inline-flex; align-items: center; gap: 4px; }
+.success-text { color: var(--good); }
 .row-muted td { color: var(--ink-3, #888); }

@@ -53,6 +53,7 @@ class RegisterRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=2, max_length=80)
+    email: str = Field(min_length=5, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
     username: str = Field(min_length=3, max_length=32, pattern=r"^[a-z][a-z0-9_.-]+$")
     password: str = Field(min_length=8, max_length=128)
 
@@ -66,6 +67,11 @@ class RegisterRequest(BaseModel):
     def _clean_username(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def _clean_email(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
     @field_validator("password")
     @classmethod
     def _strong_password(cls, value: str) -> str:
@@ -76,3 +82,21 @@ class RegisterRequest(BaseModel):
         if not any(char.isdigit() for char in value):
             raise ValueError("Mật khẩu phải có ít nhất một chữ số.")
         return value
+
+
+class VerifyRegistrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=5, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    code: str = Field(pattern=r"^\d{6}$")
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _clean_email(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
+
+class RoleUpdateRequest(BaseModel):
+    """Admin chỉ cấp các vai trò nghiệp vụ; không thể tạo thêm Admin qua API."""
+
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["Engineer", "Reviewer"]
