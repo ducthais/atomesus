@@ -49,9 +49,9 @@ PIPELINE_BRANCH_PREFIX = "pipeline/"
 CI_FAILED = frozenset({"failure", "cancelled", "timed_out"})
 DETAIL_LIMIT = 2000
 DELIVERY_LIMIT = 200
-# Mã commit Git: SHA-1 (40) hoặc SHA-256 (64) ký tự hex thường.
-GIT_SHA = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-DUPLICATE ={"status": "duplicate", "detail": "Delivery này đã được xử lý."}
+# Mã commit GitHub theo hợp đồng callback: đúng 40 ký tự hex.
+GIT_SHA = r"^[0-9a-fA-F]{40}$"
+DUPLICATE = {"status": "duplicate", "detail": "Delivery này đã được xử lý."}
 
 
 class DeployerSettings(BaseSettings):
@@ -74,7 +74,12 @@ async def _signed_body(request: Request, secret: SecretStr, header: str, secret_
     if not key.strip():
         raise HTTPException(503, f"Chưa cấu hình {secret_name} ở backend nên chưa nhận sự kiện này.")
     signature = request.headers.get(header, "")
-    if not signature.startswith(SIGNATURE_PREFIX) or len(signature) != len(SIGNATURE_PREFIX) + 64:
+    digest = signature.removeprefix(SIGNATURE_PREFIX)
+    if (
+        not signature.startswith(SIGNATURE_PREFIX)
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+    ):
         raise HTTPException(401, f"Thiếu chữ ký {header} hoặc chữ ký sai định dạng.")
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
@@ -126,7 +131,7 @@ def _signal(event: str, payload: dict, repo: str) -> _Signal | str:
     if event == "pull_request":
         pull = payload.get("pull_request")
         if action != "closed":
-            return f"pull_request {action} không làm đổi trạng thái run."
+            return "Sự kiện pull_request chưa đóng không làm đổi trạng thái run."
         if not str(_field(pull, "head", "ref") or "").startswith(PIPELINE_BRANCH_PREFIX):
             return "Pull request không đến từ nhánh pipeline/..."
         merged = _field(pull, "merged") is True
@@ -142,12 +147,12 @@ def _signal(event: str, payload: dict, repo: str) -> _Signal | str:
     if event in ("check_suite", "workflow_run"):
         suite = payload.get(event)
         if action != "completed":
-            return f"{event} {action} chưa có kết luận CI."
+            return "Sự kiện CI chưa hoàn tất."
         if not str(_field(suite, "head_branch") or "").startswith(PIPELINE_BRANCH_PREFIX):
             return "CI không chạy trên nhánh pipeline/..."
         conclusion = _field(suite, "conclusion")
-        if conclusion != "success" and conclusion not in CI_FAILED:
-            return f"Kết luận CI {conclusion} không làm đổi trạng thái run."
+        if not isinstance(conclusion, str) or (conclusion != "success" and conclusion not in CI_FAILED):
+            return "Kết luận CI không làm đổi trạng thái run."
         return _Signal(
             kind="ci",
             repo=repo,
@@ -157,7 +162,7 @@ def _signal(event: str, payload: dict, repo: str) -> _Signal | str:
             conclusion=conclusion,
             url=_field(suite, "html_url"),
         )
-    return f"Sự kiện {event or 'không rõ'} không liên quan đến run."
+    return "Sự kiện không liên quan đến run."
 
 
 def _statuses(signal: _Signal) -> tuple[RunStatus, ...]:
@@ -271,7 +276,7 @@ def replay_pending(
 
     updated = replay_webhook_deliveries(store_path, report.run_id, report.deployment.head_sha, apply)
     if updated is not None:
-        log.info("Áp sự kiện GitHub đến trước Deploy cho run %s: %s", report.run_id, updated.status)
+        log.info("Áp sự kiện GitHub đến trước Deploy: %s", updated.status)
     # Run về P4 thì không còn APPROVED nên sự kiện giữ sau đó không khớp nữa: nhiều nhất một job.
     return updated, jobs[0] if updated is not None and jobs else None
 
@@ -282,6 +287,7 @@ async def github_webhook(
     response: Response,
     background: BackgroundTasks,
     github: GithubSettings = Depends(github_settings),
+    deployer: DeployerSettings = Depends(deployer_settings),
     config: PipelineSettings = Depends(settings),
     make_deps: Callable[[], Any] = Depends(rework_deps),
 ) -> dict:
@@ -300,13 +306,29 @@ async def github_webhook(
     delivery = request.headers.get("x-github-delivery", "").strip()
     if not delivery or len(delivery) > DELIVERY_LIMIT:
         raise HTTPException(400, "Thiếu X-GitHub-Delivery hoặc giá trị không hợp lệ.")
+    secrets = (github.webhook_secret, deployer.secret, github.token)
+    if _redact(event, *secrets) != event or _redact(delivery, *secrets) != delivery:
+        raise HTTPException(400, "Header sự kiện hoặc delivery không hợp lệ.")
     if str(_field(payload, "repository", "full_name") or "").lower() != repo.lower():
         signal: _Signal | str = "Sự kiện không thuộc repo pipeline đã cấu hình."
     else:
         try:
             signal = _signal(event, payload, repo)
         except ValidationError:
-            raise HTTPException(400, f"Nội dung sự kiện {event} thiếu trường hoặc sai kiểu.") from None
+            raise HTTPException(400, "Nội dung sự kiện thiếu trường hoặc sai kiểu.") from None
+        if isinstance(signal, _Signal):
+            # Không sửa định danh dùng để khớp run; actor / URL có thể mang chuỗi tùy ý, phải che trước khi lưu.
+            if any(
+                _redact(value, *secrets) != value
+                for value in (signal.repo, signal.head_sha, signal.merge_commit_sha or "")
+            ):
+                raise HTTPException(400, "Định danh repo hoặc commit của sự kiện không hợp lệ.")
+            signal = signal.model_copy(
+                update={
+                    "actor": _redact(signal.actor, *secrets),
+                    "url": _redact(signal.url, *secrets) if signal.url else None,
+                }
+            )
     if isinstance(signal, str):
         # Sự kiện bỏ qua cũng ghi delivery: GitHub gửi lại thì trả "duplicate" như mọi delivery khác.
         outcome, _ = await run_in_threadpool(record_webhook_delivery, config.store_path, delivery, event)
@@ -332,7 +354,12 @@ async def github_webhook(
         }
     if job is not None:
         background.add_task(job)
-    return {"status": "applied", "run_id": updated.run_id, "version": updated.version, "run_status": updated.status}
+    return {
+        "status": "applied",
+        "run_id": _redact(updated.run_id, *secrets),
+        "version": updated.version,
+        "run_status": updated.status,
+    }
 
 
 class DeployCallback(BaseModel):
@@ -343,8 +370,7 @@ class DeployCallback(BaseModel):
     version: int = Field(ge=1)
     files_hash: str = Field(min_length=1, max_length=200)
     model_name: str = Field(min_length=1, max_length=200)
-    # Commit đã cài, rỗng nếu deployer lỗi trước khi lấy được code; chỉ nhận mã commit Git để không ghi chuỗi tùy ý.
-    commit_sha: str = Field(pattern=f"{GIT_SHA}|^$")
+    commit_sha: str = Field(pattern=GIT_SHA)
     status: Literal["deployed", "failed"]
     detail: str = ""
     at: datetime
@@ -352,9 +378,20 @@ class DeployCallback(BaseModel):
 
 def _redact(text: str, *secrets: SecretStr) -> str:
     for secret in secrets:
-        if value := secret.get_secret_value().strip():
+        value = secret.get_secret_value()
+        if value.strip():
             text = text.replace(value, "***")
     return text
+
+
+def _contains_secret(value: Any, secrets: tuple[SecretStr, ...]) -> bool:
+    if isinstance(value, str):
+        return _redact(value, *secrets) != value
+    if isinstance(value, dict):
+        return any(_contains_secret(item, secrets) for pair in value.items() for item in pair)
+    if isinstance(value, list):
+        return any(_contains_secret(item, secrets) for item in value)
+    return False
 
 
 def _apply_callback(store_path: str, result: DeployCallback, secrets: tuple[SecretStr, ...]) -> RunReport:
@@ -363,6 +400,8 @@ def _apply_callback(store_path: str, result: DeployCallback, secrets: tuple[Secr
 
     def change(current: RunReport) -> RunReport | None:
         seen.append(current)
+        if _contains_secret(current.model_dump(mode="json"), secrets):
+            raise HTTPException(409, "Bản lưu run chứa dữ liệu nhạy cảm nên chưa nhận kết quả deploy.")
         approval = current.approval
         model_name = _field(current.spec, "transform", "model_name")
         if (
@@ -417,9 +456,13 @@ async def deployer_callback(
         fields = ", ".join(".".join(str(p) for p in error["loc"]) or "body" for error in exc.errors())
         raise HTTPException(422, f"Callback không đúng hợp đồng (trường lỗi: {fields}).") from None
     secrets = (deployer.secret, github.webhook_secret, github.token)
-    if _redact(result.commit_sha, *secrets) != result.commit_sha:
-        # Secret dạng hex trùng mã commit: không ghi vào RunReport hay trả lại trong response.
+    if _redact(result.commit_sha, *secrets) != result.commit_sha or any(
+        result.commit_sha in secret.get_secret_value() for secret in secrets
+    ):
+        # Không nhận cả phần mã commit bị cắt từ secret dạng hex.
         raise HTTPException(422, "Callback không đúng hợp đồng (trường lỗi: commit_sha).")
+    if any(_redact(value, *secrets) != value for value in (result.run_id, result.files_hash, result.model_name)):
+        raise HTTPException(409, "Định danh trong callback không khớp chữ ký duyệt của run.")
     report = await run_in_threadpool(_apply_callback, config.store_path, result, secrets)
     log.info("Deployer báo %s cho run %s version %s", result.status, result.run_id, result.version)
     return report

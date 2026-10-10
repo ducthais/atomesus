@@ -743,3 +743,226 @@ def test_deploy_rework_resets_attempts_and_drops_signature_without_writing(appro
     assert started.attempts.spec == 0 and started.approval is None and started.files_hash is None
     assert started.spec_history[-1]["reason"] == "CI đỏ"
     assert stored(store_path) == before, "webhook tự ghi started cùng giao dịch với delivery"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["deployed", "failed"])
+@pytest.mark.parametrize("order", ["merge-first", "callback-first", "concurrent"])
+async def test_merge_and_callback_preserve_both_results(client, approved, store_path, status, order):
+    import asyncio
+
+    async def merge():
+        return await send(client, "pull_request", pull_closed(merged=True))
+
+    async def deploy():
+        return await callback(client, callback_body(approved, status, detail="reload lỗi"))
+
+    if order == "concurrent":
+        responses = await asyncio.gather(merge(), deploy())
+    elif order == "merge-first":
+        responses = [await merge(), await deploy()]
+    else:
+        responses = [await deploy(), await merge()]
+
+    assert all(response.status_code == 200 for response in responses)
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == ("DEPLOYED" if status == "deployed" else "DEPLOY_FAILED")
+    assert report.version == approved.version and report.approval == approved.approval
+    assert report.deployment.state == "merged" and report.deployment.merged_at
+    assert report.deployment.merge_commit_sha == "m" * 40
+    if status == "failed":
+        assert report.error_trace[-1]["stage"] == "deploy"
+    else:
+        assert report.deployment.deployed_commit_sha == "c" * 40
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["deployed", "failed"])
+@pytest.mark.parametrize("conclusion", ["success", "failure", "cancelled", "timed_out"])
+async def test_ci_after_callback_preserves_status(client, approved, store_path, status, conclusion):
+    assert (await callback(client, callback_body(approved, status))).status_code == 200
+
+    response = await send(client, "workflow_run", ci("workflow_run", conclusion))
+
+    assert response.status_code == 200
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == ("DEPLOYED" if status == "deployed" else "DEPLOY_FAILED")
+    assert report.version == approved.version and report.approval == approved.approval
+    assert report.deployment.ci_conclusion == conclusion
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_delivery_applies_once(client, approved, store_path):
+    import asyncio
+
+    responses = await asyncio.gather(
+        send(client, "pull_request", pull_closed(merged=True)),
+        send(client, "pull_request", pull_closed(merged=True)),
+    )
+
+    assert all(response.status_code == 200 for response in responses)
+    assert sorted(response.json()["status"] for response in responses) == ["applied", "duplicate"]
+    assert get_run_report(store_path, RUN_ID).deployment.state == "merged"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("commit_sha", ["", "a" * 39, "a" * 41, "a" * 64, "g" * 40, "a" * 40 + "\n"])
+async def test_callback_requires_exactly_forty_hex_characters(client, approved, store_path, commit_sha):
+    before = stored(store_path)
+
+    response = await callback(client, callback_body(approved, commit_sha=commit_sha))
+
+    assert response.status_code == 422 and "commit_sha" in response.json()["detail"]
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_callback_accepts_hexadecimal_sha(client, approved, store_path):
+    response = await callback(client, callback_body(approved, commit_sha="Ab" * 20))
+
+    assert response.status_code == 200
+    assert get_run_report(store_path, RUN_ID).deployment.deployed_commit_sha == "Ab" * 20
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["run_id", "files_hash", "model_name"])
+@pytest.mark.parametrize("secret", [SECRET, DEPLOYER_SECRET])
+async def test_callback_identifiers_cannot_echo_secrets(client, approved, store_path, caplog, field, secret):
+    caplog.set_level(logging.DEBUG)
+    before = stored(store_path)
+
+    response = await callback(client, callback_body(approved, **{field: secret}))
+
+    assert response.status_code == 409
+    assert stored(store_path) == before and secret not in response.text and secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_callback_redacts_all_configured_secrets_from_detail(client, approved, store_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    detail = f"reload lỗi: {SECRET}, {DEPLOYER_SECRET}, {TOKEN}"
+
+    response = await callback(client, callback_body(approved, "failed", detail=detail))
+
+    assert response.status_code == 200
+    for secret in (SECRET, DEPLOYER_SECRET, TOKEN):
+        assert secret not in stored(store_path) and secret not in response.text and secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_callback_does_not_return_a_secret_already_in_report(client, approved, store_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    tainted = approved.model_copy(update={"error_trace": [{"stage": "deploy", "error": DEPLOYER_SECRET}]})
+    save_run_report(store_path, tainted)
+    before = stored(store_path)
+
+    response = await callback(client, callback_body(approved))
+
+    assert response.status_code == 409
+    assert stored(store_path) == before
+    assert DEPLOYER_SECRET not in response.text and DEPLOYER_SECRET not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["closed", "ci"])
+async def test_github_redacts_actor_and_ci_url_before_rework(client, approved, store_path, caplog, kind):
+    caplog.set_level(logging.DEBUG)
+    if kind == "closed":
+        event, payload = "pull_request", pull_closed(merged=False)
+    else:
+        event, payload = "workflow_run", ci("workflow_run", "failure")
+        payload[event]["html_url"] += f"?secret={SECRET}&key={DEPLOYER_SECRET}"
+    payload["sender"]["login"] = f"{SECRET}-{DEPLOYER_SECRET}"
+
+    response = await send(client, event, payload)
+
+    assert response.status_code == 200
+    report = get_run_report(store_path, RUN_ID)
+    assert report.version == 4
+    for secret in (SECRET, DEPLOYER_SECRET):
+        assert secret not in stored(store_path) and secret not in response.text and secret not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["head_sha", "merge_commit_sha", "event", "delivery"])
+@pytest.mark.parametrize("secret", [SECRET, DEPLOYER_SECRET])
+async def test_github_rejects_secrets_in_identifiers(client, approved, store_path, caplog, field, secret):
+    caplog.set_level(logging.DEBUG)
+    before = stored(store_path)
+    payload = pull_closed(merged=True)
+    if field == "head_sha":
+        payload["pull_request"]["head"]["sha"] = secret
+    elif field == "merge_commit_sha":
+        payload["pull_request"]["merge_commit_sha"] = secret
+
+    response = await send(
+        client,
+        secret if field == "event" else "pull_request",
+        payload,
+        delivery=secret if field == "delivery" else "delivery-1",
+    )
+
+    assert response.status_code == 400
+    assert stored(store_path) == before and secret not in response.text and secret not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["action", "conclusion"])
+async def test_ignored_github_fields_do_not_echo_secrets(client, approved, store_path, field):
+    payload = ci("check_suite", "success")
+    if field == "action":
+        payload[field] = SECRET
+    else:
+        payload["check_suite"][field] = DEPLOYER_SECRET
+
+    response = await send(client, "check_suite", payload)
+
+    assert response.status_code == 202
+    assert SECRET not in response.text and DEPLOYER_SECRET not in response.text
+
+
+@pytest.mark.asyncio
+async def test_invalid_ci_conclusion_type_is_ignored(client, approved):
+    payload = ci("workflow_run", "success")
+    payload["workflow_run"]["conclusion"] = {"unexpected": "value"}
+
+    response = await send(client, "workflow_run", payload)
+
+    assert response.status_code == 202
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header", ["X-Hub-Signature-256", "X-Atomesus-Signature"])
+@pytest.mark.parametrize(
+    ("secret", "signature", "status"),
+    [("", "", 503), (SECRET, "", 401), (SECRET, "sha256=" + "z" * 64, 401)],
+)
+async def test_authentication_configuration_and_header_checked_before_body(header, secret, signature, status):
+    from fastapi import HTTPException, Request
+
+    from src.api.webhooks import _signed_body
+
+    async def receive():
+        pytest.fail("Không được đọc nội dung khi thiếu cấu hình hoặc header chữ ký không hợp lệ.")
+
+    request = Request({"type": "http", "headers": [(header.lower().encode(), signature.encode())]}, receive=receive)
+
+    with pytest.raises(HTTPException) as exc:
+        await _signed_body(request, SecretStr(secret), header, "WEBHOOK_SECRET")
+
+    assert exc.value.status_code == status
+
+
+@pytest.mark.asyncio
+async def test_chunked_body_over_one_megabyte_returns_413(client, approved):
+    async def chunks():
+        yield b"x" * (1024 * 1024)
+        yield b"x"
+
+    response = await client.post(
+        WEBHOOK,
+        content=chunks(),
+        headers={"X-GitHub-Event": "ping", "X-GitHub-Delivery": "chunked", "X-Hub-Signature-256": sign(b"x")},
+    )
+
+    assert response.status_code == 413
