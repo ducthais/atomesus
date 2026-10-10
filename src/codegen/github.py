@@ -1,13 +1,15 @@
 """Client GitHub tối thiểu cho P16 (SPEC §9.5): mở pull request vào repo pipeline, không bao giờ merge.
 
-Chỉ gọi đúng các API cần: đọc repo, ref, commit và tree; tạo tree / commit / ref; liệt kê và tạo pull request (bất
-biến 8, SPEC §19). Token là fine-grained PAT chỉ cấp cho repo pipeline (Contents RW, Pull requests RW, Metadata R);
-chốt chặn merge thật là branch protection của repo đó.
+Chỉ gọi đúng các API cần: đọc repo, ref, commit, tree và blob; tạo tree / commit / ref; liệt kê và tạo pull request
+(bất biến 8, SPEC §19). Token là fine-grained PAT chỉ cấp cho repo pipeline (Contents RW, Pull requests RW, Metadata
+R); chốt chặn merge thật là branch protection của repo đó.
 
 Cấu hình nằm riêng ở đây, không nằm trong PipelineSettings: PipelineSettings được đưa vào agent và sandbox, token
 GitHub không đi theo. Token không bao giờ ghi vào log, response, RunReport hay error_trace.
 """
 
+import base64
+import hashlib
 import logging
 import re
 from typing import Any
@@ -45,6 +47,12 @@ class GithubError(Exception):
         self.status_code = status_code
         self.message = message
         self.upstream = upstream
+
+
+def blob_sha(content: str) -> str:
+    """sha git của một file, như GitHub tính khi ghi `content`: so được file trên nhánh mà không cần tải về."""
+    data = content.encode()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 def _detail(response: httpx.Response, token: str) -> str:
@@ -174,12 +182,22 @@ class GithubClient:
     def commit_tree(self, commit_sha: str) -> str:
         return self._call("GET", f"/git/commits/{commit_sha}")["tree"]["sha"]
 
-    def tree_paths(self, tree_sha: str) -> list[str]:
-        """Mọi file trong cây (đệ quy)."""
+    def tree_blobs(self, tree_sha: str) -> dict[str, str]:
+        """Mọi file trong cây (đệ quy): đường dẫn → sha blob."""
         tree = self._call("GET", f"/git/trees/{tree_sha}", params={"recursive": "1"})
         if tree.get("truncated"):
             raise GithubError(502, "Cây thư mục repo pipeline quá lớn để GitHub trả đủ; tách bớt rồi Deploy lại.")
-        return [item["path"] for item in tree["tree"] if item.get("type") == "blob"]
+        return {item["path"]: item["sha"] for item in tree["tree"] if item.get("type") == "blob"}
+
+    def blob_text(self, blob_sha: str) -> str:
+        """Nội dung một file (UTF-8) theo sha blob."""
+        blob = self._call("GET", f"/git/blobs/{blob_sha}")
+        if blob.get("encoding") != "base64":
+            raise GithubError(502, "GitHub trả nội dung file không ở dạng base64.")
+        try:
+            return base64.b64decode(blob["content"]).decode()
+        except ValueError:
+            raise GithubError(502, "Nội dung file trên repo pipeline không đọc được (không phải UTF-8).") from None
 
     def create_tree(self, base_tree: str, files: dict[str, str], delete: list[str] | None = None) -> str:
         """Cây mới = `base_tree` + `files` (ghi đè), bỏ các file trong `delete`."""

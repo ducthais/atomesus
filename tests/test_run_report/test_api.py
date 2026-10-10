@@ -265,6 +265,54 @@ async def test_retry_after_github_failure_opens_pull_request(logged_in, approved
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["files_hash", "version"])
+async def test_deploy_refuses_persisted_signature_mismatch_with_409(logged_in, approved_run, github, store_path, field):
+    value = {"files_hash": "sha256:" + "0" * 64, "version": approved_run.version + 1}[field]
+    corrupted = approved_run.model_copy(update={"approval": approved_run.approval.model_copy(update={field: value})})
+    save_run_report(store_path, corrupted)  # model_copy không validate: giả lập bản lưu có chữ ký lệch
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 409 and "Chữ ký duyệt" in response.json()["detail"]
+    assert github.requests == []
+
+
+@pytest.mark.asyncio
+async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logged_in, approved_run, github, store_path):
+    """Request A đọc run rồi chờ GitHub; trong lúc đó request B mở pull request và lưu deployment; sau đó A lỗi."""
+    import httpx
+    from pydantic import SecretStr
+
+    from src.codegen.github import GithubClient
+    from src.run_report.router import deploy_run, pipeline_github
+    from src.run_report.store import get_run_report
+    from tests.test_codegen.test_deploy_pr import REPO, TOKEN
+
+    config = app.dependency_overrides[auth.settings]()
+    overlapped = []
+
+    def overlap_then_fail(request: httpx.Request) -> httpx.Response:
+        if not overlapped:
+            winner = GithubClient(REPO, SecretStr(TOKEN), transport=httpx.MockTransport(github.handle))
+            overlapped.append(
+                deploy_run(READY_RUN_ID, user={"id": "an", "role": "Reviewer"}, config=config, github=winner)
+            )
+            return httpx.Response(500, json={"message": "lỗi giả"})
+        return github.handle(request)
+
+    app.dependency_overrides[pipeline_github] = lambda: GithubClient(
+        REPO, SecretStr(TOKEN), transport=httpx.MockTransport(overlap_then_fail)
+    )
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 503 and overlapped and overlapped[0].deployment is not None
+    stored = get_run_report(store_path, READY_RUN_ID)
+    assert stored.deployment == overlapped[0].deployment, "lỗi của request A không được xóa deployment B đã lưu"
+    assert stored.status == "APPROVED" and stored.error_trace[-1]["stage"] == "deploy"
+
+
+@pytest.mark.asyncio
 async def test_reports_without_deployment_field_still_load(logged_in):
     old = (FIXTURES_DIR / "deployed.json").read_text(encoding="utf-8")
     assert '"deployment"' not in old and RunReport.model_validate_json(old).deployment is None

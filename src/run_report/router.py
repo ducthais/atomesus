@@ -1,8 +1,9 @@
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from src.codegen.github import GithubClient, GithubError
 from src.codegen.render import file_hashes
@@ -12,6 +13,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, RunReport, RunStatus
+from src.run_report.store import _database as run_report_database
 from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report, transition_run_report
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
@@ -213,6 +215,32 @@ def pipeline_github() -> GithubClient:
     return GithubClient.from_settings()
 
 
+def _record_deploy(store_path: str, signed: RunReport, change: Callable[[RunReport], RunReport]) -> RunReport | None:
+    """Gộp kết quả Deploy vào bản đang lưu trong một giao dịch ghi: đọc lại, áp `change`, ghi.
+
+    Không ghi lại bản đọc trước lúc gọi GitHub: request Deploy song song có thể đã lưu deployment hoặc error_trace
+    trong lúc chờ (transition_run_report chỉ thay nguyên bản nên sẽ xóa mất phần đó). Trả None nếu run không còn
+    APPROVED đúng version và files_hash đã ký.
+    """
+    with run_report_database(store_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT status, report FROM run_reports WHERE run_id = ?", (signed.run_id,)).fetchone()
+        if row is None or row[0] != "APPROVED":
+            return None
+        try:
+            current = RunReport.model_validate_json(row[1])
+        except ValidationError:
+            return None
+        if current.version != signed.version or current.files_hash != signed.files_hash:
+            return None
+        updated = change(current)
+        conn.execute(
+            "UPDATE run_reports SET report = ?, updated_at = ? WHERE run_id = ? AND status = 'APPROVED'",
+            (updated.model_dump_json(), datetime.now(UTC).isoformat(), signed.run_id),
+        )
+        return updated
+
+
 @router.post("/{run_id}/deploy", response_model=RunReport)
 def deploy_run(
     run_id: str,
@@ -230,7 +258,13 @@ def deploy_run(
 
     if user["role"] != "Reviewer":
         raise HTTPException(403, "Chỉ Reviewer được deploy run.")
-    report = get_run_report(config.store_path, run_id)
+    try:
+        report = get_run_report(config.store_path, run_id)
+    except ValidationError:
+        # RunReport tự kiểm chữ ký: bản lưu có approval lệch files_hash / version thì không đọc được thành RunReport.
+        raise HTTPException(
+            409, "Chữ ký duyệt không khớp bộ file hoặc version hiện tại nên không deploy được."
+        ) from None
     if report is None:
         raise HTTPException(404, f"Không tìm thấy run {run_id}")
     if report.status != "APPROVED":
@@ -253,14 +287,24 @@ def deploy_run(
     except ManifestError as exc:
         raise HTTPException(409, str(exc)) from None
     except GithubError as exc:
-        trace = [*report.error_trace, {"stage": "deploy", "error": f"Mở pull request thất bại: {exc.message}"}]
-        failed = report.model_copy(update={"stage_reached": "deploy", "error_trace": trace})
-        transition_run_report(config.store_path, failed, "APPROVED", report.version, report.files_hash)
+        error = {"stage": "deploy", "error": f"Mở pull request thất bại: {exc.message}"}
+        # Giữ nguyên deployment request khác có thể vừa lưu; chỉ thêm lỗi vào error_trace.
+        _record_deploy(
+            config.store_path,
+            report,
+            lambda current: current.model_copy(
+                update={"stage_reached": "deploy", "error_trace": [*current.error_trace, error]}
+            ),
+        )
         raise HTTPException(exc.status_code, exc.message) from None
-    opened = RunReport.model_validate(
-        {**report.model_dump(), "stage_reached": "deploy", "deployment": deployment.model_dump()}
+    opened = _record_deploy(
+        config.store_path,
+        report,
+        lambda current: RunReport.model_validate(
+            {**current.model_dump(), "stage_reached": "deploy", "deployment": deployment.model_dump()}
+        ),
     )
-    if not transition_run_report(config.store_path, opened, "APPROVED", report.version, report.files_hash):
+    if opened is None:
         raise HTTPException(
             409, f"Đã mở pull request {deployment.pr_url} nhưng run vừa thay đổi; tải lại run rồi bấm Deploy lại."
         )
