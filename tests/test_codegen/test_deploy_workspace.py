@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from src.codegen import deploy
+from src.deployer import install
 from src.spec.models import Spec
 from tests.test_agents.test_graph import SPEC
 
@@ -26,7 +26,7 @@ def test_write_workspace_skips_staging_backup_and_hidden_dirs(tmp_path):
     _make_project(tmp_path / "sales.tmp-abc", "sales", "staging")
     _make_project(tmp_path / ".hidden", "sales", "hidden")
 
-    deploy.write_workspace(str(tmp_path))
+    install.write_workspace(str(tmp_path))
 
     assert _locations(tmp_path) == ["./sales"]
 
@@ -34,7 +34,7 @@ def test_write_workspace_skips_staging_backup_and_hidden_dirs(tmp_path):
 def test_write_workspace_with_only_backup_dirs_is_empty(tmp_path):
     _make_project(tmp_path / "sales.old-abc", "sales", "backup")
 
-    deploy.write_workspace(str(tmp_path))
+    install.write_workspace(str(tmp_path))
 
     assert "load_from: []" in (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
 
@@ -43,11 +43,11 @@ def test_redeploy_existing_pipeline_points_workspace_only_at_live_project(tmp_pa
     spec = Spec.model_validate(SPEC)
     model = spec.transform.model_name
     _make_project(tmp_path / model, model, "old")
-    deploy.write_workspace(str(tmp_path))
-    monkeypatch.setattr(deploy, "prepare_project", lambda root, _files: _make_project(root, model, "new"))
-    monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", ""))
+    install.write_workspace(str(tmp_path))
+    monkeypatch.setattr(install, "prepare_project", lambda root, _files: _make_project(root, model, "new"))
+    monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", ""))
 
-    deploy.deploy_local(spec, {}, str(tmp_path))
+    install.install_project(model, {}, str(tmp_path))
 
     locations = _locations(tmp_path)
     assert locations == [f"./{model}"]
@@ -72,13 +72,13 @@ def test_failed_redeploy_keeps_workspace_on_previous_project(tmp_path, monkeypat
     spec = Spec.model_validate(SPEC)
     model = spec.transform.model_name
     _make_project(tmp_path / model, model, "old")
-    deploy.write_workspace(str(tmp_path))
+    install.write_workspace(str(tmp_path))
     before = (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
-    monkeypatch.setattr(deploy, "prepare_project", lambda root, _files: _make_project(root, model, "new"))
-    monkeypatch.setattr(deploy.subprocess, "run", run)
+    monkeypatch.setattr(install, "prepare_project", lambda root, _files: _make_project(root, model, "new"))
+    monkeypatch.setattr(install.subprocess, "run", run)
 
     with pytest.raises(error):
-        deploy.deploy_local(spec, {}, str(tmp_path))
+        install.install_project(model, {}, str(tmp_path))
 
     assert (tmp_path / "workspace.yaml").read_text(encoding="utf-8") == before
     assert _locations(tmp_path) == [f"./{model}"]

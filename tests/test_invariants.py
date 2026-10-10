@@ -1,8 +1,7 @@
 """Tám bất biến của hệ thống (SPEC §19), mỗi bất biến ít nhất một test.
 
-Bất biến 8 (mọi thay đổi lên production đi qua pull request) chưa đạt: deploy hiện ghi thẳng ra Dagster local, giai
-đoạn Deploy làm sau cùng (new_task.md). Test của nó để `xfail(strict=True)`: khi có pull request thật, test sẽ báo XPASS
-để nhớ bỏ đánh dấu.
+Bất biến 8: duyệt chỉ ghi chữ ký; deploy mở pull request vào repo pipeline (src/codegen/deploy.py), client GitHub không
+có thao tác merge. Test dùng GitHub giả trong bộ nhớ (tests/test_codegen/test_deploy_pr.py), không ra mạng.
 """
 
 import ast
@@ -20,9 +19,11 @@ from src.pipeline import auth
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import load_policy
 from src.run_report import get_run_report
+from src.run_report.router import pipeline_github
 from src.run_report.store import get_run_files
 from src.spec import SPEC_FIXTURES_DIR, Spec
 from tests.test_agents.test_graph import PLAN, SPEC, FakeLLM, deps, with_column
+from tests.test_codegen.test_deploy_pr import FakeGithub
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -94,22 +95,32 @@ async def test_3_and_6_only_the_signed_files_are_deployed(client, tmp_path, monk
     report = run_agent("Doanh thu theo ngày", "minh", deps(FakeLLM(PLAN, SPEC)), store)
     assert report.status == "READY_FOR_REVIEW"
     config = PipelineSettings(_env_file=None, store_path=store, deploy_dir=str(tmp_path / "deploy"))
+    github = FakeGithub()
     app.dependency_overrides[auth.settings] = lambda: config
+    app.dependency_overrides[pipeline_github] = github.client
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
         url = f"/api/v1/runs/{report.run_id}/approve"
         wrong = await client.post(url, json={"files_hash": "sha256:khac", "comment": ""})
-        assert wrong.status_code == 409 and not (tmp_path / "deploy").exists(), "chữ ký sai bộ file: không deploy"
+        assert wrong.status_code == 409, "chữ ký sai bộ file: không duyệt"
+        early = await client.post(f"/api/v1/runs/{report.run_id}/deploy")
+        assert early.status_code == 409 and github.requests == [], "chưa có chữ ký: không mở pull request"
         done = await client.post(url, json={"files_hash": report.files_hash, "comment": "ok"})
-        assert done.status_code == 200 and done.json()["status"] == "DEPLOYED"
+        assert done.status_code == 200 and done.json()["status"] == "APPROVED"
+        assert not (tmp_path / "deploy").exists(), "duyệt không ghi file nào ra Dagster"
+        deployed = await client.post(f"/api/v1/runs/{report.run_id}/deploy")
+        assert deployed.status_code == 200, deployed.text
     finally:
         app.dependency_overrides.pop(auth.settings, None)
+        app.dependency_overrides.pop(pipeline_github, None)
     signed = get_run_report(store, report.run_id)
     assert signed.approval.files_hash == signed.files_hash and signed.approval.reviewer != signed.created_by
-    project = tmp_path / "deploy" / signed.spec["transform"]["model_name"]
+    folder = f"pipelines/{signed.spec['transform']['model_name']}"
+    pushed = github.files_at(signed.deployment.branch)
+    assert json.loads(pushed[f"{folder}/manifest.json"])["files_hash"] == signed.approval.files_hash
     for path, content in get_run_files(store, report.run_id, signed.version).items():
-        assert (project / path).read_text(encoding="utf-8") == content, f"{path} khác bộ file đã ký"
+        assert pushed[f"{folder}/{path}"] == content, f"{path} khác bộ file đã ký"
 
 
 # 4. Không node LLM nào chạy lệnh shell ---------------------------------------------------------------------------
@@ -193,10 +204,29 @@ def test_8_system_has_no_way_to_merge():
     assert not hits, f"code có thao tác merge: {hits}"
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Chưa làm: duyệt xong vẫn ghi thẳng ra Dagster local (giai đoạn Deploy, SPEC §9.5)"
-)
 def test_8_approval_opens_a_pull_request_instead_of_writing_dagster():
     from src.codegen import deploy
 
     assert hasattr(deploy, "open_pull_request") and not hasattr(deploy, "deploy_local")
+
+
+def test_8_github_client_only_has_minimal_operations():
+    from src.codegen.github import GithubClient
+
+    public = {name for name in vars(GithubClient) if not name.startswith("_")}
+    assert public == {
+        "from_settings",
+        "owner",
+        "repository",
+        "ref_sha",
+        "commit_tree",
+        "tree_entries",
+        "blob_text",
+        "compare_files",
+        "create_tree",
+        "create_commit",
+        "create_ref",
+        "open_pull_requests",
+        "create_pull_request",
+    }, "thêm thao tác GitHub mới phải xét lại quyền tối thiểu (SPEC §9.5)"
+    assert not any("merge" in name or "delete" in name for name in dir(GithubClient))

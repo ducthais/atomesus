@@ -7,7 +7,7 @@ import pytest
 from src.run_report.drift import detect, live_pipelines
 from src.run_report.models import GateResult
 from src.run_report.store import save_run_report
-from tests.test_run_report.test_compare import report, spec
+from tests.test_run_report.test_compare import report, spec, with_deployment
 
 LIVE = {"orders": {"order_id": "integer", "amount_text": "text", "status": "text"}}
 
@@ -23,6 +23,14 @@ def test_live_pipelines_keep_latest_approval_per_model():
     older, newer = report("a", 0, "DEPLOYED"), report("b", 10, "DEPLOYED")
     other = report("c", 5, "DEPLOYED", spec_=spec(model="fct_other"))
     assert sorted(r.run_id for r in live_pipelines([older, newer, other, report("d", 20)])) == ["b", "c"]
+
+
+def test_newer_approvals_awaiting_deploy_do_not_replace_live_pipeline():
+    deployed = report("dep", 0, "DEPLOYED")
+    signed = report("signed", 10, "APPROVED")
+    opened = with_deployment(report("opened", 20, "APPROVED"), 25)
+    assert [r.run_id for r in live_pipelines([deployed, signed, opened])] == ["dep"]
+    assert live_pipelines([signed, opened]) == []
 
 
 def test_unchanged_schema_is_ok():

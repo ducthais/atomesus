@@ -185,6 +185,21 @@ class Approval(_Contract):
     comment: str = ""
 
 
+class Deployment(_Contract):
+    """Pull request P16 mở vào repo pipeline (SPEC §9.5). `status` vẫn APPROVED trong lúc chờ merge.
+
+    `state`: open khi vừa mở; webhook GitHub cập nhật merged / closed.
+    """
+
+    repo: str = Field(min_length=1)
+    branch: str = Field(min_length=1)
+    pr_number: int = Field(ge=1)
+    pr_url: str = Field(min_length=1)
+    head_sha: str = Field(min_length=1)
+    state: Literal["open", "merged", "closed"] = "open"
+    opened_at: datetime
+
+
 class RunReport(_Contract):
     run_id: str = Field(min_length=1)
     version: int = Field(ge=1)
@@ -222,6 +237,9 @@ class RunReport(_Contract):
         description="Các quyết định review của version cũ; approval là quyết định của version hiện tại.",
     )
     timeline: list[TimelineEvent] = Field(default_factory=list)
+    deployment: Deployment | None = Field(
+        default=None, description="Pull request P16 của bản đã duyệt; null với run chưa deploy hoặc dữ liệu cũ."
+    )
 
     @model_validator(mode="after")
     def _approval_is_valid_signature(self) -> "RunReport":

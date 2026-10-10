@@ -103,6 +103,36 @@ def test_base_prefers_parent_then_deployed_then_previous():
     assert pick_base(other_model, [deployed, older, other_model]) == (None, "")
 
 
+def with_deployment(r, minutes):
+    """Run APPROVED đã mở pull request (PR còn mở, chưa merge nên chưa lên production)."""
+    deployment = {
+        "repo": "acme/atomesus-pipelines",
+        "branch": f"pipeline/fct_daily_sales/{r.run_id}-v1",
+        "pr_number": 7,
+        "pr_url": "https://github.com/acme/atomesus-pipelines/pull/7",
+        "head_sha": "c1",
+        "state": "open",
+        "opened_at": (T0 + timedelta(minutes=minutes)).isoformat(),
+    }
+    return RunReport.model_validate({**r.model_dump(mode="json"), "deployment": deployment})
+
+
+def test_approved_runs_awaiting_deploy_are_not_the_live_pipeline():
+    deployed = report("dep", 0, "DEPLOYED")
+    signed = report("signed", 10, "APPROVED")  # mới ký, chưa mở pull request
+    opened = with_deployment(report("opened", 20, "APPROVED"), 25)  # pull request đang mở
+    candidate = report("new", 30)
+    reports = [deployed, signed, opened, candidate]
+    base, reason = pick_base(candidate, reports)
+    assert base.run_id == "dep" and "Dagster" in reason
+    assert impact(candidate, reports)["replaces"]["run_id"] == "dep"
+    assert impact(opened, reports)["replaces"]["run_id"] == "dep"
+    # Chưa có bản DEPLOYED: bản APPROVED chỉ là bản trước, không phải bản đang chạy.
+    base, reason = pick_base(candidate, [signed, opened, candidate])
+    assert base.run_id == "opened" and "Dagster" not in reason
+    assert impact(candidate, [signed, opened, candidate])["replaces"] is None
+
+
 def test_spec_result_and_code_changes():
     base, new = (
         report("old", 0),

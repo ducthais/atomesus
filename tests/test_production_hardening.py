@@ -15,7 +15,8 @@ from src.agents.nodes.codegen import _user_message
 from src.agents.nodes.common import CancellationRequestedError
 from src.agents.service import PlanNotAwaitingError, plan_agent, start_confirm
 from src.agents.timeout import raise_if_phase_cancelled, with_timeout
-from src.codegen import deploy, render, sandbox
+from src.codegen import render, sandbox
+from src.deployer import install
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import load_policy
 from src.run_report import RunReport
@@ -138,15 +139,15 @@ def test_failed_dbt_parse_keeps_previous_deployment(tmp_path, monkeypatch):
     target = tmp_path / spec.transform.model_name
     target.mkdir()
     (target / "marker.txt").write_text("old", encoding="utf-8")
-    monkeypatch.setattr(deploy, "prepare_project", lambda root, _files: root.mkdir(parents=True))
+    monkeypatch.setattr(install, "prepare_project", lambda root, _files: root.mkdir(parents=True))
     monkeypatch.setattr(
-        deploy.subprocess,
+        install.subprocess,
         "run",
         lambda *a, **k: subprocess.CompletedProcess(a[0], 1, "", "parse failed"),
     )
 
     with pytest.raises(OSError, match="dbt parse"):
-        deploy.deploy_local(spec, files, str(tmp_path))
+        install.install_project(spec.transform.model_name, files, str(tmp_path))
 
     assert (target / "marker.txt").read_text(encoding="utf-8") == "old"
 
@@ -338,15 +339,16 @@ def test_dbt_parse_timeout_keeps_previous_deployment_and_no_leftovers(tmp_path, 
     target = tmp_path / spec.transform.model_name
     target.mkdir()
     (target / "marker.txt").write_text("old", encoding="utf-8")
-    monkeypatch.setattr(deploy, "prepare_project", lambda root, _files: root.mkdir(parents=True))
+    monkeypatch.setattr(install, "prepare_project", lambda root, _files: root.mkdir(parents=True))
 
     def hang(*_args, **kwargs):
+        assert kwargs.get("timeout") == install.DBT_PARSE_TIMEOUT_SEC
         raise subprocess.TimeoutExpired("dbt parse", kwargs.get("timeout"))
 
-    monkeypatch.setattr(deploy.subprocess, "run", hang)
+    monkeypatch.setattr(install.subprocess, "run", hang)
 
     with pytest.raises(subprocess.TimeoutExpired):
-        deploy.deploy_local(spec, files, str(tmp_path))
+        install.install_project(spec.transform.model_name, files, str(tmp_path))
 
     assert (target / "marker.txt").read_text(encoding="utf-8") == "old"
     assert sorted(p.name for p in tmp_path.iterdir()) == [spec.transform.model_name]
