@@ -13,6 +13,7 @@ Không cần thẻ: chọn 1a (Azure for Students). Combo Vercel + Hugging Face 
 | `web` | Next.js | qua Caddy: `https://<DOMAIN>` |
 | `backend` | FastAPI + agent (chạy thử dlt / dbt trong sandbox) | không (web gọi qua mạng nội bộ) |
 | `dagster` | Chạy lịch các pipeline đã duyệt, thu số đo Day 2 | qua Caddy, có mật khẩu: `https://dagster.<DOMAIN>` |
+| `deployer` | Kéo repo pipeline, kiểm manifest, cài pipeline đã merge vào Dagster (cấu hình ở mục 6) | không |
 | `mock-api` | Nguồn REST API demo | không |
 | `postgres` | Nguồn Postgres demo (sales_raw, Pagila) | không |
 
@@ -22,9 +23,9 @@ Test đỏ thì không deploy. Bấm **Actions → Deploy → Run workflow** đ�
 GitHub Actions không chạy được (vd. organization hết hạn mức / lỗi thanh toán): deploy từ máy Windows bằng
 `powershell -ExecutionPolicy Bypass -File deploy/push.ps1 -VmHost <IP>` (đưa bản `main` trên GitHub lên VM rồi build).
 
-**Không mất khi cập nhật:** `~/atomesus/data` (sổ bằng chứng, chat, warehouse DuckDB, project Dagster đã duyệt, lịch sử
-Dagster), volume `pgdata` (dữ liệu nguồn), `~/atomesus/.env` (mật khẩu, khóa API). Pipeline đã duyệt không tự đổi theo code
-mới; muốn dùng logic mới thì tạo version mới và duyệt lại.
+**Không mất khi cập nhật:** `~/atomesus/data` (sổ bằng chứng, chat, warehouse DuckDB, lịch sử Dagster), volume `pgdata`
+(dữ liệu nguồn), volume `dagster_code` (pipeline đang chạy trên Dagster) và `deployer_state`, `~/atomesus/.env` (mật khẩu,
+khóa API). Pipeline đã duyệt không tự đổi theo code mới; muốn dùng logic mới thì tạo version mới và duyệt lại.
 
 ---
 
@@ -133,3 +134,100 @@ docker compose --env-file .env -f deploy/compose.yml restart dagster
 
 **Bảo mật của bản demo:** đăng nhập vẫn là hai tài khoản local (`APP_ENV=staging`, backend từ chối mật khẩu mặc định).
 Chưa có SSO, nên chỉ đưa mật khẩu cho người cần dùng; ai đăng nhập được Engineer là tiêu được tiền LLM (trong trần ở mục 4).
+
+## 6. Bật deployer: đưa pipeline đã merge lên Dagster production
+
+Pipeline chỉ lên Dagster production qua repo pipeline (SPEC §9.5): Reviewer bấm Deploy → backend mở pull request → CI
+kiểm manifest → người có quyền merge → service `deployer` trên VM kéo nhánh mặc định (mặc định mỗi 60 giây), kiểm
+manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, lỗi thì giữ bản đang chạy), Dagster tự khởi động lại để nạp
+pipeline, rồi deployer báo backend (`POST /api/v1/deployments/callback`, ký HMAC) để run chuyển `DEPLOYED` /
+`DEPLOY_FAILED`.
+
+Chỉ `deployer` ghi được `dagster_code`; `dagster` và `backend` mount chỉ đọc, không service nào khác ghi volume này.
+`deployer` không đọc `.env` nên không có OpenAI key hay mật khẩu nguồn; nó chỉ có deploy key **chỉ đọc** của repo
+pipeline. Service luôn chạy; chưa cấu hình thì nó ghi log `Deployer chưa bật: …` mỗi giờ và nằm chờ, Dagster chạy với
+danh sách pipeline rỗng. Pipeline đã cài vào `~/atomesus/data/dagster_local` trước khi có deployer không còn được Dagster
+đọc: Deploy lại chúng từ app.
+
+Image của `deployer` là image app (build từ `Dockerfile` cho `backend`) thêm `git` và `openssh-client`, build trong
+`deploy/compose.yml` (`additional_contexts: service:backend`, cần Docker Compose v2 bản mới như `get.docker.com` cài).
+Image này mang sẵn `workspace.yaml` rỗng và thư mục trạng thái thuộc user `app` (uid 1000): volume `dagster_code` /
+`deployer_state` lần đầu mount vào deployer được Docker chép nội dung và chủ sở hữu từ image, nên không cần bước
+`chown` nào bằng root. Dagster ghi kết quả dbt từng lần chạy vào `data/dagster_home/dbt_target` (không ghi vào code
+location); Day 2 gom `run_results.json` theo pipeline ở `data/dagster_home/day2_dbt` để đếm test.
+Khóa host Ed25519 của `github.com` được ghim sẵn trong `src/deployer/github_known_hosts`, theo
+[khóa SSH GitHub công bố](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
+Deployer luôn dùng `StrictHostKeyChecking=yes`, không tự tin host mới hoặc lấy khóa qua `ssh-keyscan`.
+
+Cần có trước: repo pipeline và branch protection (xem `.harness/plans/DEPLOY-PR.md`).
+
+**1. Tạo deploy key chỉ đọc** (trên VM; khóa nằm ngoài `~/atomesus` vì workflow Deploy rsync `--delete` thư mục đó, và
+ngoài `data/` vì backend đọc được):
+
+```bash
+sudo mkdir -p /etc/atomesus-deployer
+sudo ssh-keygen -t ed25519 -N '' -C atomesus-deployer -f /etc/atomesus-deployer/deploy_key
+sudo chown -R 1000:1000 /etc/atomesus-deployer    # uid của user `app` trong container
+sudo chmod 600 /etc/atomesus-deployer/deploy_key
+sudo cat /etc/atomesus-deployer/deploy_key.pub
+```
+
+Repo pipeline → **Settings → Deploy keys → Add deploy key**: dán nội dung `deploy_key.pub`, **không** tích
+"Allow write access". Không dùng khóa này cho việc khác.
+
+**2. Biến môi trường** — thêm vào `~/atomesus/.env`:
+
+| Biến | Giá trị |
+|---|---|
+| `DEPLOYER_REPO_URL` | URL SSH repo pipeline, vd. `git@github.com:<owner>/atomesus-pipelines.git` |
+| `PIPELINE_DEPLOYER_SECRET` | `openssl rand -hex 32`; backend đọc cùng biến này từ `.env` để kiểm chữ ký callback |
+| `DEPLOYER_INTERVAL_SEC` | tùy chọn, chu kỳ kéo repo (mặc định `60`, tối thiểu `5`) |
+| `DEPLOYER_SSH_DIR` | tùy chọn, thư mục chứa `deploy_key` (mặc định `/etc/atomesus-deployer`) |
+| `DEPLOYER_KNOWN_HOSTS` | tùy chọn cho Git host khác: đường dẫn **trong container**, vd. `/run/secrets/deployer/known_hosts`; đặt file khóa host đã xác minh vào `DEPLOYER_SSH_DIR`. Mặc định dùng khóa GitHub ghim trong image. |
+
+Compose đặt `DEPLOYER_SSH_KEY=/run/secrets/deployer/deploy_key`, `DEPLOYER_STATE_DIR=/app/state`,
+`PIPELINE_DEPLOY_DIR=/app/data/dagster_local` và `DEPLOYER_BACKEND_URL=http://backend:8000`. Khi chạy script ngoài
+Compose có thể cấu hình các biến này; khóa SSH luôn đọc từ file, không truyền nội dung khóa trong dòng lệnh.
+
+Deployer không ghi URL repo, khóa hay secret ra log.
+
+**3. Chạy và kiểm tra:**
+
+```bash
+cd atomesus
+docker compose --env-file .env -f deploy/compose.yml up -d --build deployer   # đổi .env thì tạo lại container
+docker compose --env-file .env -f deploy/compose.yml exec deployer sh -c 'git --version && ssh -V'
+# Thử deploy key: GitHub trả "Hi <owner>/<repo>! You've successfully authenticated" (mã thoát 1 là bình thường)
+docker compose --env-file .env -f deploy/compose.yml exec deployer ssh -T -i /run/secrets/deployer/deploy_key \
+  -F /dev/null -o UserKnownHostsFile=/app/src/deployer/github_known_hosts \
+  -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes git@github.com
+docker compose --env-file .env -f deploy/compose.yml logs -f deployer
+docker compose --env-file .env -f deploy/compose.yml exec dagster cat /app/data/dagster_local/workspace.yaml
+docker compose --env-file .env -f deploy/compose.yml exec deployer cat /app/state/state.json
+```
+
+Log bình thường: `Đã cài fct_x v2 …`, `Commit <sha>: kiểm/cài ['fct_x'] …`; Dagster in `workspace.yaml đổi … khởi
+động lại` và pipeline hiện trên `https://dagster.<DOMAIN>`. Không có commit mới thì deployer im lặng. Muốn kéo ngay thì
+`restart deployer`.
+
+`state.json` giữ `applied` (commit mà mọi pipeline đổi đã cài **và** backend đã nhận báo `deployed`) và `models` (kết
+quả từng pipeline của commit mới nhất chưa xong). Chỉ khi mọi pipeline xong thì `applied` mới tiến; pipeline chưa xong
+không bị bỏ qua ở chu kỳ sau. Một pipeline lỗi không chặn pipeline khác: pipeline tốt vẫn được cài và báo (một lần).
+
+**Xử lý khi cài lỗi** (bản đang chạy luôn được giữ nguyên):
+
+| Log / trạng thái trong `models` | Nghĩa và cách xử lý |
+|---|---|
+| `Không cài <model> … sha256 không khớp` / `run_report.json không khớp` / `Chỉ cài file thường` → `failed` | Nội dung trên nhánh mặc định khác chữ ký duyệt (bị sửa tay sau khi duyệt). Run chuyển `DEPLOY_FAILED`. Không sửa tay repo pipeline: Deploy lại từ app để mở pull request mới; version mới merge thì deployer tự cài. |
+| `… không báo được backend` → `unreported` | `manifest.json` hỏng tới mức thiếu run_id/version/files_hash; không báo được run nào. Xử lý như dòng trên. |
+| `Cài <model> lỗi, giữ bản đang chạy: dbt parse …` / `Sẽ cài lại … ở chu kỳ sau` → `retry` | Lỗi môi trường khi biên dịch (đĩa, dbt). Deployer tự cài lại ở 2 chu kỳ sau; vẫn lỗi thì báo `failed` (trạng thái `failed`). Sửa môi trường xong thì cài lại: `stop deployer`, `run --rm deployer python scripts/deployer.py --once --reinstall`, `start deployer`. |
+| `Báo backend kết quả … lỗi` / `chưa cài commit mới` → `reporting` | Backend không nhận callback (đang tắt, `PIPELINE_DEPLOYER_SECRET` khác nhau → 401). Deployer giữ kết quả, báo lại mỗi chu kỳ và chưa cài commit mới cho tới khi báo được. |
+| `Backend từ chối kết quả …` → `refused` | Backend trả 400/409/422 (run không còn `APPROVED` hoặc không khớp chữ ký). Pipeline đã cài nhưng không gửi lại cùng kết quả; kiểm run trên app, xong thì `--reinstall` như trên hoặc Deploy version mới. |
+| `Deployer chưa bật: Thiếu DEPLOYER_REPO_URL …` | Thiếu biến ở bước 2; sửa `.env` rồi `up -d deployer`. |
+| `git fetch lỗi … Permission denied (publickey)` | Deploy key chưa thêm vào repo pipeline, sai `DEPLOYER_REPO_URL`, hoặc file khóa không thuộc uid 1000 / không phải quyền 600. |
+| `Host key verification failed` | Host khác GitHub cần file khóa host đã xác minh và `DEPLOYER_KNOWN_HOSTS`. Nếu GitHub đổi khóa, xác minh trên tài liệu chính thức rồi cập nhật khóa ghim và build lại image; không tắt kiểm host. |
+| `Không đọc được file khóa SSH` | Chưa có `deploy_key` trong `DEPLOYER_SSH_DIR` (bước 1), hoặc đặt sai thư mục. |
+| `Không chạy được git` | Image deployer cũ chưa có `git` / `openssh-client`: `up -d --build deployer`. |
+| `state.json hỏng` | `run --rm deployer rm /app/state/state.json`; chu kỳ sau cài lại mọi pipeline ở commit mới nhất. |
+
+(Mọi lệnh trong bảng là `docker compose --env-file .env -f deploy/compose.yml <lệnh>`.)

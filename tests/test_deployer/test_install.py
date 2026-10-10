@@ -1,9 +1,20 @@
+import importlib.util
+import json
+import os
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from src.deployer import install
 from src.deployer.manifest import ManifestError
+from src.monitor import detectors, runs
+from src.pipeline.settings import PipelineSettings
+from src.policy.loader import load_policy
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def fake_project(root, files):
@@ -73,3 +84,141 @@ def test_model_name_cannot_escape_deploy_dir(tmp_path):
         install.install_project("../evil", {"a.sql": "select 1\n"}, str(tmp_path / "deploy"))
 
     assert not (tmp_path / "evil").exists()
+
+
+def _dagster_local():
+    spec = importlib.util.spec_from_file_location("dagster_local_under_test", ROOT / "scripts" / "dagster_local.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _dbt_results(artifacts, folder, at, failed):
+    path = artifacts / folder / "run_results.json"
+    path.parent.mkdir(parents=True)
+    tests = [{"unique_id": f"test.x.t{i}", "status": "fail" if i < failed else "pass"} for i in range(4)]
+    path.write_text(json.dumps({"results": [{"unique_id": "model.x.m", "status": "success"}, *tests]}), "utf-8")
+    os.utime(path, (at + 30, at + 30))
+
+
+def test_production_dbt_results_reach_day2_test_degradation(tmp_path):
+    """Production: code location chỉ đọc, dbt ghi run_results.json vào DAGSTER_HOME/dbt_target; Day 2 vẫn đếm được
+    test và luật test_degradation vẫn kích hoạt."""
+    model, t0 = "fct_x", datetime(2026, 10, 6, 2, 0, tzinfo=UTC).timestamp()
+    deploy, home = tmp_path / "dagster_local", tmp_path / "dagster_home"
+    (deploy / model / "dbt_project").mkdir(parents=True)  # code location đã cài, không có target/
+    (deploy / "workspace.yaml").write_text("load_from: []\n", encoding="utf-8")
+    artifacts = home / "dbt_target"
+    _dbt_results(artifacts, f"{model}_transform-r1aaaaa-0000001", t0, failed=0)
+    _dbt_results(artifacts, f"{model}_transform-r2bbbbb-0000002", t0 + 3600, failed=2)
+    _dbt_results(artifacts, "fct_y_transform-r9ccccc-0000003", t0 + 3600, failed=4)  # pipeline khác, cùng lúc
+    settings = PipelineSettings(
+        _env_file=None,
+        store_path=str(tmp_path / "runs.sqlite3"),
+        deploy_dir=str(deploy),
+        warehouse_path=str(tmp_path / "warehouse.duckdb"),
+    )
+    found = [
+        {
+            "runId": f"r{i}" + "a" * 6,
+            "jobName": f"{model}_job",
+            "status": "SUCCESS",
+            "startTime": at,
+            "endTime": at + 60,
+        }
+        for i, at in ((1, t0), (2, t0 + 3600))
+    ]
+
+    def collect(target):
+        return runs.collect(target, load_policy(), runs=lambda url: found, estimate=lambda *a: {}, counts=lambda *a: {})
+
+    assert [r["tests"] for r in collect(settings.model_copy(update={"store_path": str(tmp_path / "raw.db")}))] == [
+        None,
+        None,
+    ], "không gom lại thì Day 2 không thấy kết quả dbt của production"
+
+    view = _dagster_local().day2_settings(settings, home=home)
+    written = collect(view)
+
+    assert [(r["tests"], r["tests_failed"]) for r in written] == [(4, 0), (4, 2)]
+    series = runs.series(settings.store_path, model)
+    now = datetime.fromtimestamp(t0 + 3700, UTC)
+    found_rules = [f.rule for f in detectors.detect(series, load_policy().objectives["sales"], now)]
+    assert "test_degradation" in found_rules
+    assert sorted(p.name for p in (home / "day2_dbt").iterdir()) == [model], "chỉ pipeline đang cài"
+    assert sorted(p.name for p in deploy.iterdir()) == [model, "workspace.yaml"], "không ghi gì vào code location"
+
+
+def test_readonly_dagster_starts_without_dev_parse_and_writes_artifacts_outside_code(tmp_path, monkeypatch):
+    module = _dagster_local()
+    deploy = tmp_path / "code"
+    workspace = install.write_workspace(str(deploy))
+    home = tmp_path / "home"
+    monkeypatch.setattr(module, "READ_ONLY", True)
+    monkeypatch.setattr(module, "HOME", home)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "PipelineSettings", lambda: PipelineSettings(_env_file=None, deploy_dir=str(deploy)))
+    monkeypatch.setattr(module, "credentials_env", lambda *args: {})
+    monkeypatch.setenv("DAGSTER_IS_DEV_CLI", "1")
+    calls = []
+    monkeypatch.setattr(module.subprocess, "Popen", lambda command, **kwargs: calls.append((command, kwargs)))
+
+    _, returned = module.start()
+
+    assert returned == workspace.resolve() and len(calls) == 2
+    assert "dagster-webserver" in calls[0][0][0] and "dagster-daemon" in calls[1][0][0]
+    for _, kwargs in calls:
+        assert "DAGSTER_IS_DEV_CLI" not in kwargs["env"]
+        assert kwargs["env"]["DBT_TARGET_PATH"] == str(home / "dbt_target")
+        assert kwargs["cwd"] == deploy.resolve()
+    assert list(deploy.iterdir()) == [workspace], "không ghi project hoặc kết quả dbt vào volume code"
+
+
+def test_workspace_replacement_restarts_dagster(tmp_path, monkeypatch):
+    module = _dagster_local()
+    workspace = install.write_workspace(str(tmp_path))
+    started, stopped = [], []
+
+    def start():
+        processes = []
+        started.append(processes)
+        return processes, workspace
+
+    def tick(_seconds):
+        if len(started) > 1:
+            raise KeyboardInterrupt
+        # Cài version mới có thể giữ nguyên nội dung YAML, nhưng thay file và mtime vẫn yêu cầu nạp lại code.
+        old = workspace.stat().st_mtime
+        install.write_workspace(str(tmp_path))
+        os.utime(workspace, (old + 10, old + 10))
+
+    monkeypatch.setattr(module, "start", start)
+    monkeypatch.setattr(module, "stop", stopped.append)
+    monkeypatch.setattr(module.time, "sleep", tick)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 0)
+
+    assert module.main() == 0
+    assert len(started) == 2 and stopped == started
+
+
+def test_day2_bridge_matches_real_dagster_dbt_artifact_names(tmp_path, monkeypatch):
+    from dagster_dbt import DbtCliResource
+
+    model, home = "fct_x", tmp_path / "home"
+    deploy = tmp_path / "code"
+    (deploy / model).mkdir(parents=True)
+    monkeypatch.setenv("DBT_TARGET_PATH", str(home / "dbt_target"))
+    resource = DbtCliResource(project_dir=ROOT / "dbt_project")
+    context = SimpleNamespace(
+        op_execution_context=SimpleNamespace(op=SimpleNamespace(name=f"{model}_transform")),
+        run=SimpleNamespace(run_id="abcdef012345"),
+    )
+    target = resource._get_unique_target_path(context=context)
+    at = datetime(2026, 10, 10, tzinfo=UTC).timestamp()
+    _dbt_results(home / "dbt_target", target.name, at, failed=1)
+    settings = PipelineSettings(_env_file=None, deploy_dir=str(deploy))
+
+    view = _dagster_local().day2_settings(settings, home=home)
+
+    assert target.parent == home / "dbt_target" and target.name.startswith(f"{model}_transform-abcdef0-")
+    assert runs.dbt_results(Path(view.deploy_dir) / model, at, at + 60) == {"tests": 4, "tests_failed": 1}
