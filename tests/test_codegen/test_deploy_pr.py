@@ -167,7 +167,10 @@ class FakeGithub:
                 if "content" in entry:
                     tree[entry["path"]] = entry["content"]
                 elif entry.get("sha") is None:
-                    tree.pop(entry["path"], None)
+                    old = _entry(tree.get(entry["path"]))
+                    assert old is not None, f"xóa entry không tồn tại: {entry['path']}"
+                    assert (entry["mode"], entry["type"]) == (old["mode"], old["type"]), "xóa phải đúng mode/type"
+                    tree.pop(entry["path"])
             sha = f"t{len(self.trees)}"
             self.trees[sha] = tree
             return httpx.Response(201, json={"sha": sha})
@@ -515,6 +518,42 @@ def test_files_of_previous_version_no_longer_signed_are_removed():
     tree = github.files_at(branch_name("fct_daily_orders", report.run_id, report.version))
     assert f"{FOLDER}/old_model.sql" not in tree
     assert tree["pipelines/other/a.sql"] == "a\n", "không đụng pipeline khác"
+
+
+def test_stale_submodule_and_symlink_in_folder_are_removed():
+    report, files = approved_report()
+    github = FakeGithub()
+    github.trees["t0"] = {
+        "README.md": "x\n",
+        f"{FOLDER}/vendor": {"mode": SUBMODULE, "sha": "a" * 40},
+        f"{FOLDER}/link.sql": {"mode": SYMLINK, "content": "../../secrets.sql"},
+    }
+
+    first = open_pull_request(report, files, github.client())
+
+    tree = github.files_at(first.branch)
+    assert f"{FOLDER}/vendor" not in tree and f"{FOLDER}/link.sql" not in tree
+    in_folder = {p for p in tree if p.startswith(f"{FOLDER}/")}
+    assert in_folder == {f"{FOLDER}/{p}" for p in [*files, "run_report.json", "manifest.json"]}
+    again = open_pull_request(report, files, github.client())
+    assert again.pr_number == first.pr_number, "Deploy lại cùng bản vẫn nhận đúng nhánh vừa tạo"
+
+
+@pytest.mark.parametrize("moment", ["existing", "race"])
+def test_pull_request_targeting_other_branch_is_rejected(moment):
+    report, files = approved_report()
+    github = FakeGithub()
+    if moment == "existing":
+        open_pull_request(report, files, github.client())
+        github.pulls[0]["base"]["ref"] = "release-other"
+    else:
+        # Request khác vừa mở pull request của nhánh này nhưng vào nhánh khác (POST /pulls trả 422).
+        github.race_pull = True
+        original = github._pull
+        github._pull = lambda head, base, title, body: original(head, "release-other", title, body)
+
+    with pytest.raises(ManifestError, match="release-other"):
+        open_pull_request(report, files, github.client())
 
 
 def test_files_not_matching_signature_never_reach_github():

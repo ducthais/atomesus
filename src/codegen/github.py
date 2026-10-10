@@ -222,10 +222,16 @@ class GithubClient:
         except ValueError:
             raise GithubError(502, "Nội dung file trên repo pipeline không đọc được (không phải UTF-8).") from None
 
-    def create_tree(self, base_tree: str, files: dict[str, str], delete: list[str] | None = None) -> str:
-        """Cây mới = `base_tree` + `files` (ghi đè), bỏ các file trong `delete`."""
+    def create_tree(self, base_tree: str, files: dict[str, str], delete: dict[str, dict] | None = None) -> str:
+        """Cây mới = `base_tree` + `files` (ghi đè), bỏ các entry trong `delete` (đường dẫn → entry của tree_entries).
+
+        Xóa giữ đúng mode/type của entry cũ để bỏ được cả symlink, file thực thi và submodule, không chỉ file thường.
+        """
         entries = [{"path": p, "mode": REGULAR_FILE, "type": "blob", "content": c} for p, c in sorted(files.items())]
-        entries += [{"path": p, "mode": REGULAR_FILE, "type": "blob", "sha": None} for p in sorted(delete or [])]
+        entries += [
+            {"path": p, "mode": entry["mode"], "type": entry["type"], "sha": None}
+            for p, entry in sorted((delete or {}).items())
+        ]
         return self._call("POST", "/git/trees", json={"base_tree": base_tree, "tree": entries})["sha"]
 
     def create_commit(self, message: str, tree_sha: str, parents: list[str]) -> str:

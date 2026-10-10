@@ -45,12 +45,19 @@ def _body(report: RunReport, model_name: str, report_url: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _deployment(github: GithubClient, branch: str, pull: dict, head_sha: str) -> Deployment:
-    """Chỉ ghi nhận pull request khi đầu nhánh của nó đúng là commit vừa kiểm (hoặc vừa tạo) cho chữ ký duyệt."""
+def _deployment(github: GithubClient, branch: str, pull: dict, head_sha: str, base: str) -> Deployment:
+    """Chỉ ghi nhận pull request khi đầu nhánh của nó đúng là commit vừa kiểm (hoặc vừa tạo) cho chữ ký duyệt, và nó
+    merge vào nhánh mặc định (nơi deployer kéo code): pull request bị đổi đích sang nhánh khác không đưa được pipeline
+    lên production."""
     if pull["head"]["sha"] != head_sha:
         raise ManifestError(
             f"Nhánh {branch} trên repo pipeline vừa bị đổi trong lúc mở pull request nên không còn chắc là bộ file đã "
             "duyệt. Kiểm tra pull request đó trên repo pipeline rồi Deploy lại."
+        )
+    if pull["base"]["ref"] != base:
+        raise ManifestError(
+            f"Pull request #{pull['number']} của nhánh {branch} đang nhắm vào nhánh {pull['base']['ref']} thay vì "
+            f"nhánh mặc định {base}. Đổi lại đích của pull request về {base} (hoặc đóng nó) rồi Deploy lại."
         )
     return Deployment(
         repo=github.repo,
@@ -135,11 +142,12 @@ def _commit_branch(
     content = {f"{folder}/{path}": text for path, text in files.items()}
     content[f"{folder}/{REPORT_FILE}"] = report.model_dump_json(indent=2, exclude={"deployment"}) + "\n"
     content[f"{folder}/{MANIFEST_FILE}"] = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
-    stale = [
-        path
+    # Mọi entry cũ trong thư mục không thuộc bộ đã ký đều bị xóa, kể cả symlink và submodule: commit chỉ chứa đúng bộ đó.
+    stale = {
+        path: entry
         for path, entry in github.tree_entries(base_tree).items()
-        if entry["type"] == "blob" and path.startswith(f"{folder}/") and path not in content
-    ]
+        if path.startswith(f"{folder}/") and path not in content
+    }
     tree = github.create_tree(base_tree, content, delete=stale)
     message = (
         f"pipeline({manifest['model_name']}): v{report.version} đã duyệt\n\n"
@@ -186,7 +194,7 @@ def open_pull_request(report: RunReport, files: dict[str, str], github: GithubCl
         else:
             _verify_branch(report, files, manifest, base, branch, head_sha, github)
             if opened := github.open_pull_requests(branch):
-                return _deployment(github, branch, opened[0], head_sha)
+                return _deployment(github, branch, opened[0], head_sha, base)
         report_url = f"{repo['html_url']}/blob/{branch}/{project_dir(model_name)}/{REPORT_FILE}"
         title = f"Pipeline {model_name} v{report.version} (run {report.run_id[:8]})"
         try:
@@ -199,6 +207,6 @@ def open_pull_request(report: RunReport, files: dict[str, str], github: GithubCl
             if not opened:
                 raise
             pull = opened[0]
-        return _deployment(github, branch, pull, head_sha)
+        return _deployment(github, branch, pull, head_sha, base)
     except (KeyError, TypeError, IndexError, ValidationError) as exc:
         raise GithubError(502, f"GitHub trả dữ liệu không đúng định dạng ({type(exc).__name__}).") from None
