@@ -13,7 +13,9 @@ from decimal import Decimal, InvalidOperation
 
 from src.run_report.models import RunReport
 
-DEPLOYED = ("APPROVED", "DEPLOYED")
+# Chỉ DEPLOYED là đang chạy trên production. APPROVED mới là đã ký (SPEC §9.5): pull request có thể còn mở hoặc chưa
+# mở, bản cũ vẫn đang chạy.
+DEPLOYED = ("DEPLOYED",)
 
 
 def model_of(report: RunReport) -> str | None:
@@ -184,7 +186,7 @@ def impact(report: RunReport, reports: list[RunReport]) -> dict:
     for r in sorted(
         (r for r in reports if r.status in DEPLOYED and r.run_id != report.run_id), key=lambda r: r.approval.at
     ):
-        live[(r.domain, model_of(r))] = r  # bản duyệt sau cùng của mỗi model là bản đang chạy
+        live[(r.domain, model_of(r))] = r  # bản DEPLOYED duyệt sau cùng của mỗi model là bản đang chạy
     replaces = live.get((report.domain, model))
     shared = []
     mine = _bronze_tables(report)

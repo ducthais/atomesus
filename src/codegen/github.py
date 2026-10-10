@@ -1,8 +1,8 @@
 """Client GitHub tối thiểu cho P16 (SPEC §9.5): mở pull request vào repo pipeline, không bao giờ merge.
 
-Chỉ gọi đúng các API cần: đọc repo, ref, commit, tree và blob; tạo tree / commit / ref; liệt kê và tạo pull request
-(bất biến 8, SPEC §19). Token là fine-grained PAT chỉ cấp cho repo pipeline (Contents RW, Pull requests RW, Metadata
-R); chốt chặn merge thật là branch protection của repo đó.
+Chỉ gọi đúng các API cần: đọc repo, ref, commit, tree, blob và compare; tạo tree / commit / ref; liệt kê và tạo
+pull request (bất biến 8, SPEC §19). Token là fine-grained PAT chỉ cấp cho repo pipeline (Contents RW, Pull requests
+RW, Metadata R); chốt chặn merge thật là branch protection của repo đó.
 
 Cấu hình nằm riêng ở đây, không nằm trong PipelineSettings: PipelineSettings được đưa vào agent và sandbox, token
 GitHub không đi theo. Token không bao giờ ghi vào log, response, RunReport hay error_trace.
@@ -23,6 +23,9 @@ log = logging.getLogger(__name__)
 API_VERSION = "2022-11-28"
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$")
 DETAIL_LIMIT = 300
+# GitHub compare chỉ liệt kê tối đa 300 file thay đổi.
+COMPARE_FILE_LIMIT = 300
+REGULAR_FILE = "100644"
 
 
 class GithubSettings(BaseSettings):
@@ -182,12 +185,32 @@ class GithubClient:
     def commit_tree(self, commit_sha: str) -> str:
         return self._call("GET", f"/git/commits/{commit_sha}")["tree"]["sha"]
 
-    def tree_blobs(self, tree_sha: str) -> dict[str, str]:
-        """Mọi file trong cây (đệ quy): đường dẫn → sha blob."""
+    def tree_entries(self, tree_sha: str) -> dict[str, dict]:
+        """Mọi entry không phải thư mục trong cây (đệ quy): đường dẫn → {type, mode, sha}.
+
+        `type` blob (file thường 100644, thực thi 100755, symlink 120000) hoặc commit (submodule 160000).
+        """
         tree = self._call("GET", f"/git/trees/{tree_sha}", params={"recursive": "1"})
         if tree.get("truncated"):
             raise GithubError(502, "Cây thư mục repo pipeline quá lớn để GitHub trả đủ; tách bớt rồi Deploy lại.")
-        return {item["path"]: item["sha"] for item in tree["tree"] if item.get("type") == "blob"}
+        return {
+            item["path"]: {"type": item["type"], "mode": item["mode"], "sha": item["sha"]}
+            for item in tree["tree"]
+            if item["type"] != "tree"
+        }
+
+    def compare_files(self, base: str, head: str) -> list[str]:
+        """Đường dẫn mọi file `head` thay đổi so với điểm rẽ nhánh từ `base` (đúng phần diff của pull request).
+
+        File đổi tên tính cả tên cũ. GitHub trả tối đa COMPARE_FILE_LIMIT file; chạm trần thì danh sách có thể thiếu.
+        """
+        compared = self._call("GET", f"/compare/{base}...{head}")
+        paths = []
+        for item in compared["files"]:
+            paths.append(item["filename"])
+            if item.get("previous_filename"):
+                paths.append(item["previous_filename"])
+        return paths
 
     def blob_text(self, blob_sha: str) -> str:
         """Nội dung một file (UTF-8) theo sha blob."""
@@ -201,8 +224,8 @@ class GithubClient:
 
     def create_tree(self, base_tree: str, files: dict[str, str], delete: list[str] | None = None) -> str:
         """Cây mới = `base_tree` + `files` (ghi đè), bỏ các file trong `delete`."""
-        entries = [{"path": p, "mode": "100644", "type": "blob", "content": c} for p, c in sorted(files.items())]
-        entries += [{"path": p, "mode": "100644", "type": "blob", "sha": None} for p in sorted(delete or [])]
+        entries = [{"path": p, "mode": REGULAR_FILE, "type": "blob", "content": c} for p, c in sorted(files.items())]
+        entries += [{"path": p, "mode": REGULAR_FILE, "type": "blob", "sha": None} for p in sorted(delete or [])]
         return self._call("POST", "/git/trees", json={"base_tree": base_tree, "tree": entries})["sha"]
 
     def create_commit(self, message: str, tree_sha: str, parents: list[str]) -> str:

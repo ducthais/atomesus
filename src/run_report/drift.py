@@ -14,7 +14,7 @@ from src.run_report.models import RunReport
 
 
 def live_pipelines(reports: list[RunReport]) -> list[RunReport]:
-    """Bản duyệt sau cùng của mỗi (domain, model): bản đang chạy trên Dagster."""
+    """Bản DEPLOYED duyệt sau cùng của mỗi (domain, model): bản đang chạy trên Dagster (bản mới chỉ APPROVED thì chưa)."""
     live: dict[tuple[str, str | None], RunReport] = {}
     for r in sorted((r for r in reports if r.status in DEPLOYED and model_of(r)), key=lambda r: r.approval.at):
         live[(r.domain, model_of(r))] = r

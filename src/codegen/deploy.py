@@ -4,7 +4,8 @@ Nhánh `pipeline/<model_name>/<8 ký tự đầu run_id>-v<version>` tạo từ 
 `pipelines/<model_name>/` gồm 4 + N file đã duyệt, `run_report.json` và `manifest.json` (src/deployer/manifest.py).
 Backend chỉ mở pull request: CI của repo pipeline kiểm manifest, người có quyền merge, service deployer cài lên Dagster production (src/deployer/).
 Gọi lại khi pull request đã mở thì trả pull request cũ; nhánh đã có mà chưa có pull request thì mở trên nhánh đó.
-Mọi lần dùng lại nhánh có sẵn đều kiểm trước nội dung đầu nhánh khớp chữ ký duyệt của chính run này; pull request
+Mọi lần dùng lại nhánh có sẵn đều kiểm trước diff của nhánh so với nhánh mặc định chỉ gồm đúng bộ file đã ký của
+chính run này (file thường, nội dung khớp, không gì ngoài thư mục pipeline); pull request
 trả về phải trỏ đúng commit đã kiểm (hoặc vừa tạo), nhánh bị đổi giữa chừng thì ra ManifestError.
 """
 
@@ -13,7 +14,7 @@ from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
-from src.codegen.github import GithubClient, GithubError, blob_sha
+from src.codegen.github import COMPARE_FILE_LIMIT, REGULAR_FILE, GithubClient, GithubError, blob_sha
 from src.deployer.manifest import MANIFEST_FILE, REPORT_FILE, ManifestError, build_manifest, project_dir
 from src.run_report.models import Deployment, RunReport
 
@@ -63,26 +64,40 @@ def _deployment(github: GithubClient, branch: str, pull: dict, head_sha: str) ->
 
 
 def _verify_branch(
-    report: RunReport, files: dict[str, str], manifest: dict, branch: str, head_sha: str, github: GithubClient
+    report: RunReport,
+    files: dict[str, str],
+    manifest: dict,
+    base: str,
+    branch: str,
+    head_sha: str,
+    github: GithubClient,
 ) -> None:
     """Nhánh đã có chỉ được dùng lại khi đầu nhánh chứa đúng bộ file đã ký của chính run này.
 
-    Tên nhánh chỉ lấy 8 ký tự đầu run_id nên vẫn có thể trùng với run khác; nhánh của run khác, của chữ ký khác hay bị
-    sửa sau khi mở đều ra ManifestError (409), không bao giờ trả pull request của nó cho run này.
+    Phần diff so với nhánh mặc định (đúng nội dung pull request sẽ merge) chỉ được nằm trong thư mục pipeline; thư mục
+    đó ở đầu nhánh phải có đúng bộ file đã ký + run_report.json + manifest.json, mọi entry là file thường 100644 (không
+    symlink, submodule hay file thực thi) và nội dung khớp. Tên nhánh chỉ lấy 8 ký tự đầu run_id nên vẫn có thể trùng
+    với run khác; nhánh của run khác, của chữ ký khác hay bị sửa sau khi mở đều ra ManifestError (409), không bao giờ
+    trả pull request của nó cho run này.
     """
     folder = project_dir(manifest["model_name"])
-    blobs = {
-        path.removeprefix(f"{folder}/"): sha
-        for path, sha in github.tree_blobs(github.commit_tree(head_sha)).items()
+    changed = github.compare_files(base, head_sha)
+    entries = {
+        path.removeprefix(f"{folder}/"): entry
+        for path, entry in github.tree_entries(github.commit_tree(head_sha)).items()
         if path.startswith(f"{folder}/")
     }
-    matches = set(blobs) == {*files, REPORT_FILE, MANIFEST_FILE} and all(
-        blobs[path] == blob_sha(text) for path, text in files.items()
+    matches = (
+        len(changed) < COMPARE_FILE_LIMIT
+        and all(path.startswith(f"{folder}/") for path in changed)
+        and set(entries) == {*files, REPORT_FILE, MANIFEST_FILE}
+        and all(entry["type"] == "blob" and entry["mode"] == REGULAR_FILE for entry in entries.values())
+        and all(entries[path]["sha"] == blob_sha(text) for path, text in files.items())
     )
     if matches:
         try:
-            saved_manifest = json.loads(github.blob_text(blobs[MANIFEST_FILE]))
-            saved_report = json.loads(github.blob_text(blobs[REPORT_FILE]))
+            saved_manifest = json.loads(github.blob_text(entries[MANIFEST_FILE]["sha"]))
+            saved_report = json.loads(github.blob_text(entries[REPORT_FILE]["sha"]))
         except ValueError:
             saved_manifest = saved_report = None
         signed = {
@@ -120,7 +135,11 @@ def _commit_branch(
     content = {f"{folder}/{path}": text for path, text in files.items()}
     content[f"{folder}/{REPORT_FILE}"] = report.model_dump_json(indent=2, exclude={"deployment"}) + "\n"
     content[f"{folder}/{MANIFEST_FILE}"] = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
-    stale = [path for path in github.tree_blobs(base_tree) if path.startswith(f"{folder}/") and path not in content]
+    stale = [
+        path
+        for path, entry in github.tree_entries(base_tree).items()
+        if entry["type"] == "blob" and path.startswith(f"{folder}/") and path not in content
+    ]
     tree = github.create_tree(base_tree, content, delete=stale)
     message = (
         f"pipeline({manifest['model_name']}): v{report.version} đã duyệt\n\n"
@@ -135,7 +154,7 @@ def _commit_branch(
         head_sha = github.ref_sha(branch) if exc.upstream == 422 else None
         if head_sha is None:
             raise
-        _verify_branch(report, files, manifest, branch, head_sha, github)
+        _verify_branch(report, files, manifest, base, branch, head_sha, github)
         return head_sha
     return commit
 
@@ -165,7 +184,7 @@ def open_pull_request(report: RunReport, files: dict[str, str], github: GithubCl
         if head_sha is None:
             head_sha = _commit_branch(report, files, manifest, base, branch, github)
         else:
-            _verify_branch(report, files, manifest, branch, head_sha, github)
+            _verify_branch(report, files, manifest, base, branch, head_sha, github)
             if opened := github.open_pull_requests(branch):
                 return _deployment(github, branch, opened[0], head_sha)
         report_url = f"{repo['html_url']}/blob/{branch}/{project_dir(model_name)}/{REPORT_FILE}"

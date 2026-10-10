@@ -19,6 +19,23 @@ from src.spec import SPEC_FIXTURES_DIR, Spec
 TOKEN = "github_pat_token_bi_mat_khong_duoc_lo"
 REPO = "acme/atomesus-pipelines"
 FOLDER = "pipelines/fct_daily_orders"
+SYMLINK, EXECUTABLE, SUBMODULE = "120000", "100755", "160000"
+
+
+def _entry(value: str | dict | None) -> dict | None:
+    """Entry git của một giá trị trong cây giả: chuỗi là file thường 100644; dict ghi rõ mode (symlink, file thực thi:
+    `content`; submodule: `sha` commit)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {"type": "blob", "mode": "100644", "sha": blob_sha(value)}
+    if value["mode"] == SUBMODULE:
+        return {"type": "commit", "mode": SUBMODULE, "sha": value["sha"]}
+    return {"type": "blob", "mode": value["mode"], "sha": blob_sha(value["content"])}
+
+
+def _text(value: str | dict) -> str | None:
+    return value if isinstance(value, str) else value.get("content")
 
 
 class FakeGithub:
@@ -28,7 +45,7 @@ class FakeGithub:
     rồi trả 422, như khi một request Deploy khác vừa mở trước. `race_ref(sha commit vừa tạo) -> sha`: POST /git/refs
     thấy request khác vừa tạo nhánh trỏ vào commit trả về rồi trả 422. `before`: {"METHOD đường-dẫn-đầu": hàm} chạy
     trước khi xử lý request khớp, như khi có người đẩy commit lên nhánh đúng lúc đó. Đầu pull request luôn là đầu nhánh
-    hiện tại, như trên GitHub.
+    hiện tại, như trên GitHub. Cây lưu {đường dẫn: nội dung}; symlink, file thực thi, submodule ghi dạng dict (_entry).
     """
 
     def __init__(self, fail: dict | None = None, race_pull: bool = False):
@@ -51,14 +68,40 @@ class FakeGithub:
     def writes(self) -> list[tuple[str, str]]:
         return [r for r in self.requests if r[0] != "GET"]
 
-    def push(self, branch: str, path: str, content: str) -> str:
-        """Commit đẩy thẳng lên nhánh (ngoài hệ thống), trả sha mới."""
+    def push(self, branch: str, path: str, content: str | dict | None) -> str:
+        """Commit đẩy thẳng lên nhánh (ngoài hệ thống), trả sha mới. `content` None là xóa file."""
         tree = {**self.files_at(branch), path: content}
+        if content is None:
+            del tree[path]
         tree_sha, sha = f"t_push{len(self.trees)}", f"c_push{len(self.commits)}"
         self.trees[tree_sha] = tree
         self.commits[sha] = {"tree": tree_sha, "parents": [self.refs[branch]], "message": "đẩy thẳng"}
         self.refs[branch] = sha
         return sha
+
+    def _ancestors(self, sha: str) -> list[str]:
+        """Commit `sha` và mọi commit cha, gần trước xa sau."""
+        seen, queue = [], [sha]
+        while queue:
+            current = queue.pop(0)
+            if current not in seen:
+                seen.append(current)
+                queue += self.commits[current]["parents"]
+        return seen
+
+    def _compare(self, base: str, head: str) -> dict:
+        """Như GitHub compare `base...head`: file thay đổi từ điểm rẽ nhánh (merge base) tới `head`."""
+        base, head = self.refs.get(base, base), self.refs.get(head, head)
+        merge_base = next(sha for sha in self._ancestors(head) if sha in self._ancestors(base))
+        old, new = self.trees[self.commits[merge_base]["tree"]], self.trees[self.commits[head]["tree"]]
+        files = []
+        for path in sorted(set(old) | set(new)):
+            if path not in new:
+                files.append({"filename": path, "status": "removed", "sha": _entry(old[path])["sha"]})
+            elif _entry(old.get(path)) != _entry(new[path]):
+                status = "modified" if path in old else "added"
+                files.append({"filename": path, "status": status, "sha": _entry(new[path])["sha"]})
+        return {"merge_base_commit": {"sha": merge_base}, "files": files}
 
     def _current(self, pull: dict) -> dict:
         return {**pull, "head": {**pull["head"], "sha": self.refs[pull["head"]["ref"]]}}
@@ -104,13 +147,20 @@ class FakeGithub:
             return httpx.Response(200, json={"sha": sha, "tree": {"sha": self.commits[sha]["tree"]}})
         if method == "GET" and path.startswith("/git/trees/"):
             tree = self.trees[path.removeprefix("/git/trees/")]
-            entries = [{"path": p, "type": "blob", "sha": blob_sha(c)} for p, c in tree.items()]
+            # Như GitHub với recursive=1: có cả entry thư mục (type tree, mode 040000).
+            folders = {p.rsplit("/", i)[0] for p in tree for i in range(1, p.count("/") + 1)}
+            entries = [{"path": p, "type": "tree", "mode": "040000", "sha": f"tree:{p}"} for p in sorted(folders)]
+            entries += [{"path": p, **_entry(value)} for p, value in tree.items()]
             return httpx.Response(200, json={"tree": entries, "truncated": False})
         if method == "GET" and path.startswith("/git/blobs/"):
             sha = path.removeprefix("/git/blobs/")
-            content = next(c for tree in self.trees.values() for c in tree.values() if blob_sha(c) == sha)
+            contents = [_text(value) for tree in self.trees.values() for value in tree.values()]
+            content = next(c for c in contents if c is not None and blob_sha(c) == sha)
             encoded = base64.b64encode(content.encode()).decode()
             return httpx.Response(200, json={"sha": sha, "content": encoded, "encoding": "base64"})
+        if method == "GET" and path.startswith("/compare/"):
+            base, head = path.removeprefix("/compare/").split("...", 1)
+            return httpx.Response(200, json=self._compare(base, head))
         if method == "POST" and path == "/git/trees":
             tree = dict(self.trees[body["base_tree"]])
             for entry in body["tree"]:
@@ -344,6 +394,59 @@ def test_pull_request_changed_after_opening_is_not_returned():
 
     with pytest.raises(ManifestError):
         open_pull_request(report, files, github.client())
+
+
+def unsigned_change(files: dict[str, str], change: str) -> tuple[str, str | dict | None]:
+    """Thay đổi ngoài chữ ký đẩy lên nhánh: (đường dẫn, nội dung mới; None là xóa)."""
+    first = next(iter(files))
+    return {
+        # File đã ký đổi thành symlink / file thực thi nhưng giữ nguyên nội dung (sha blob không đổi).
+        "symlink": (f"{FOLDER}/{first}", {"mode": SYMLINK, "content": files[first]}),
+        "thuc_thi": (f"{FOLDER}/{first}", {"mode": EXECUTABLE, "content": files[first]}),
+        "submodule": (f"{FOLDER}/vendor", {"mode": SUBMODULE, "sha": "a" * 40}),
+        "them_ngoai_thu_muc": (".github/workflows/deploy.yml", "on: push\njobs: {}\n"),
+        "xoa_ngoai_thu_muc": ("README.md", None),
+        "thua_trong_thu_muc": (f"{FOLDER}/extra.sql", "select 1\n"),
+    }[change]
+
+
+@pytest.mark.parametrize("state", ["pr_open", "branch_only"])
+@pytest.mark.parametrize(
+    "change",
+    ["symlink", "thuc_thi", "submodule", "them_ngoai_thu_muc", "xoa_ngoai_thu_muc", "thua_trong_thu_muc"],
+)
+def test_existing_branch_with_unsigned_change_is_rejected(change, state):
+    report, files = approved_report()
+    github = FakeGithub()
+    if state == "branch_only":
+        github.fail = {"POST /pulls": 500}
+        with pytest.raises(GithubError):
+            open_pull_request(report, files, github.client())
+        github.fail = {}
+    else:
+        open_pull_request(report, files, github.client())
+    github.push(branch_name("fct_daily_orders", report.run_id, report.version), *unsigned_change(files, change))
+    writes, pulls = len(github.writes()), len(github.pulls)
+
+    with pytest.raises(ManifestError) as caught:
+        open_pull_request(report, files, github.client())
+
+    assert "khác bộ file đã duyệt" in str(caught.value)
+    assert len(github.writes()) == writes and len(github.pulls) == pulls, "không mở hay trả pull request"
+
+
+def test_existing_branch_is_compared_from_where_it_left_default_branch():
+    """Nhánh mặc định đi tiếp sau khi mở nhánh, file cũ không còn ký đã bị xóa: phần diff vẫn đúng bộ file đã ký."""
+    report, files = approved_report()
+    github = FakeGithub()
+    github.trees["t0"] = {"README.md": "x\n", f"{FOLDER}/old_model.sql": "select 1\n"}
+    first = open_pull_request(report, files, github.client())
+    github.push("main", "README.md", "sửa trên nhánh mặc định\n")
+
+    again = open_pull_request(report, files, github.client())
+
+    assert again.pr_number == first.pr_number and len(github.pulls) == 1
+    assert ("GET", f"/compare/main...{first.head_sha}") in github.requests
 
 
 @pytest.mark.parametrize(
