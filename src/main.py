@@ -24,7 +24,12 @@ async def sweep_unfinished(store_path: str, stale_seconds: float) -> None:
     while True:
         await asyncio.sleep(stale_seconds)
         stale_before = datetime.now(UTC) - timedelta(seconds=stale_seconds)
-        if abandoned := abandon_unfinished(store_path, stale_before=stale_before):
+        try:
+            abandoned = abandon_unfinished(store_path, stale_before=stale_before)
+        except Exception as exc:  # store bận/khóa: bỏ lượt này, vòng quét vẫn phải sống tới lượt sau
+            print(f"Quét run mồ côi lỗi: {type(exc).__name__}: {exc}")
+            continue
+        if abandoned:
             print(f"Đánh dấu lỗi {len(abandoned)} run không còn tiến triển")
 
 

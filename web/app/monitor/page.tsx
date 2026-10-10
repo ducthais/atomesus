@@ -11,8 +11,9 @@ const seconds = (s: number | null | undefined) => s == null ? '—' : `${s.toLoc
 /** Day 2: pipeline đã deploy, lần chạy theo lịch gần nhất so với lúc deploy, luật suy giảm đang kích hoạt, cảnh báo. */
 export default async function MonitorPage() {
   const [found, user] = await Promise.all([getMonitor(), currentUser()]);
+  const engineer = user?.role === 'Engineer';
   return <>
-    <PageHeader kicker="Day 2" title="Theo dõi pipeline" icon={<Gauge size={22} />} actions={<MonitorActions canCheck={user?.role === 'Engineer'} />}>
+    <PageHeader kicker="Day 2" title="Theo dõi pipeline" icon={<Gauge size={22} />} actions={<MonitorActions canCheck={engineer} />}>
       <p>Số đo mỗi lần pipeline đã duyệt chạy theo lịch (Dagster), so với đường cơ sở lúc chạy thử. Luật suy giảm đọc
         ngưỡng từ <code>objectives.yml</code>; nhãn ở đây chỉ để xem, không tạo run sửa cho tới khi bấm <strong>Kiểm tra suy giảm</strong>.</p>
     </PageHeader>
@@ -25,7 +26,7 @@ export default async function MonitorPage() {
               <strong className="mono">{alert.model}</strong> <span className="muted small">· {fmtAgo(alert.at)}</span>
               <p>{alert.message}</p>
               {alert.run_id && <Link href={`/runs/${shortId(alert.run_id)}`} className="small">Mở run {shortId(alert.run_id)} →</Link>}</div>
-            <ResolveAlertButton alertId={alert.id} />
+            <ResolveAlertButton alertId={alert.id} canResolve={engineer} />
           </li>)}</ul>}
       </Panel>
 

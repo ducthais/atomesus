@@ -168,9 +168,7 @@ def approve_run(
     if file_hashes(files)[1] != report.files_hash:
         raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không triển khai được.")
     approved = _decide(report, "approved", user, body.comment, status="APPROVED", stage_reached="review")
-    if not transition_run_report(
-        config.store_path, approved, "READY_FOR_REVIEW", report.version, report.files_hash
-    ):
+    if not transition_run_report(config.store_path, approved, "READY_FOR_REVIEW", report.version, report.files_hash):
         raise HTTPException(409, "Run đã thay đổi kể từ lúc review. Tải lại trước khi duyệt.")
     try:
         deploy_local(Spec.model_validate(report.spec), files, config.deploy_dir)
@@ -192,9 +190,7 @@ def reject_run(
     """Từ chối run; không ghi file nào ra Dagster."""
     report = _reviewable(run_id, body, user, config.store_path)
     rejected = _decide(report, "rejected", user, body.comment, status="REJECTED", stage_reached="review")
-    if not transition_run_report(
-        config.store_path, rejected, "READY_FOR_REVIEW", report.version, report.files_hash
-    ):
+    if not transition_run_report(config.store_path, rejected, "READY_FOR_REVIEW", report.version, report.files_hash):
         raise HTTPException(409, "Run đã thay đổi kể từ lúc review. Tải lại trước khi từ chối.")
     return rejected
 

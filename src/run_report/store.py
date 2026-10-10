@@ -79,7 +79,13 @@ def save_run_report(path: str, report: RunReport) -> None:
             " ON CONFLICT(run_id) DO UPDATE SET status = excluded.status, report = excluded.report,"
             " updated_at = excluded.updated_at"
             " WHERE run_reports.status <> 'CANCELLED' OR excluded.status = 'CANCELLED'",
-            (report.run_id, report.status, report.created_at.astimezone(UTC).isoformat(), report.model_dump_json(), now),
+            (
+                report.run_id,
+                report.status,
+                report.created_at.astimezone(UTC).isoformat(),
+                report.model_dump_json(),
+                now,
+            ),
         )
         # Chỉ giải phóng khoản giữ chỗ khi báo cáo chứng minh công việc tương ứng đã hoàn tất. Reservation của một
         # lần gọi LLM bị timeout/cancel vẫn ở lại đến hết ngày, vì nhà cung cấp có thể đã tính tiền dù usage chưa về.
@@ -190,27 +196,38 @@ def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HI
 def abandon_unfinished(path: str, stale_before: datetime | None = None) -> list[str]:
     """Run đang chạy nền lúc backend tắt sẽ không bao giờ xong: đánh dấu lỗi để giao diện không chờ mãi.
 
-    Chỉ gọi lúc backend khởi động (chưa có việc nền nào). DRAFT là nháp chờ người (xác nhận kế hoạch hoặc sửa
-    mapping), không phải đang chạy.
+    `stale_before`: chỉ đóng run không cập nhật từ trước mốc này, để run còn sống ở worker khác (dùng chung store)
+    không bị đóng nhầm; None = đóng mọi run đang chạy. DRAFT là nháp chờ người (xác nhận kế hoạch hoặc sửa
+    mapping), không phải đang chạy. Mỗi run đọc lại và ghi trong cùng một giao dịch ghi: worker vừa ghi tiến độ
+    giữa lúc liệt kê và lúc đóng thì run được giữ nguyên.
     """
     abandoned = []
     for status in ("PLAN_CONFIRMED", "GENERATING", "VALIDATING"):
-        for report in list_run_reports(path, status, limit=1000):
-            if stale_before is not None:
-                with _database(path) as conn:
-                    row = conn.execute("SELECT updated_at FROM run_reports WHERE run_id = ?", (report.run_id,)).fetchone()
-                updated_at = datetime.fromisoformat(row[0]) if row and row[0] else report.created_at
-                if updated_at >= stale_before:
+        for listed in list_run_reports(path, status, limit=1000):
+            with _database(path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT status, report, updated_at FROM run_reports WHERE run_id = ?", (listed.run_id,)
+                ).fetchone()
+                if row is None or row[0] != status:
                     continue
-            error = {
-                "stage": report.stage_reached,
-                "error": "Backend khởi động lại khi run đang chạy; hãy gửi lại yêu cầu.",
-            }
-            save_run_report(
-                path,
-                report.model_copy(update={"status": "INTERNAL_ERROR", "error_trace": [*report.error_trace, error]}),
-            )
-            abandoned.append(report.run_id)
+                report = RunReport.model_validate_json(row[1])
+                updated_at = datetime.fromisoformat(row[2]) if row[2] else report.created_at
+                if stale_before is not None and updated_at >= stale_before:
+                    continue
+                error = {
+                    "stage": report.stage_reached,
+                    "error": "Run không còn tiến triển (backend khởi động lại hoặc worker dừng); hãy gửi lại yêu cầu.",
+                }
+                failed = report.model_copy(
+                    update={"status": "INTERNAL_ERROR", "error_trace": [*report.error_trace, error]}
+                )
+                # Chi phí giữ nguyên bản đã lưu nên sổ ngân sách không đổi; chỉ đổi trạng thái.
+                conn.execute(
+                    "UPDATE run_reports SET status = ?, report = ?, updated_at = ? WHERE run_id = ?",
+                    (failed.status, failed.model_dump_json(), datetime.now(UTC).isoformat(), failed.run_id),
+                )
+            abandoned.append(listed.run_id)
     return abandoned
 
 

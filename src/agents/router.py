@@ -113,10 +113,7 @@ def _staging(check: dict) -> str:
     text = f"{o.get('rejected')}/{o.get('bronze')} dòng bị tách ({o.get('reject_pct')}% > {o.get('max_reject_pct')}%)"
     if o.get("duplicates", 0) < 0 or not o.get("bronze"):
         text = f"bronze {o.get('bronze')} dòng, staging {o.get('staging')}, tách {o.get('rejected')}"
-    return (
-        text
-        + (f"; lý do nhiều nhất: {reasons}" if reasons else "")
-    )
+    return text + (f"; lý do nhiều nhất: {reasons}" if reasons else "")
 
 
 def _metric(check: dict) -> str:

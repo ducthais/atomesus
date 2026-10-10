@@ -42,8 +42,9 @@ class AgentRunRequest(BaseModel):
 
 
 def agent_deps(config: PipelineSettings = Depends(settings)) -> AgentDeps:
-    from src.agents import budget
     """Nạp lại chính sách mỗi run (sửa YAML có hiệu lực ngay, NFR-04)."""
+    from src.agents import budget
+
     try:
         policy = load_policy()
     except PolicyError as exc:

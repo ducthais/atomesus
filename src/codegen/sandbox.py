@@ -155,12 +155,14 @@ def _terminate_process_tree(process: subprocess.Popen) -> None:
         return
     try:
         if os.name == "nt":
-            subprocess.run(
+            done = subprocess.run(
                 ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                 capture_output=True,
                 timeout=5,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
+            if done.returncode and process.poll() is None:
+                process.kill()
         else:
             os.killpg(process.pid, 9)
     except (OSError, subprocess.SubprocessError):
