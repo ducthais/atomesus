@@ -4,15 +4,20 @@ Mỗi run một dòng, khóa theo `run_id`; bản ghi được kiểm tra bằng
 """
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
+
+from pydantic import ValidationError
 
 from src.run_report.models import RunReport, RunStatus
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "run_reports"
 HISTORY_LIMIT = 100
+# GitHub chỉ cho gửi lại delivery trong vài ngày; giữ lâu hơn hẳn mức đó.
+DELIVERY_RETENTION_DAYS = 30
 
 
 @contextmanager
@@ -47,6 +52,11 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
                 "CREATE TABLE IF NOT EXISTS budget_reservations ("
                 " run_id TEXT NOT NULL, version INTEGER NOT NULL, category TEXT NOT NULL, usd REAL NOT NULL,"
                 " reserved_at TEXT NOT NULL, PRIMARY KEY (run_id, version, category))"
+            )
+            # Delivery webhook GitHub đã xử lý (X-GitHub-Delivery), để gửi lại không áp hai lần.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS webhook_deliveries ("
+                " delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, run_id TEXT, received_at TEXT NOT NULL)"
             )
             conn.commit()  # schema/migration work must finish before callers request BEGIN IMMEDIATE
             yield conn
@@ -126,6 +136,65 @@ def transition_run_report(
             (report.status, report.model_dump_json(), now, report.run_id, expected_status),
         )
         return cursor.rowcount == 1
+
+
+Change = Callable[[RunReport], RunReport | None]
+
+
+def _apply_change(conn: sqlite3.Connection, run_id: str, change: Change) -> RunReport | None:
+    """Đọc bản đang lưu, áp `change`, ghi compare-and-swap theo status vừa đọc. Gọi trong giao dịch BEGIN IMMEDIATE.
+
+    Trả None nếu run không có, không đọc được thành RunReport, hoặc `change` trả None (không cần đổi gì).
+    """
+    row = conn.execute("SELECT status, report FROM run_reports WHERE run_id = ?", (run_id,)).fetchone()
+    if row is None:
+        return None
+    try:
+        current = RunReport.model_validate_json(row[1])
+    except ValidationError:
+        return None
+    updated = change(current)
+    if updated is None:
+        return None
+    cursor = conn.execute(
+        "UPDATE run_reports SET status = ?, report = ?, updated_at = ? WHERE run_id = ? AND status = ?",
+        (updated.status, updated.model_dump_json(), datetime.now(UTC).isoformat(), run_id, row[0]),
+    )
+    return updated if cursor.rowcount == 1 else None
+
+
+def update_run_report(path: str, run_id: str, change: Change) -> RunReport | None:
+    """Đọc - sửa - ghi một run trong cùng một giao dịch ghi: thay đổi đồng thời (webhook, callback, Deploy) không bị
+    ghi đè vì `change` luôn nhận bản mới nhất. Ngoại lệ trong `change` hủy cả giao dịch."""
+    with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        return _apply_change(conn, run_id, change)
+
+
+def record_webhook_delivery(
+    path: str, delivery_id: str, event: str, run_id: str | None = None, change: Change | None = None
+) -> tuple[Literal["duplicate", "ignored", "applied"], RunReport | None]:
+    """Ghi nhận một delivery webhook và áp thay đổi của nó vào run trong cùng một giao dịch ghi.
+
+    Delivery đã ghi → ("duplicate", None), không đổi gì. Không có run / `change` trả None → ghi delivery,
+    ("ignored", None). Ngược lại → ("applied", bản mới). `change` lỗi thì delivery không được ghi, GitHub gửi lại được.
+    Delivery cũ hơn DELIVERY_RETENTION_DAYS được dọn để bảng không phình mãi.
+    """
+    now = datetime.now(UTC)
+    with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?", (delivery_id,)).fetchone():
+            return "duplicate", None
+        updated = _apply_change(conn, run_id, change) if run_id and change else None
+        conn.execute(
+            "DELETE FROM webhook_deliveries WHERE received_at < ?",
+            ((now - timedelta(days=DELIVERY_RETENTION_DAYS)).isoformat(),),
+        )
+        conn.execute(
+            "INSERT INTO webhook_deliveries VALUES (?, ?, ?, ?)",
+            (delivery_id, event, run_id if updated else None, now.isoformat()),
+        )
+        return ("applied", updated) if updated else ("ignored", None)
 
 
 def reserve_budget(

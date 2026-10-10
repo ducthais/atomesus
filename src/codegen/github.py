@@ -37,6 +37,8 @@ class GithubSettings(BaseSettings):
     # GitHub Enterprise Server thì đổi thành https://<host>/api/v3.
     api_url: str = "https://api.github.com"
     timeout_sec: float = Field(default=15, gt=0, le=120)
+    # Secret của webhook repo pipeline (PIPELINE_GITHUB_WEBHOOK_SECRET); để trống thì /webhooks/github trả 503.
+    webhook_secret: SecretStr = SecretStr("")
 
 
 class GithubError(Exception):

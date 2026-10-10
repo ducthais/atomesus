@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 Trigger = Literal["user_request", "manual_optimize", "regression"]
 
@@ -80,6 +80,19 @@ Decision = Literal["approved", "rejected", "changes_requested"]
 PER_SOURCE_CHECKS: frozenset[str] = frozenset({"row_reconcile", "hash_reconcile", "idempotent", "staging_reconcile"})
 # Trạng thái chỉ đạt được sau khi Reviewer duyệt (SPEC §11.1)
 APPROVED_STATUSES: frozenset[str] = frozenset({"APPROVED", "DEPLOYED", "DEPLOY_FAILED"})
+# Trường tiến độ của Deployment do webhook GitHub / deployer ghi sau khi mở pull request
+DEPLOYMENT_PROGRESS: frozenset[str] = frozenset(
+    {
+        "ci_conclusion",
+        "ci_url",
+        "ci_at",
+        "merged_at",
+        "merge_commit_sha",
+        "closed_at",
+        "deployed_commit_sha",
+        "deployed_at",
+    }
+)
 
 
 class _Contract(BaseModel):
@@ -188,7 +201,10 @@ class Approval(_Contract):
 class Deployment(_Contract):
     """Pull request P16 mở vào repo pipeline (SPEC §9.5). `status` vẫn APPROVED trong lúc chờ merge.
 
-    `state`: open khi vừa mở; webhook GitHub cập nhật merged / closed.
+    `state`: open khi vừa mở; webhook GitHub cập nhật merged / closed. `ci_conclusion`: kết luận CI gần nhất của
+    `head_sha` (success, failure, cancelled, timed_out). `deployed_*`: deployer báo đã cài lên production.
+    Các trường sau `opened_at` đều tùy chọn để bản ghi cũ vẫn đọc được, và chỉ có mặt khi đã có giá trị để bản xuất ra
+    (JSON lưu trữ, API) giữ đúng dạng cũ cho tới khi webhook / deployer ghi.
     """
 
     repo: str = Field(min_length=1)
@@ -198,6 +214,19 @@ class Deployment(_Contract):
     head_sha: str = Field(min_length=1)
     state: Literal["open", "merged", "closed"] = "open"
     opened_at: datetime
+    ci_conclusion: str | None = None
+    ci_url: str | None = None
+    ci_at: datetime | None = None
+    merged_at: datetime | None = None
+    merge_commit_sha: str | None = None
+    closed_at: datetime | None = None
+    deployed_commit_sha: str | None = None
+    deployed_at: datetime | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_progress(self, handler):
+        data = handler(self)
+        return {key: value for key, value in data.items() if value is not None or key not in DEPLOYMENT_PROGRESS}
 
 
 class RunReport(_Contract):

@@ -1,0 +1,505 @@
+"""POST /webhooks/github và /deployments/callback (SPEC §9.5 bước 3–5, §11.2 dòng P16). Offline: không gọi GitHub."""
+
+import hashlib
+import hmac
+import json
+import logging
+from datetime import UTC, datetime
+
+import pytest
+from pydantic import SecretStr
+
+from src.api.webhooks import DeployerSettings, deployer_settings, github_settings, rework_deps
+from src.codegen.github import GithubSettings
+from src.main import app
+from src.pipeline import auth
+from src.pipeline.settings import PipelineSettings
+from src.run_report import FIXTURES_DIR, RunReport, save_run_report
+from src.run_report.models import Deployment
+from src.run_report.store import get_run_report, save_run_files
+
+RUN_ID = "3f6c1a2e-8b4d-4c7a-9e21-0d5b7a1c9f10"
+REPO = "acme/atomesus-pipelines"
+SECRET = "webhook-secret-for-tests-0123456789"
+DEPLOYER_SECRET = "deployer-secret-for-tests-0123456789"
+TOKEN = "github_pat_test_token_0123456789"
+HEAD = "a" * 40
+BRANCH = f"pipeline/fct_daily_orders/{RUN_ID[:8]}-v3"
+WEBHOOK = "/api/v1/webhooks/github"
+CALLBACK = "/api/v1/deployments/callback"
+
+
+def github_config(**changes) -> GithubSettings:
+    values = {"repo": REPO, "webhook_secret": SecretStr(SECRET), "token": SecretStr(TOKEN), **changes}
+    return GithubSettings(_env_file=None, **values)
+
+
+@pytest.fixture
+def store_path(tmp_path):
+    """Sổ bằng chứng tạm nạp RunReport mẫu; secret giả; agent của vòng P4 dùng LLM và sandbox giả."""
+    from tests.test_agents.test_graph import SPEC, FakeLLM, deps
+
+    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+    for path in FIXTURES_DIR.glob("*.json"):
+        save_run_report(config.store_path, RunReport.model_validate_json(path.read_text(encoding="utf-8")))
+    llm = FakeLLM(SPEC)
+    app.dependency_overrides[auth.settings] = lambda: config
+    app.dependency_overrides[github_settings] = lambda: github_config()
+    app.dependency_overrides[deployer_settings] = lambda: DeployerSettings(_env_file=None, secret=DEPLOYER_SECRET)
+    app.dependency_overrides[rework_deps] = lambda: lambda: deps(llm)
+    yield config.store_path
+    for dependency in (auth.settings, github_settings, deployer_settings, rework_deps):
+        app.dependency_overrides.pop(dependency, None)
+
+
+@pytest.fixture
+def approved(store_path) -> RunReport:
+    """Run đã duyệt (version 3) có pull request #7 đang mở với head HEAD, như sau POST /runs/{id}/deploy."""
+    from src.codegen.render import file_hashes, render
+    from src.policy.loader import load_policy
+    from src.spec import SPEC_FIXTURES_DIR, Spec
+    from tests.test_agents.test_graph import PLAN
+
+    spec = Spec.model_validate_json((SPEC_FIXTURES_DIR / "spec_01_pg_daily_orders.json").read_text(encoding="utf-8"))
+    files = render(spec, load_policy())
+    hashes, files_hash = file_hashes(files)
+    ready = get_run_report(store_path, RUN_ID)
+    now = datetime.now(UTC)
+    approval = {"decision": "approved", "reviewer": "an", "files_hash": files_hash, "version": 3, "at": now}
+    report = RunReport.model_validate(
+        {
+            **ready.model_dump(),
+            "plan": PLAN,
+            "spec": spec.model_dump(by_alias=True, mode="json"),
+            "files": hashes,
+            "files_hash": files_hash,
+            "status": "APPROVED",
+            "stage_reached": "deploy",
+            "attempts": {"spec": 2, "sql": 1},
+            "approval": approval,
+            "review_history": [approval],
+            "deployment": {
+                "repo": REPO,
+                "branch": BRANCH,
+                "pr_number": 7,
+                "pr_url": f"https://github.com/{REPO}/pull/7",
+                "head_sha": HEAD,
+                "opened_at": now,
+            },
+        }
+    )
+    save_run_report(store_path, report)
+    save_run_files(store_path, RUN_ID, report.version, files)
+    return report
+
+
+def sign(body: bytes, secret: str = SECRET) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+async def send(client, event: str, payload: dict, delivery: str = "delivery-1", signature: str | None = None):
+    body = json.dumps(payload).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "X-GitHub-Event": event,
+        "X-GitHub-Delivery": delivery,
+        "X-Hub-Signature-256": sign(body) if signature is None else signature,
+    }
+    response = await client.post(WEBHOOK, content=body, headers=headers)
+    assert SECRET not in response.text and TOKEN not in response.text
+    return response
+
+
+def pull_closed(merged: bool, sha: str = HEAD, number: int = 7, ref: str = BRANCH, repo: str = REPO) -> dict:
+    return {
+        "action": "closed",
+        "repository": {"full_name": repo},
+        "sender": {"login": "octo"},
+        "pull_request": {
+            "number": number,
+            "merged": merged,
+            "head": {"ref": ref, "sha": sha},
+            "merged_at": "2026-10-10T10:00:00Z" if merged else None,
+            "closed_at": "2026-10-10T10:00:00Z",
+            "merge_commit_sha": "m" * 40 if merged else None,
+        },
+    }
+
+
+def ci(event: str, conclusion: str, sha: str = HEAD, branch: str = BRANCH) -> dict:
+    return {
+        "action": "completed",
+        "repository": {"full_name": REPO},
+        "sender": {"login": "github-actions[bot]"},
+        event: {
+            "head_sha": sha,
+            "head_branch": branch,
+            "conclusion": conclusion,
+            "html_url": f"https://github.com/{REPO}/actions/runs/42",
+            "updated_at": "2026-10-10T10:05:00Z",
+        },
+    }
+
+
+def stored(store_path) -> str:
+    return get_run_report(store_path, RUN_ID).model_dump_json()
+
+
+# ---- Chữ ký, cấu hình, kích thước ------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_without_configured_secret_returns_503(client, approved):
+    app.dependency_overrides[github_settings] = lambda: github_config(webhook_secret=SecretStr(""))
+
+    response = await send(client, "pull_request", pull_closed(merged=True))
+
+    assert response.status_code == 503
+    assert "PIPELINE_GITHUB_WEBHOOK_SECRET" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "signature",
+    ["", "sha1=" + "0" * 40, "sha256=" + "0" * 64, sign(b"other body"), sign(b"x", "wrong-secret")],
+    ids=["missing", "wrong-algorithm", "zeros", "other-body", "wrong-secret"],
+)
+async def test_webhook_rejects_missing_or_wrong_signature(client, approved, store_path, signature):
+    before = stored(store_path)
+
+    response = await send(client, "pull_request", pull_closed(merged=True), signature=signature)
+
+    assert response.status_code == 401, response.text
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_webhook_body_over_one_megabyte_returns_413(client, approved, store_path):
+    body = b'{"pad": "' + b"x" * (1024 * 1024) + b'"}'
+
+    response = await client.post(
+        WEBHOOK,
+        content=body,
+        headers={"X-GitHub-Event": "ping", "X-GitHub-Delivery": "big", "X-Hub-Signature-256": sign(body)},
+    )
+
+    assert response.status_code == 413
+
+
+# ---- Pull request merge / đóng ------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_merged_pull_request_marks_deployment_merged_and_keeps_approved(client, approved, store_path):
+    response = await send(client, "pull_request", pull_closed(merged=True))
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "applied", "run_id": RUN_ID, "version": 3, "run_status": "APPROVED"}
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == "APPROVED" and report.version == 3 and report.approval == approved.approval
+    assert report.deployment.state == "merged"
+    assert report.deployment.merged_at == datetime(2026, 10, 10, 10, tzinfo=UTC)
+    assert report.deployment.merge_commit_sha == "m" * 40
+
+
+@pytest.mark.asyncio
+async def test_same_delivery_twice_changes_nothing(client, approved, store_path):
+    first = await send(client, "pull_request", pull_closed(merged=True), delivery="same")
+    after_first = stored(store_path)
+
+    again = await send(client, "pull_request", pull_closed(merged=False), delivery="same")
+
+    assert first.status_code == 200 and first.json()["status"] == "applied"
+    assert again.status_code == 200 and again.json()["status"] == "duplicate"
+    assert stored(store_path) == after_first
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pull_closed(merged=True, sha="b" * 40),
+        pull_closed(merged=True, number=8),
+        pull_closed(merged=True, repo="someone/other-repo"),
+    ],
+    ids=["other-head-sha", "other-pr-number", "other-repo"],
+)
+async def test_event_for_another_pull_request_is_ignored(client, approved, store_path, payload):
+    before = stored(store_path)
+
+    response = await send(client, "pull_request", payload)
+
+    assert response.status_code == 202 and response.json()["status"] == "ignored"
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_closed_without_merge_starts_new_version_from_p4(client, approved, store_path):
+    response = await send(client, "pull_request", pull_closed(merged=False))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run_status"] == "GENERATING" and response.json()["version"] == 4
+    revised = get_run_report(store_path, RUN_ID)
+    assert revised.version == 4 and revised.status == "READY_FOR_REVIEW", revised.error_trace
+    assert revised.approval is None and revised.deployment is None, "chữ ký và pull request cũ không còn hiệu lực"
+    assert approved.approval in revised.review_history
+    entry = next(item for item in revised.spec_history if "deployment" in item)
+    assert entry["version"] == 3
+    assert "#7" in entry["reason"] and "đóng mà không merge" in entry["reason"]
+    assert entry["deployment"]["state"] == "closed" and entry["deployment"]["closed_at"]
+    assert any(e.event == "changes_requested" and e.actor == "github:octo" for e in revised.timeline)
+
+
+@pytest.mark.asyncio
+async def test_closed_after_merge_does_not_reopen_the_loop(client, approved, store_path):
+    await send(client, "pull_request", pull_closed(merged=True), delivery="merge")
+    after_merge = stored(store_path)
+
+    response = await send(client, "pull_request", pull_closed(merged=False), delivery="close")
+
+    assert response.status_code == 202
+    assert stored(store_path) == after_merge
+
+
+# ---- CI ---------------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event", "conclusion"),
+    [("workflow_run", "failure"), ("check_suite", "timed_out"), ("check_suite", "cancelled")],
+)
+async def test_red_ci_starts_new_version_from_p4(client, approved, store_path, event, conclusion):
+    response = await send(client, event, ci(event, conclusion))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run_status"] == "GENERATING"
+    revised = get_run_report(store_path, RUN_ID)
+    assert revised.version == 4 and revised.approval is None
+    entry = next(item for item in revised.spec_history if "deployment" in item)
+    assert entry["version"] == 3
+    assert conclusion in entry["reason"] and HEAD[:12] in entry["reason"]
+    assert entry["deployment"]["ci_conclusion"] == conclusion and entry["deployment"]["state"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_green_ci_only_records_the_conclusion(client, approved, store_path):
+    response = await send(client, "check_suite", ci("check_suite", "success"))
+
+    assert response.status_code == 200, response.text
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == "APPROVED" and report.version == 3
+    assert report.deployment.ci_conclusion == "success" and report.deployment.state == "open"
+    assert report.deployment.ci_url.endswith("/actions/runs/42")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event", "payload"),
+    [
+        ("ping", {"zen": "Keep it simple.", "repository": {"full_name": REPO}}),
+        ("push", {"ref": "refs/heads/main", "repository": {"full_name": REPO}}),
+        ("pull_request", {**pull_closed(merged=False), "action": "opened"}),
+        ("pull_request", pull_closed(merged=False, ref="feature/x")),
+        ("check_suite", ci("check_suite", "failure", branch="main")),
+        ("check_suite", {**ci("check_suite", "success"), "action": "requested"}),
+        ("workflow_run", ci("workflow_run", "skipped")),
+    ],
+    ids=["ping", "push", "pr-opened", "not-pipeline-branch", "ci-on-main", "ci-requested", "ci-skipped"],
+)
+async def test_unrelated_events_return_202_and_change_nothing(client, approved, store_path, event, payload):
+    before = stored(store_path)
+
+    response = await send(client, event, payload)
+
+    assert response.status_code == 202 and response.json()["status"] == "ignored"
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_relevant_event_without_delivery_id_is_rejected(client, approved):
+    body = json.dumps(pull_closed(merged=True)).encode()
+
+    response = await client.post(
+        WEBHOOK, content=body, headers={"X-GitHub-Event": "pull_request", "X-Hub-Signature-256": sign(body)}
+    )
+
+    assert response.status_code == 400
+
+
+# ---- Callback deployer --------------------------------------------------------------------------------------------
+
+
+def callback_body(report: RunReport, status: str = "deployed", **changes) -> dict:
+    return {
+        "run_id": report.run_id,
+        "version": report.version,
+        "files_hash": report.files_hash,
+        "model_name": "fct_daily_orders",
+        "commit_sha": "c" * 40,
+        "status": status,
+        "detail": "",
+        "at": "2026-10-10T10:10:00Z",
+        **changes,
+    }
+
+
+async def callback(client, payload: dict, signature: str | None = None):
+    body = json.dumps(payload).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Atomesus-Signature": sign(body, DEPLOYER_SECRET) if signature is None else signature,
+    }
+    response = await client.post(CALLBACK, content=body, headers=headers)
+    assert DEPLOYER_SECRET not in response.text and TOKEN not in response.text
+    return response
+
+
+@pytest.mark.asyncio
+async def test_callback_deployed_moves_run_to_deployed_and_repeat_is_idempotent(client, approved, store_path):
+    await send(client, "pull_request", pull_closed(merged=True))
+
+    response = await callback(client, callback_body(approved))
+    after_first = stored(store_path)
+    again = await callback(client, callback_body(approved))
+
+    assert response.status_code == 200, response.text
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == "DEPLOYED" and report.stage_reached == "deploy"
+    assert report.deployment.state == "merged", "callback không ghi đè thay đổi của webhook merge"
+    assert report.deployment.deployed_commit_sha == "c" * 40 and report.deployment.deployed_at
+    assert again.status_code == 200 and again.json()["status"] == "DEPLOYED"
+    assert stored(store_path) == after_first
+
+
+@pytest.mark.asyncio
+async def test_callback_failed_records_detail_in_error_trace(client, approved, store_path):
+    detail = f"dagster reload lỗi: token={DEPLOYER_SECRET}"
+
+    response = await callback(client, callback_body(approved, "failed", detail=detail))
+    after_first = stored(store_path)
+    again = await callback(client, callback_body(approved, "failed", detail=detail))
+
+    assert response.status_code == 200, response.text
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == "DEPLOY_FAILED"
+    error = report.error_trace[-1]
+    assert error["stage"] == "deploy" and "dagster reload lỗi" in error["error"] and "c" * 12 in error["error"]
+    assert DEPLOYER_SECRET not in report.model_dump_json()
+    assert again.status_code == 200 and stored(store_path) == after_first
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [{"files_hash": "sha256:" + "0" * 64}, {"version": 2}, {"model_name": "fct_other"}, {"run_id": "missing"}],
+    ids=["files-hash", "version", "model-name", "unknown-run"],
+)
+async def test_callback_not_matching_signature_returns_409(client, approved, store_path, changes):
+    before = stored(store_path)
+
+    response = await callback(client, callback_body(approved, **changes))
+
+    assert response.status_code == 409
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_callback_conflicting_result_or_unapproved_run_returns_409(client, approved, store_path):
+    assert (await callback(client, callback_body(approved))).status_code == 200
+
+    conflicting = await callback(client, callback_body(approved, "failed", detail="x"))
+
+    assert conflicting.status_code == 409
+    assert get_run_report(store_path, RUN_ID).status == "DEPLOYED"
+
+
+@pytest.mark.asyncio
+async def test_callback_for_run_waiting_review_returns_409(client, store_path):
+    ready = get_run_report(store_path, RUN_ID)
+
+    response = await callback(client, callback_body(ready))
+
+    assert response.status_code == 409
+    assert get_run_report(store_path, RUN_ID).status == "READY_FOR_REVIEW"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signature", ["", "sha256=" + "0" * 64, sign(b"{}", DEPLOYER_SECRET), sign(b"{}", SECRET)])
+async def test_callback_rejects_missing_or_wrong_signature(client, approved, store_path, signature):
+    before = stored(store_path)
+
+    response = await callback(client, callback_body(approved), signature=signature)
+
+    assert response.status_code == 401
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_callback_without_configured_secret_returns_503(client, approved):
+    app.dependency_overrides[deployer_settings] = lambda: DeployerSettings(_env_file=None, secret="")
+
+    response = await callback(client, callback_body(approved))
+
+    assert response.status_code == 503 and "PIPELINE_DEPLOYER_SECRET" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_callback_with_malformed_body_returns_422(client, approved):
+    response = await callback(client, {**callback_body(approved), "status": "maybe"})
+
+    assert response.status_code == 422
+
+
+# ---- Secret, dữ liệu cũ, vòng người ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_secrets_never_reach_logs(client, approved, caplog):
+    caplog.set_level(logging.DEBUG)
+
+    await send(client, "pull_request", pull_closed(merged=True), delivery="log-1")
+    await send(client, "pull_request", pull_closed(merged=True), delivery="log-2", signature="sha256=" + "1" * 64)
+    await callback(client, callback_body(approved))
+
+    for secret in (SECRET, DEPLOYER_SECRET, TOKEN):
+        assert secret not in caplog.text
+
+
+def test_old_deployment_without_ci_fields_still_reads():
+    old = {
+        "repo": REPO,
+        "branch": BRANCH,
+        "pr_number": 7,
+        "pr_url": f"https://github.com/{REPO}/pull/7",
+        "head_sha": HEAD,
+        "state": "open",
+        "opened_at": "2026-10-10T09:00:00Z",
+    }
+
+    deployment = Deployment.model_validate(old)
+
+    assert deployment.ci_conclusion is None and deployment.merged_at is None and deployment.deployed_at is None
+    assert deployment.model_dump(mode="json").keys() == old.keys(), "chưa có tiến độ thì xuất đúng dạng cũ"
+
+
+def test_openapi_lists_routes_and_new_deployment_fields():
+    schema = app.openapi()
+
+    assert {WEBHOOK, CALLBACK} <= set(schema["paths"])
+    deployment = [body for name, body in schema["components"]["schemas"].items() if name.startswith("Deployment")]
+    assert deployment and all({"ci_conclusion", "merged_at", "deployed_at"} <= set(d["properties"]) for d in deployment)
+
+
+def test_deploy_rework_resets_attempts_and_drops_signature_without_writing(approved, store_path):
+    from src.agents.service import deploy_rework
+    from tests.test_agents.test_graph import SPEC, FakeLLM, deps
+
+    before = stored(store_path)
+
+    started, _job = deploy_rework(approved, "CI đỏ", "github:octo", deps(FakeLLM(SPEC)), store_path)
+
+    assert started.version == 4 and started.status == "GENERATING" and started.stage_reached == "propose"
+    assert started.attempts.spec == 0 and started.approval is None and started.files_hash is None
+    assert started.spec_history[-1]["reason"] == "CI đỏ"
+    assert stored(store_path) == before, "webhook tự ghi started cùng giao dịch với delivery"
