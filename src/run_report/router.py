@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -12,7 +12,7 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.run_report.compare import compare, pick_base
-from src.run_report.models import Approval, Decision, RunReport, RunStatus
+from src.run_report.models import Approval, Decision, Deployment, RunReport, RunStatus
 from src.run_report.store import _database as run_report_database
 from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report, transition_run_report
 
@@ -97,6 +97,12 @@ def request_change_deps(config: PipelineSettings = Depends(settings)):
         cancelled=lambda run_id: is_run_cancelled(config.store_path, run_id),
         reserve_daily=budget.reserve_daily,
     )
+
+
+def rework_deps(config: PipelineSettings = Depends(settings)) -> Callable[[], Any]:
+    """AgentDeps cho vòng P16 → P4 (CI đỏ / pull request bị đóng), tạo khi job nền chạy: webhook, Deploy không nạp
+    policy hay LLM khi không cần."""
+    return lambda: request_change_deps(config)
 
 
 @router.get("", response_model=list[RunReport])
@@ -241,19 +247,39 @@ def _record_deploy(store_path: str, signed: RunReport, change: Callable[[RunRepo
         return updated
 
 
+def _merge_deployment(current: RunReport, opened: Deployment) -> dict:
+    """Deployment cần lưu sau khi Deploy mở (hoặc tìm lại) pull request `opened`.
+
+    Cùng pull request (repo, số PR, head sha) với bản đang lưu thì giữ bản đang lưu: webhook có thể đã ghi CI / merge
+    trong lúc request này chờ GitHub, ghi đè bằng bản vừa mở sẽ làm mất tiến độ đó.
+    """
+    stored = current.deployment
+    if stored is not None and (stored.repo.lower(), stored.pr_number, stored.head_sha) == (
+        opened.repo.lower(),
+        opened.pr_number,
+        opened.head_sha,
+    ):
+        return stored.model_dump()
+    return opened.model_dump()
+
+
 @router.post("/{run_id}/deploy", response_model=RunReport)
 def deploy_run(
     run_id: str,
+    background: BackgroundTasks,
     user: dict = Depends(current_user),
     config: PipelineSettings = Depends(settings),
     github: GithubClient = Depends(pipeline_github),
+    make_deps: Callable[[], Any] = Depends(rework_deps),
 ) -> RunReport:
     """P16: mở pull request chứa đúng bộ file đã duyệt vào repo pipeline (SPEC §9.5, FR-17).
 
     Không merge, không ghi Dagster; status giữ APPROVED đến khi deploy production xong. Gọi lại an toàn: pull request
-    đã mở thì trả lại pull request đó. Lỗi GitHub ghi error_trace stage deploy và giữ APPROVED để bấm Deploy lại.
+    đã mở thì trả lại pull request đó (giữ CI / merge webhook đã ghi), đã merge thì trả run như đang lưu. Lỗi GitHub ghi error_trace stage deploy và giữ APPROVED để bấm Deploy lại.
+    Sự kiện GitHub đến trong lúc chờ mở pull request (CI, đóng, merge) được webhook giữ lại và áp ngay sau khi lưu.
     """
-    # Import muộn: codegen.deploy import run_report.models, import sớm ở đầu file sẽ thành vòng.
+    # Import muộn: codegen.deploy import run_report.models, import sớm ở đầu file sẽ thành vòng; webhooks import router.
+    from src.api.webhooks import replay_pending
     from src.codegen.deploy import open_pull_request
 
     if user["role"] != "Reviewer":
@@ -279,6 +305,8 @@ def deploy_run(
         or not report.spec
     ):
         raise HTTPException(409, "Chữ ký duyệt không khớp bộ file hoặc version hiện tại nên không deploy được.")
+    if report.deployment is not None and report.deployment.state == "merged":
+        return report  # pull request đã merge, chờ deployer: không mở lại
     files = get_run_files(config.store_path, run_id, report.version)
     if not files or file_hashes(files)[1] != report.files_hash:
         raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không deploy được.")
@@ -301,14 +329,17 @@ def deploy_run(
         config.store_path,
         report,
         lambda current: RunReport.model_validate(
-            {**current.model_dump(), "stage_reached": "deploy", "deployment": deployment.model_dump()}
+            {**current.model_dump(), "stage_reached": "deploy", "deployment": _merge_deployment(current, deployment)}
         ),
     )
     if opened is None:
         raise HTTPException(
             409, f"Đã mở pull request {deployment.pr_url} nhưng run vừa thay đổi; tải lại run rồi bấm Deploy lại."
         )
-    return opened
+    replayed, job = replay_pending(config.store_path, opened, make_deps)
+    if job is not None:
+        background.add_task(job)
+    return replayed or opened
 
 
 @router.post("/{run_id}/reject", response_model=RunReport)

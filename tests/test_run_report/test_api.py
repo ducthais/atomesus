@@ -293,6 +293,7 @@ async def test_branch_moved_while_opening_pull_request_is_409_without_deployment
 async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logged_in, approved_run, github, store_path):
     """Request A đọc run rồi chờ GitHub; trong lúc đó request B mở pull request và lưu deployment; sau đó A lỗi."""
     import httpx
+    from fastapi import BackgroundTasks
     from pydantic import SecretStr
 
     from src.codegen.github import GithubClient
@@ -306,9 +307,8 @@ async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logge
     def overlap_then_fail(request: httpx.Request) -> httpx.Response:
         if not overlapped:
             winner = GithubClient(REPO, SecretStr(TOKEN), transport=httpx.MockTransport(github.handle))
-            overlapped.append(
-                deploy_run(READY_RUN_ID, user={"id": "an", "role": "Reviewer"}, config=config, github=winner)
-            )
+            reviewer = {"id": "an", "role": "Reviewer"}
+            overlapped.append(deploy_run(READY_RUN_ID, BackgroundTasks(), user=reviewer, config=config, github=winner))
             return httpx.Response(500, json={"message": "lỗi giả"})
         return github.handle(request)
 
@@ -322,6 +322,59 @@ async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logge
     stored = get_run_report(store_path, READY_RUN_ID)
     assert stored.deployment == overlapped[0].deployment, "lỗi của request A không được xóa deployment B đã lưu"
     assert stored.status == "APPROVED" and stored.error_trace[-1]["stage"] == "deploy"
+
+
+def _record_progress(store_path: str, **changes) -> None:
+    """Giả lập webhook GitHub ghi tiến độ (CI / merge) vào deployment đang lưu."""
+    from src.run_report.store import update_run_report
+
+    def change(current: RunReport) -> RunReport:
+        deployment = {**current.deployment.model_dump(), **changes}
+        return RunReport.model_validate({**current.model_dump(), "deployment": deployment})
+
+    assert update_run_report(store_path, READY_RUN_ID, change) is not None
+
+
+@pytest.mark.asyncio
+async def test_deploy_again_after_ci_update_keeps_ci_progress(logged_in, approved_run, github, store_path):
+    from src.run_report.store import get_run_report
+
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 200
+    _record_progress(store_path, ci_conclusion="success", ci_url="https://github.com/x/actions/runs/1")
+
+    again = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert again.status_code == 200, again.text
+    assert again.json()["deployment"]["ci_conclusion"] == "success"
+    assert get_run_report(store_path, READY_RUN_ID).deployment.ci_conclusion == "success"
+
+
+@pytest.mark.asyncio
+async def test_deploy_finishing_after_merge_webhook_keeps_merged(logged_in, approved_run, github, store_path):
+    """Request Deploy đọc run lúc PR còn mở, chờ GitHub; webhook merge ghi trong lúc đó; Deploy ghi sau không mở lại."""
+    from src.run_report.store import get_run_report
+
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 200
+    github.before = {"GET /pulls": lambda: _record_progress(store_path, state="merged", merge_commit_sha="m" * 40)}
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200, response.text
+    stored = get_run_report(store_path, READY_RUN_ID)
+    assert stored.deployment.state == "merged" and stored.deployment.merge_commit_sha == "m" * 40
+    assert response.json()["deployment"]["state"] == "merged"
+
+
+@pytest.mark.asyncio
+async def test_deploy_after_merge_returns_run_without_calling_github(logged_in, approved_run, github, store_path):
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 200
+    _record_progress(store_path, state="merged")
+    calls = len(github.requests)
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200 and response.json()["deployment"]["state"] == "merged"
+    assert len(github.requests) == calls
 
 
 @pytest.mark.asyncio
