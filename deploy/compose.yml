@@ -4,7 +4,8 @@
 # Dữ liệu sống qua mỗi lần deploy: ../data (sổ bằng chứng, warehouse, lịch sử Dagster), volume pgdata, caddy,
 # dagster_code (code location production) và deployer_state.
 # Code location của Dagster production (volume dagster_code, mount ở /app/data/dagster_local) CHỈ service deployer
-# ghi được (SPEC §9.5 bước 4, mục 19); dagster và backend mount chỉ đọc (:ro). Bật deployer: docs/deploy.md mục 6.
+# ghi được (SPEC §9.5 bước 4, mục 19); dagster và backend mount chỉ đọc (read_only) và `nocopy` (không bao giờ chép nội
+# dung image vào volume). Bật deployer: docs/deploy.md mục 6.
 name: atomesus
 
 x-build: &build
@@ -51,7 +52,8 @@ services:
     <<: *app
     volumes:
       - ../data:/app/data
-      - dagster_code:/app/data/dagster_local:ro  # Day 2 đọc pipeline đang chạy; không ghi được
+      # Day 2 đọc pipeline đang chạy; không ghi được
+      - { type: volume, source: dagster_code, target: /app/data/dagster_local, read_only: true, volume: { nocopy: true } }
     depends_on:
       postgres: { condition: service_healthy }
       mock-api: { condition: service_started }
@@ -65,7 +67,9 @@ services:
       DAGSTER_CODE_READONLY: "1"
     volumes:
       - ../data:/app/data
-      - dagster_code:/app/data/dagster_local:ro  # chỉ deployer ghi; workspace.yaml đổi thì Dagster tự khởi động lại
+      # Chỉ deployer ghi; workspace.yaml đổi thì Dagster tự khởi động lại. Kết quả dbt từng lần chạy ghi vào
+      # data/dagster_home/dbt_target (scripts/dagster_local.py), không ghi vào code location.
+      - { type: volume, source: dagster_code, target: /app/data/dagster_local, read_only: true, volume: { nocopy: true } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3070/server_info')"]
       interval: 30s
@@ -75,52 +79,52 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       backend: { condition: service_started }
-      code-volumes: { condition: service_completed_successfully }
-
-  # Volume Docker mới tạo thuộc root: đổi chủ sang user `app` (uid 1000) để deployer ghi được, tạo workspace.yaml rỗng
-  # để Dagster lên được cả khi chưa bật deployer, rồi thoát. Không đụng tới nội dung code location đã cài.
-  code-volumes:
-    build: *build
-    image: atomesus-app
-    user: "0"
-    command:
-      - sh
-      - -c
-      - >-
-        cd /app/data/dagster_local &&
-        { [ -e workspace.yaml ] || printf 'load_from: []\n' > workspace.yaml; } &&
-        chown 1000:1000 . workspace.yaml /app/state
-    volumes:
-      - dagster_code:/app/data/dagster_local
-      - deployer_state:/app/state
-    restart: "no"
+      deployer: { condition: service_started }  # deployer tạo workspace.yaml (rỗng) trong dagster_code
 
   # Kéo nhánh mặc định của repo pipeline bằng deploy key CHỈ ĐỌC, kiểm manifest, cài vào dagster_code, báo backend
-  # (scripts/deployer.py). Không dùng ../.env: không có OpenAI key hay mật khẩu nguồn, chỉ các biến dưới đây.
-  # Chỉ chạy khi bật profile `deployer` (COMPOSE_PROFILES=deployer trong .env, xem docs/deploy.md mục 6).
+  # (scripts/deployer.py). Không dùng ../.env: không có OpenAI key hay mật khẩu nguồn, chỉ các biến dưới đây. Luôn chạy;
+  # chưa cấu hình (docs/deploy.md mục 6) thì chỉ ghi log nhắc và nằm chờ, Dagster chạy với danh sách pipeline rỗng.
+  #
+  # Image: image app của backend (cùng code, cùng thư viện, build trước) thêm git + openssh-client để fetch qua SSH.
+  # Nó cũng mang sẵn /app/data/dagster_local (workspace.yaml rỗng) và /app/state thuộc user `app`: volume Docker mới
+  # tạo còn rỗng thì lần đầu mount vào deployer được chép nội dung và chủ sở hữu từ đây, nên deployer (không phải
+  # root) ghi được mà không cần service nào khác ghi volume. Các service khác mount `nocopy` nên không chép gì vào.
   deployer:
-    build: *build
-    image: atomesus-app
-    profiles: [deployer]
+    build:
+      context: ..
+      additional_contexts:
+        app: service:backend
+      dockerfile_inline: |
+        FROM app
+        USER root
+        RUN apt-get update \
+            && apt-get install -y --no-install-recommends git openssh-client \
+            && rm -rf /var/lib/apt/lists/* \
+            && mkdir -p /app/data/dagster_local /app/state \
+            && printf 'load_from: []\n' > /app/data/dagster_local/workspace.yaml \
+            && chown -R app:app /app/data/dagster_local /app/state
+        USER app
+    image: atomesus-deployer
     command: ["python", "scripts/deployer.py"]
     environment:
       DEPLOYER_REPO_URL: ${DEPLOYER_REPO_URL:-}
       PIPELINE_DEPLOYER_SECRET: ${PIPELINE_DEPLOYER_SECRET:-}
       DEPLOYER_INTERVAL_SEC: ${DEPLOYER_INTERVAL_SEC:-60}
-      DEPLOYER_SSH_KEY: /run/secrets/deploy_key
-      DEPLOYER_KNOWN_HOSTS: /run/secrets/known_hosts
+      DEPLOYER_SSH_KEY: /run/secrets/deployer/deploy_key
+      DEPLOYER_KNOWN_HOSTS: /run/secrets/deployer/known_hosts
       DEPLOYER_STATE_DIR: /app/state
       DEPLOYER_BACKEND_URL: http://backend:8000
       PIPELINE_DEPLOY_DIR: /app/data/dagster_local
       DO_NOT_TRACK: "1"
-    # Khóa nằm ngoài ~/atomesus (rsync của workflow Deploy xóa file lạ trong đó) và ngoài ../data (backend đọc được).
+    # Thư mục khóa nằm ngoài ~/atomesus (rsync của workflow Deploy xóa file lạ trong đó) và ngoài ../data (backend đọc
+    # được); mount cả thư mục, chỉ đọc, để chưa tạo khóa thì Docker không tạo nhầm thư mục ở chỗ tên file.
     volumes:
       - dagster_code:/app/data/dagster_local
       - deployer_state:/app/state
-      - ${DEPLOYER_SSH_DIR:-/etc/atomesus-deployer}/deploy_key:/run/secrets/deploy_key:ro
-      - ${DEPLOYER_SSH_DIR:-/etc/atomesus-deployer}/known_hosts:/run/secrets/known_hosts:ro
+      - ${DEPLOYER_SSH_DIR:-/etc/atomesus-deployer}:/run/secrets/deployer:ro
+    healthcheck:
+      disable: true  # không phục vụ HTTP; HEALTHCHECK của image app (cổng 8000) không áp dụng
     depends_on:
-      code-volumes: { condition: service_completed_successfully }
       backend: { condition: service_started }
     restart: unless-stopped
 

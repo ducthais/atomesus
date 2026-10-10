@@ -2,10 +2,12 @@
 
 Chạy trong container `deployer` của deploy/compose.yml (xem docs/deploy.md, mục bật deployer). Mỗi
 DEPLOYER_INTERVAL_SEC giây (mặc định 60) chạy một chu kỳ src/deployer/service.py; lỗi một chu kỳ (mạng, git) chỉ ghi
-log, chu kỳ sau thử lại.
+log, chu kỳ sau thử lại. Chưa cấu hình (thiếu biến môi trường) thì vòng lặp ghi lỗi rồi nằm chờ thay vì thoát, để
+container không khởi động lại liên tục; workspace.yaml rỗng vẫn có để Dagster chạy với danh sách pipeline rỗng.
 
 Chạy: python scripts/deployer.py            (vòng lặp)
-      python scripts/deployer.py --once     (một chu kỳ rồi thoát; mã 1 nếu lỗi hoặc còn kết quả chưa báo)
+      python scripts/deployer.py --once     (một chu kỳ rồi thoát; mã 1 nếu lỗi, còn kết quả chưa báo hoặc còn
+                                             pipeline chưa cài xong)
       python scripts/deployer.py --once --reinstall   (cài lại mọi pipeline ở commit mới nhất)
 """
 
@@ -15,14 +17,17 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)  # đường dẫn mặc định (data/dagster_local, data/deployer) tính từ gốc repo như scripts/dagster_local.py
 
+from src.deployer.install import write_workspace  # noqa: E402
 from src.deployer.service import Config, DeployerError, run_once  # noqa: E402
 
 log = logging.getLogger("deployer")
+IDLE_SEC = 3600
 
 
 def cycle(config: Config, reinstall: bool) -> dict | None:
@@ -37,12 +42,23 @@ def cycle(config: Config, reinstall: bool) -> dict | None:
         return None
     if summary["models"] or summary["pending"]:
         log.info(
-            "Commit %s: cài %s, còn %d kết quả chưa báo.",
+            "Commit %s: kiểm/cài %s, còn %d kết quả chưa báo, pipeline chưa xong %s.",
             (summary["head"] or "?")[:12],
             summary["models"],
             summary["pending"],
+            summary["unresolved"],
         )
     return summary
+
+
+def idle(error: DeployerError) -> NoReturn:
+    """Chưa cấu hình: Dagster vẫn cần workspace.yaml (rỗng) trong volume code location, rồi nằm chờ người sửa .env."""
+    deploy_dir = Path(os.environ.get("PIPELINE_DEPLOY_DIR", "data/dagster_local"))
+    if not (deploy_dir / "workspace.yaml").exists():
+        write_workspace(str(deploy_dir))
+    while True:
+        log.error("Deployer chưa bật: %s Xem docs/deploy.md mục 6, sửa .env rồi `up -d deployer`.", error)
+        time.sleep(IDLE_SEC)
 
 
 def main() -> int:
@@ -54,12 +70,14 @@ def main() -> int:
     try:
         config = Config.from_env()
     except DeployerError as exc:
-        log.error("%s", exc)
-        return 2
+        if args.once:
+            log.error("%s", exc)
+            return 2
+        idle(exc)
     log.info("Deployer chạy: chu kỳ %ds, code location ở %s.", config.interval, config.deploy_dir)
     if args.once:
         summary = cycle(config, args.reinstall)
-        return 0 if summary and not summary["pending"] else 1
+        return 0 if summary and not summary["pending"] and not summary["unresolved"] else 1
     reinstall = args.reinstall
     while True:
         summary = cycle(config, reinstall)

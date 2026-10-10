@@ -147,7 +147,8 @@ def test_first_run_installs_pipeline_and_reports_signed_callback(config, remote,
 
     summary = run(config, backend)
 
-    assert summary == {"head": head, "applied": head, "models": ["fct_x"], "pending": 0}
+    assert summary == {"head": head, "applied": head, "models": ["fct_x"], "pending": 0, "unresolved": {}}
+    assert service.load_state(config) == {"applied": head, "pending": [], "models": {}}
     project = Path(config.deploy_dir) / "fct_x"
     assert (project / "dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 1 as n\n"
     assert not (project / "manifest.json").exists() and not (project / "run_report.json").exists()
@@ -206,11 +207,11 @@ def test_only_changed_pipelines_are_installed(config, remote, installs):
 
 
 def test_tampered_file_is_rejected_and_running_version_kept(config, remote, installs):
-    remote.commit("fct_x", signed(files_v(1), 1))
+    first = remote.commit("fct_x", signed(files_v(1), 1))
     run(config, Backend())
     tampered = signed(files_v(2), 2)
     tampered["dbt_project/models/gold/fct_x.sql"] = "select 'sửa sau khi duyệt' as n\n"
-    head = remote.commit("fct_x", tampered, "sửa tay")
+    remote.commit("fct_x", tampered, "sửa tay")
     backend = Backend()
 
     summary = run(config, backend)
@@ -220,7 +221,21 @@ def test_tampered_file_is_rejected_and_running_version_kept(config, remote, inst
     assert sql.read_text(encoding="utf-8") == "select 1 as n\n"
     [payload] = backend.payloads()
     assert payload["status"] == "failed" and payload["version"] == 2 and "sha256" in payload["detail"]
-    assert summary["applied"] == head, "đã báo failed: commit coi như đã xử lý"
+    assert summary["applied"] == first, "pipeline chưa cài được: commit đã áp dụng không tiến"
+    assert summary["unresolved"] == {"fct_x": "failed"}
+
+    again = Backend()
+    summary = run(config, again)
+
+    assert again.calls == [] and installs == ["fct_x"], "cùng nội dung đã báo failed: không kiểm/báo lặp lại"
+    assert summary["applied"] == first and summary["models"] == []
+
+    # Sửa bằng version mới đúng chữ ký (pull request mới): cài được, commit được ghi nhận.
+    fixed = remote.commit("fct_x", signed(files_v(3), 3), "v3")
+    summary = run(config, Backend())
+
+    assert installs == ["fct_x", "fct_x"] and summary["applied"] == fixed and summary["unresolved"] == {}
+    assert sql.read_text(encoding="utf-8") == "select 3 as n\n"
 
 
 def test_forged_manifest_without_matching_run_report_is_rejected(config, remote, installs):
@@ -258,16 +273,18 @@ def test_non_regular_file_is_rejected(config, remote, installs):
 
 def test_unreadable_manifest_is_not_installed_and_not_reported(config, remote, installs):
     content = {**signed(files_v(1), 1), "manifest.json": "[1, 2"}
-    head = remote.commit("fct_x", content)
+    remote.commit("fct_x", content)
     backend = Backend()
 
     summary = run(config, backend)
 
-    assert installs == [] and backend.calls == [] and summary["applied"] == head
+    assert installs == [] and backend.calls == [] and summary["applied"] is None
+    assert summary["unresolved"] == {"fct_x": "unreported"}
+    assert run(config, backend)["models"] == [] and backend.calls == [], "không kiểm lặp lại cùng nội dung"
 
 
-def test_install_failure_reports_failed_and_keeps_previous(config, remote, installs, monkeypatch):
-    remote.commit("fct_x", signed(files_v(1), 1))
+def test_install_failure_is_retried_then_reported_failed_and_keeps_previous(config, remote, installs, monkeypatch):
+    first = remote.commit("fct_x", signed(files_v(1), 1))
     run(config, Backend())
     remote.commit("fct_x", signed(files_v(2), 2), "v2")
 
@@ -277,13 +294,44 @@ def test_install_failure_reports_failed_and_keeps_previous(config, remote, insta
     monkeypatch.setattr(install, "_compile_manifest", broken)
     backend = Backend()
 
-    run(config, backend)
+    for _ in range(service.INSTALL_ATTEMPTS - 1):
+        summary = run(config, backend)
+        assert summary["unresolved"] == {"fct_x": "retry"} and summary["applied"] == first
+    assert backend.calls == [], "lỗi cài có thể chỉ thoáng qua: chưa báo failed"
 
+    summary = run(config, backend)
+
+    assert installs == ["fct_x"] * (1 + service.INSTALL_ATTEMPTS)
     sql = Path(config.deploy_dir) / "fct_x/dbt_project/models/gold/fct_x.sql"
     assert sql.read_text(encoding="utf-8") == "select 1 as n\n"
     assert live_entries(config) == ["fct_x", "workspace.yaml"]
     [payload] = backend.payloads()
     assert payload["status"] == "failed" and "dbt parse" in payload["detail"]
+    assert summary["applied"] == first and summary["unresolved"] == {"fct_x": "failed"}
+    run(config, backend)
+    assert len(installs) == 1 + service.INSTALL_ATTEMPTS and len(backend.calls) == 1, "không cài/báo lặp lại"
+
+
+def test_transient_install_failure_recovers_next_cycle(config, remote, installs, monkeypatch):
+    head = remote.commit("fct_x", signed(files_v(1), 1))
+    failures = [OSError("đĩa đầy")]
+
+    def flaky(_root):
+        if failures:
+            raise failures.pop()
+
+    monkeypatch.setattr(install, "_compile_manifest", flaky)
+    backend = Backend()
+
+    summary = run(config, backend)
+
+    assert summary["applied"] is None and summary["unresolved"] == {"fct_x": "retry"} and backend.calls == []
+    assert not (Path(config.deploy_dir) / "fct_x").exists()
+
+    summary = run(config, backend)
+
+    assert summary["applied"] == head and summary["unresolved"] == {}
+    assert [p["status"] for p in backend.payloads()] == ["deployed"]
 
 
 def test_failed_callback_is_retried_next_cycle_before_commit_is_applied(config, remote, installs):
@@ -292,17 +340,24 @@ def test_failed_callback_is_retried_next_cycle_before_commit_is_applied(config, 
 
     summary = run(config, down)
 
-    assert summary == {"head": head, "applied": None, "models": ["fct_x"], "pending": 1}
+    assert summary == {
+        "head": head,
+        "applied": None,
+        "models": ["fct_x"],
+        "pending": 1,
+        "unresolved": {"fct_x": "reporting"},
+    }
     assert down.calls == [] and installs == ["fct_x"]
     state = service.load_state(config)
-    assert state["installed"] == head and state["applied"] is None
+    assert state["applied"] is None and state["models"]["fct_x"]["status"] == "reporting"
+    assert state["pending"][0]["payload"]["status"] == "deployed"
 
     backend = Backend()
     summary = run(config, backend)
 
     assert installs == ["fct_x"], "đã cài rồi: lần sau chỉ báo lại, không cài lại"
     assert [p["status"] for p in backend.payloads()] == ["deployed"] and summary["applied"] == head
-    assert service.load_state(config) == {"applied": head, "installed": None, "pending": []}
+    assert service.load_state(config) == {"applied": head, "pending": [], "models": {}}
 
 
 def test_callback_retries_within_a_cycle(config, remote, installs):
@@ -324,13 +379,37 @@ def test_pending_report_blocks_new_commit_until_delivered(config, remote, instal
     assert summary["head"] is None and summary["pending"] == 1 and installs == ["fct_x"]
 
 
-def test_refused_callback_is_not_retried_forever(config, remote, installs):
+def test_refused_callback_stays_unresolved_without_resending(config, remote, installs):
     head = remote.commit("fct_x", signed(files_v(1), 1))
     backend = Backend(409)
 
     summary = run(config, backend)
 
-    assert summary["applied"] == head and summary["pending"] == 0 and backend.calls == []
+    assert summary["applied"] is None and summary["pending"] == 0 and backend.calls == []
+    assert summary["unresolved"] == {"fct_x": "refused"}
+    again = Backend()
+    assert run(config, again)["applied"] is None and again.calls == [], "backend đã từ chối: không gửi lại"
+
+    # Người vận hành xử lý xong phía backend rồi --reinstall: cài và báo lại, commit được ghi nhận.
+    summary = run(config, again, reinstall=True)
+
+    assert summary["applied"] == head and [p["status"] for p in again.payloads()] == ["deployed"]
+
+
+def test_one_bad_pipeline_holds_the_commit_but_good_ones_are_installed_once(config, remote, installs):
+    first = remote.commit("fct_x", signed(files_v(1), 1))
+    run(config, Backend())
+    other = {path.replace("fct_x", "fct_y"): text for path, text in files_v(1).items()}
+    remote.commit("fct_y", signed(other, 1, model="fct_y", run_id="run-2"))
+    remote.commit("fct_x", {**signed(files_v(2), 2), "manifest.json": "{}"}, "manifest hỏng")
+    backend = Backend()
+
+    summary = run(config, backend)
+    run(config, backend)
+
+    assert summary["applied"] == first and summary["unresolved"] == {"fct_x": "unreported"}
+    assert installs == ["fct_x", "fct_y"], "fct_y cài một lần, không cài lại khi commit còn bị giữ"
+    assert [p["model_name"] for p in backend.payloads()] == ["fct_y"]
 
 
 def test_deleted_pipeline_is_skipped(config, remote, installs):
@@ -338,11 +417,13 @@ def test_deleted_pipeline_is_skipped(config, remote, installs):
     run(config, Backend())
     remote.git("rm", "-r", "-q", "pipelines/fct_x")
     remote.git("commit", "-q", "-m", "xóa")
+    head = remote.git("rev-parse", "HEAD")
     backend = Backend()
 
     summary = run(config, backend)
 
     assert summary["models"] == ["fct_x"] and backend.calls == [] and installs == ["fct_x"]
+    assert summary["applied"] == head, "không còn gì để cài: commit được ghi nhận"
     assert (Path(config.deploy_dir) / "fct_x").is_dir()
 
 
@@ -431,7 +512,7 @@ def test_config_defaults():
 
 
 def test_corrupt_state_is_reported_not_silently_reset(config):
-    service.save_state(config, {"applied": None, "installed": None, "pending": []})
+    service.save_state(config, {"applied": None, "pending": [], "models": {}})
     service._state_path(config).write_text("{hỏng", encoding="utf-8")
 
     with pytest.raises(DeployerError, match="state.json"):

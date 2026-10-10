@@ -13,7 +13,7 @@ Không cần thẻ: chọn 1a (Azure for Students). Combo Vercel + Hugging Face 
 | `web` | Next.js | qua Caddy: `https://<DOMAIN>` |
 | `backend` | FastAPI + agent (chạy thử dlt / dbt trong sandbox) | không (web gọi qua mạng nội bộ) |
 | `dagster` | Chạy lịch các pipeline đã duyệt, thu số đo Day 2 | qua Caddy, có mật khẩu: `https://dagster.<DOMAIN>` |
-| `deployer` | Kéo repo pipeline, kiểm manifest, cài pipeline đã merge vào Dagster (tùy chọn, mục 6) | không |
+| `deployer` | Kéo repo pipeline, kiểm manifest, cài pipeline đã merge vào Dagster (cấu hình ở mục 6) | không |
 | `mock-api` | Nguồn REST API demo | không |
 | `postgres` | Nguồn Postgres demo (sales_raw, Pagila) | không |
 
@@ -143,13 +143,20 @@ manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, lỗi thì 
 pipeline, rồi deployer báo backend (`POST /api/v1/deployments/callback`, ký HMAC) để run chuyển `DEPLOYED` /
 `DEPLOY_FAILED`.
 
-Chỉ `deployer` ghi được `dagster_code`; `dagster` và `backend` mount chỉ đọc. `deployer` không đọc `.env` nên không có
-OpenAI key hay mật khẩu nguồn; nó chỉ có deploy key **chỉ đọc** của repo pipeline. Chưa bật thì Dagster chạy với danh sách
-pipeline rỗng. Pipeline đã cài vào `~/atomesus/data/dagster_local` trước khi có deployer không còn được Dagster đọc:
-Deploy lại chúng từ app.
+Chỉ `deployer` ghi được `dagster_code`; `dagster` và `backend` mount chỉ đọc, không service nào khác ghi volume này.
+`deployer` không đọc `.env` nên không có OpenAI key hay mật khẩu nguồn; nó chỉ có deploy key **chỉ đọc** của repo
+pipeline. Service luôn chạy; chưa cấu hình thì nó ghi log `Deployer chưa bật: …` mỗi giờ và nằm chờ, Dagster chạy với
+danh sách pipeline rỗng. Pipeline đã cài vào `~/atomesus/data/dagster_local` trước khi có deployer không còn được Dagster
+đọc: Deploy lại chúng từ app.
 
-Cần có trước: repo pipeline và branch protection (xem `.harness/plans/DEPLOY-PR.md`), image app có `git` và
-`openssh-client`.
+Image của `deployer` là image app (build từ `Dockerfile` cho `backend`) thêm `git` và `openssh-client`, build trong
+`deploy/compose.yml` (`additional_contexts: service:backend`, cần Docker Compose v2 bản mới như `get.docker.com` cài).
+Image này mang sẵn `workspace.yaml` rỗng và thư mục trạng thái thuộc user `app` (uid 1000): volume `dagster_code` /
+`deployer_state` lần đầu mount vào deployer được Docker chép nội dung và chủ sở hữu từ image, nên không cần bước
+`chown` nào bằng root. Dagster ghi kết quả dbt từng lần chạy vào `data/dagster_home/dbt_target` (không ghi vào code
+location); Day 2 gom `run_results.json` theo pipeline ở `data/dagster_home/day2_dbt` để đếm test.
+
+Cần có trước: repo pipeline và branch protection (xem `.harness/plans/DEPLOY-PR.md`).
 
 **1. Tạo deploy key chỉ đọc** (trên VM; khóa nằm ngoài `~/atomesus` vì workflow Deploy rsync `--delete` thư mục đó, và
 ngoài `data/` vì backend đọc được):
@@ -171,7 +178,6 @@ Repo pipeline → **Settings → Deploy keys → Add deploy key**: dán nội du
 
 | Biến | Giá trị |
 |---|---|
-| `COMPOSE_PROFILES` | `deployer` (bật service; bỏ đi là tắt) |
 | `DEPLOYER_REPO_URL` | URL SSH repo pipeline, vd. `git@github.com:<owner>/atomesus-pipelines.git` |
 | `PIPELINE_DEPLOYER_SECRET` | `openssl rand -hex 32`; backend đọc cùng biến này từ `.env` để kiểm chữ ký callback |
 | `DEPLOYER_INTERVAL_SEC` | tùy chọn, chu kỳ kéo repo (mặc định `60`, tối thiểu `5`) |
@@ -183,25 +189,38 @@ Deployer không ghi URL repo, khóa hay secret ra log.
 
 ```bash
 cd atomesus
-docker compose --env-file .env -f deploy/compose.yml up -d
+docker compose --env-file .env -f deploy/compose.yml up -d --build deployer   # đổi .env thì tạo lại container
+docker compose --env-file .env -f deploy/compose.yml exec deployer sh -c 'git --version && ssh -V'
+# Thử deploy key: GitHub trả "Hi <owner>/<repo>! You've successfully authenticated" (mã thoát 1 là bình thường)
+docker compose --env-file .env -f deploy/compose.yml exec deployer ssh -T -i /run/secrets/deployer/deploy_key \
+  -o UserKnownHostsFile=/run/secrets/deployer/known_hosts -o StrictHostKeyChecking=yes git@github.com
 docker compose --env-file .env -f deploy/compose.yml logs -f deployer
 docker compose --env-file .env -f deploy/compose.yml exec dagster cat /app/data/dagster_local/workspace.yaml
+docker compose --env-file .env -f deploy/compose.yml exec deployer cat /app/state/state.json
 ```
 
-Log bình thường: `Commit <sha>: 1 pipeline đổi ['fct_x']`, `Đã cài fct_x v2 …`; Dagster in `workspace.yaml đổi … khởi
+Log bình thường: `Đã cài fct_x v2 …`, `Commit <sha>: kiểm/cài ['fct_x'] …`; Dagster in `workspace.yaml đổi … khởi
 động lại` và pipeline hiện trên `https://dagster.<DOMAIN>`. Không có commit mới thì deployer im lặng. Muốn kéo ngay thì
 `restart deployer`.
 
+`state.json` giữ `applied` (commit mà mọi pipeline đổi đã cài **và** backend đã nhận báo `deployed`) và `models` (kết
+quả từng pipeline của commit mới nhất chưa xong). Chỉ khi mọi pipeline xong thì `applied` mới tiến; pipeline chưa xong
+không bị bỏ qua ở chu kỳ sau. Một pipeline lỗi không chặn pipeline khác: pipeline tốt vẫn được cài và báo (một lần).
+
 **Xử lý khi cài lỗi** (bản đang chạy luôn được giữ nguyên):
 
-| Log | Nghĩa và cách xử lý |
+| Log / trạng thái trong `models` | Nghĩa và cách xử lý |
 |---|---|
-| `Không cài <model> … sha256 không khớp` / `run_report.json không khớp` / `Chỉ cài file thường` | Nội dung trên nhánh mặc định khác chữ ký duyệt (bị sửa tay sau khi duyệt). Run chuyển `DEPLOY_FAILED`. Không sửa tay repo pipeline: Deploy lại từ app để mở pull request mới. |
-| `Cài <model> lỗi, giữ bản đang chạy: dbt parse …` | Lỗi môi trường khi biên dịch. Sửa xong thì cài lại: `stop deployer`, `run --rm deployer python scripts/deployer.py --once --reinstall`, `start deployer`. |
-| `Báo backend kết quả … lỗi` / `chưa cài commit mới` | Backend không nhận callback (đang tắt, `PIPELINE_DEPLOYER_SECRET` khác nhau → 401). Deployer giữ kết quả, báo lại mỗi chu kỳ và chưa cài commit mới cho tới khi báo được. |
+| `Không cài <model> … sha256 không khớp` / `run_report.json không khớp` / `Chỉ cài file thường` → `failed` | Nội dung trên nhánh mặc định khác chữ ký duyệt (bị sửa tay sau khi duyệt). Run chuyển `DEPLOY_FAILED`. Không sửa tay repo pipeline: Deploy lại từ app để mở pull request mới; version mới merge thì deployer tự cài. |
+| `… không báo được backend` → `unreported` | `manifest.json` hỏng tới mức thiếu run_id/version/files_hash; không báo được run nào. Xử lý như dòng trên. |
+| `Cài <model> lỗi, giữ bản đang chạy: dbt parse …` / `Sẽ cài lại … ở chu kỳ sau` → `retry` | Lỗi môi trường khi biên dịch (đĩa, dbt). Deployer tự cài lại ở 2 chu kỳ sau; vẫn lỗi thì báo `failed` (trạng thái `failed`). Sửa môi trường xong thì cài lại: `stop deployer`, `run --rm deployer python scripts/deployer.py --once --reinstall`, `start deployer`. |
+| `Báo backend kết quả … lỗi` / `chưa cài commit mới` → `reporting` | Backend không nhận callback (đang tắt, `PIPELINE_DEPLOYER_SECRET` khác nhau → 401). Deployer giữ kết quả, báo lại mỗi chu kỳ và chưa cài commit mới cho tới khi báo được. |
+| `Backend từ chối kết quả …` → `refused` | Backend trả 400/409/422 (run không còn `APPROVED` hoặc không khớp chữ ký). Pipeline đã cài nhưng không gửi lại cùng kết quả; kiểm run trên app, xong thì `--reinstall` như trên hoặc Deploy version mới. |
+| `Deployer chưa bật: Thiếu DEPLOYER_REPO_URL …` | Thiếu biến ở bước 2; sửa `.env` rồi `up -d deployer`. |
 | `git fetch lỗi … Permission denied (publickey)` | Deploy key chưa thêm vào repo pipeline, sai `DEPLOYER_REPO_URL`, hoặc file khóa không thuộc uid 1000 / không phải quyền 600. |
 | `Host key verification failed` | `known_hosts` thiếu hoặc sai host; tạo lại ở bước 1. |
-| `Không chạy được git` | Image app thiếu `git` / `openssh-client`. |
+| `Không đọc được file khóa SSH` | Chưa có `deploy_key` trong `DEPLOYER_SSH_DIR` (bước 1), hoặc đặt sai thư mục. |
+| `Không chạy được git` | Image deployer cũ chưa có `git` / `openssh-client`: `up -d --build deployer`. |
 | `state.json hỏng` | `run --rm deployer rm /app/state/state.json`; chu kỳ sau cài lại mọi pipeline ở commit mới nhất. |
 
 (Mọi lệnh trong bảng là `docker compose --env-file .env -f deploy/compose.yml <lệnh>`.)

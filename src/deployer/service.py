@@ -8,9 +8,14 @@ Dagster production, backend chỉ mount đọc. Mỗi chu kỳ (`run_once`):
 3. Lấy các `pipelines/<model>/` đổi so với commit đã áp dụng gần nhất (lần đầu: mọi pipeline).
 4. Mỗi pipeline: chỉ file thường theo `git ls-tree`, manifest.json khớp bộ file (manifest.py), run_report.json khớp
    chữ ký; sai thì không cài và báo failed. Đúng thì install_project (nguyên tử, có rollback); install ghi lại
-   workspace.yaml, đó là tín hiệu để scripts/dagster_local.py khởi động lại Dagster nạp workspace mới.
+   workspace.yaml, đó là tín hiệu để scripts/dagster_local.py khởi động lại Dagster nạp workspace mới. Lỗi lúc cài
+   (môi trường: dbt parse, đĩa) thử lại ở chu kỳ sau, quá INSTALL_ATTEMPTS lần mới báo failed.
 5. Báo backend từng kết quả (POST /api/v1/deployments/callback, ký HMAC theo .harness/plans/DEPLOY-PR.md); chỉ ghi
-   nhận commit đã áp dụng khi mọi pipeline trong commit đã cài và báo xong.
+   nhận commit đã áp dụng khi mọi pipeline trong commit đã cài VÀ backend đã nhận báo `deployed`.
+
+Kết quả từng pipeline lưu trong state.json theo sha cây git của `pipelines/<model>/` (đổi khi bất kỳ file nào đổi):
+pipeline bị từ chối, cài lỗi, backend từ chối báo hay manifest không đọc được thì giữ chưa xong (commit đã áp dụng
+không tiến), không cài/báo lặp lại cùng nội dung đó; nội dung mới (version mới) hoặc `--reinstall` thì xử lý lại.
 
 URL repo, khóa SSH và secret chỉ đọc từ biến môi trường, không bao giờ ghi ra log.
 """
@@ -47,13 +52,19 @@ CALLBACK_PATH = "/api/v1/deployments/callback"
 SIGNATURE_HEADER = "X-Atomesus-Signature"
 CALLBACK_ATTEMPTS = 3
 CALLBACK_TIMEOUT_SEC = 10
-# Backend đã nhận và từ chối hẳn (sai định dạng, run không khớp chữ ký): gửi lại cũng vậy nên bỏ, ghi log.
-# Lỗi khác (mạng, 5xx, 401 sai secret, 404 backend chưa có route) giữ lại để chu kỳ sau báo tiếp.
+# Backend đã nhận và từ chối hẳn (sai định dạng, run không khớp chữ ký): gửi lại cũng vậy nên không gửi lại, pipeline
+# giữ trạng thái `refused`. Lỗi khác (mạng, 5xx, 401 sai secret, 404 backend chưa có route) giữ lại để chu kỳ sau báo.
 CALLBACK_REFUSED = {400, 409, 422}
+ACCEPTED, REFUSED = "accepted", "refused"
 GIT_TIMEOUT_SEC = 120
 DETAIL_MAX = 500
 HEAD_REF = "refs/deployer/head"
 REGULAR_FILE = "100644"
+INSTALL_ATTEMPTS = 3
+# Trạng thái từng pipeline trong state.json. Chỉ `done` (đã cài và backend nhận `deployed`, hoặc thư mục đã bị xóa)
+# là xong; `reporting` chờ báo, `retry` chờ cài lại; `failed`, `refused`, `unreported` chờ nội dung mới / --reinstall.
+DONE = "done"
+STATUSES = {DONE, "reporting", "retry", "failed", REFUSED, "unreported"}
 
 
 class DeployerError(RuntimeError):
@@ -114,19 +125,33 @@ def _state_path(config: Config) -> Path:
 
 
 def load_state(config: Config) -> dict:
-    """`applied`: commit đã cài và báo xong; `installed`: commit đã cài, còn kết quả chờ báo; `pending`: callback chưa báo."""
+    """`applied`: commit mà mọi pipeline đổi đã cài và báo xong; `pending`: callback chưa báo được, kèm sha cây của
+    pipeline; `models`: kết quả từng pipeline đổi từ `applied` ({tree, status, attempts}), xóa khi commit được áp dụng."""
     path = _state_path(config)
     if not path.exists():
-        return {"applied": None, "installed": None, "pending": []}
+        return {"applied": None, "pending": [], "models": {}}
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         state = None
     valid = (
         isinstance(state, dict)
-        and all(isinstance(state.get(key), str | None) for key in ("applied", "installed"))
+        and isinstance(state.get("applied", 0), str | None)
         and isinstance(state.get("pending"), list)
-        and all(isinstance(item, dict) for item in state["pending"])
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("tree", 0), str | None)
+            and isinstance(item.get("payload"), dict)
+            for item in state["pending"]
+        )
+        and isinstance(state.get("models"), dict)
+        and all(
+            isinstance(record, dict)
+            and isinstance(record.get("tree", 0), str | None)
+            and record.get("status") in STATUSES
+            and type(record.get("attempts")) is int
+            for record in state["models"].values()
+        )
     )
     if not valid:
         raise DeployerError(f"{path} hỏng. Xóa file này để deployer cài lại mọi pipeline ở commit mới nhất.")
@@ -188,6 +213,17 @@ def _has_commit(config: Config, sha: str) -> bool:
     return True
 
 
+def pipeline_trees(config: Config, head: str) -> dict[str, str]:
+    """Các thư mục `pipelines/<model>/` ở commit head và sha cây git của chúng (đổi khi bất kỳ file nào bên trong đổi)."""
+    listing = _git(config, "ls-tree", "-d", "-z", head, "pipelines/")
+    trees = {}
+    for line in listing.decode("utf-8", "replace").split("\0"):
+        if line:
+            meta, path = line.split("\t", 1)
+            trees[path.split("/", 1)[1]] = meta.split(" ")[2]
+    return trees
+
+
 def changed_models(config: Config, applied: str | None, head: str) -> list[str]:
     """Tên các thư mục `pipelines/<model>/` đổi từ commit đã áp dụng (hoặc mọi pipeline nếu chưa áp dụng commit nào)."""
     if applied and _has_commit(config, applied):
@@ -196,8 +232,7 @@ def changed_models(config: Config, applied: str | None, head: str) -> list[str]:
         return sorted({parts[1] for parts in paths if len(parts) >= 3})
     if applied:
         log.warning("Không thấy commit đã áp dụng %s trong repo (lịch sử bị viết lại?): cài lại mọi pipeline.", applied)
-    names = _git(config, "ls-tree", "-d", "-z", "--name-only", head, "pipelines/")
-    return sorted(path.split("/", 1)[1] for path in names.decode("utf-8", "replace").split("\0") if path)
+    return sorted(pipeline_trees(config, head))
 
 
 def read_pipeline(config: Config, head: str, model: str) -> tuple[dict[str, str], list[str]] | None:
@@ -245,8 +280,8 @@ def http_post(url: str, body: bytes, headers: dict[str, str]) -> int:
         return exc.code
 
 
-def deliver(config: Config, payload: dict, post=http_post, sleep=time.sleep) -> bool:
-    """Báo một kết quả; True khi backend đã nhận (hoặc từ chối hẳn), False khi cần báo lại chu kỳ sau."""
+def deliver(config: Config, payload: dict, post=http_post, sleep=time.sleep) -> str | None:
+    """Báo một kết quả; trả ACCEPTED (backend nhận), REFUSED (từ chối hẳn) hoặc None (cần báo lại chu kỳ sau)."""
     body = _body(payload)
     headers = {"Content-Type": "application/json", SIGNATURE_HEADER: sign(config.secret, body)}
     what = f"{payload['model_name']} ({payload['status']})"
@@ -258,22 +293,29 @@ def deliver(config: Config, payload: dict, post=http_post, sleep=time.sleep) -> 
         else:
             reason = f"HTTP {status}"
         if status is not None and 200 <= status < 300:
-            return True
+            return ACCEPTED
         if status in CALLBACK_REFUSED:
-            log.error("Backend từ chối kết quả %s (%s); bỏ, không gửi lại.", what, reason)
-            return True
+            log.error("Backend từ chối kết quả %s (%s); không gửi lại, pipeline giữ chưa xong.", what, reason)
+            return REFUSED
         log.warning("Báo backend kết quả %s lỗi (%s), lần %d/%d.", what, reason, attempt, CALLBACK_ATTEMPTS)
         if attempt < CALLBACK_ATTEMPTS:
             sleep(2 ** (attempt - 1))
-    return False
+    return None
 
 
 def _flush(config: Config, state: dict, post, sleep) -> bool:
-    """Báo mọi kết quả đang chờ; báo xong hết thì commit đã cài thành commit đã áp dụng."""
-    remaining = [payload for payload in state["pending"] if not deliver(config, payload, post, sleep)]
+    """Báo mọi kết quả đang chờ và ghi phản hồi của backend vào kết quả từng pipeline; True nếu đã báo hết."""
+    remaining = []
+    for item in state["pending"]:
+        answer = deliver(config, item["payload"], post, sleep)
+        if answer is None:
+            remaining.append(item)
+            continue
+        record = state["models"].get(item["payload"]["model_name"])
+        if record is not None and record["tree"] == item["tree"] and record["status"] == "reporting":
+            deployed = item["payload"]["status"] == "deployed"
+            record["status"] = REFUSED if answer == REFUSED else DONE if deployed else "failed"
     state["pending"] = remaining
-    if not remaining and state["installed"]:
-        state["applied"], state["installed"] = state["installed"], None
     save_state(config, state)
     return not remaining
 
@@ -307,14 +349,16 @@ def _identity(text: str | None) -> dict | None:
     return manifest if usable else None
 
 
-def apply_pipeline(config: Config, head: str, model: str) -> dict | None:
-    """Kiểm rồi cài một pipeline; trả callback cần báo (None nếu thư mục đã bị xóa hoặc manifest không đọc được)."""
+def apply_pipeline(config: Config, head: str, model: str) -> tuple[str, dict | None]:
+    """Kiểm rồi cài một pipeline. Trả (kết quả, callback cần báo): `deployed`; `deleted` (thư mục đã bị xóa, không có
+    gì để cài); `rejected` (bộ file / manifest sai; callback None nếu manifest không có danh tính để báo);
+    `install_failed` (lỗi lúc cài, đã giữ bản đang chạy)."""
     manifest_text = None
     try:
         read = read_pipeline(config, head, model)
         if read is None:
             log.warning("pipelines/%s/ đã bị xóa khỏi repo pipeline; giữ nguyên code location đang chạy.", model)
-            return None
+            return "deleted", None
         files, irregular = read
         manifest_text, report_text = files.pop(MANIFEST_FILE, None), files.pop(REPORT_FILE, None)
         if irregular:
@@ -331,33 +375,82 @@ def apply_pipeline(config: Config, head: str, model: str) -> dict | None:
         identity = _identity(manifest_text)
         if identity is None:
             log.error("Manifest của %s không có run_id/version/files_hash hợp lệ nên không báo được backend.", model)
-            return None
-        return _payload(identity, model, head, "failed", f"Manifest không hợp lệ: {exc}")
+            return "rejected", None
+        return "rejected", _payload(identity, model, head, "failed", f"Manifest không hợp lệ: {exc}")
     try:
         install.install_project(model, files, config.deploy_dir)
     except (OSError, subprocess.SubprocessError, ManifestError) as exc:
         log.error("Cài %s lỗi, giữ bản đang chạy: %s", model, exc)
-        return _payload(manifest, model, head, "failed", f"Cài lên Dagster lỗi, giữ bản đang chạy: {exc}")
+        return "install_failed", _payload(
+            manifest, model, head, "failed", f"Cài lên Dagster lỗi, giữ bản đang chạy: {exc}"
+        )
     log.info("Đã cài %s v%s (run %s) từ commit %s.", model, manifest["version"], manifest["run_id"], head[:12])
-    return _payload(manifest, model, head, "deployed", f"Đã cài lên Dagster production từ commit {head[:12]}.")
+    return "deployed", _payload(
+        manifest, model, head, "deployed", f"Đã cài lên Dagster production từ commit {head[:12]}."
+    )
+
+
+def _process(config: Config, state: dict, head: str, model: str, tree: str | None) -> bool:
+    """Kiểm và cài một pipeline đổi, ghi kết quả vào state, callback cần báo vào hàng chờ. False nếu nội dung này đã xử
+    lý rồi (xong, hoặc đang chờ nội dung mới / --reinstall): không cài và báo lặp lại."""
+    record = state["models"].get(model)
+    same = record is not None and record["tree"] == tree
+    if same and record["status"] != "retry":
+        return False
+    attempts = record["attempts"] + 1 if same else 1
+    outcome, payload = apply_pipeline(config, head, model)
+    if outcome == "install_failed" and attempts < INSTALL_ATTEMPTS:
+        log.warning("Sẽ cài lại %s ở chu kỳ sau (lần %d/%d); chưa báo backend.", model, attempts, INSTALL_ATTEMPTS)
+        status = "retry"
+    elif payload is None:
+        status = DONE if outcome == "deleted" else "unreported"
+    else:
+        status = "reporting"
+        state["pending"].append({"tree": tree, "payload": payload})
+    state["models"][model] = {"tree": tree, "status": status, "attempts": attempts}
+    return True
 
 
 def run_once(config: Config, *, reinstall: bool = False, post=http_post, sleep=time.sleep) -> dict:
-    """Một chu kỳ deployer; trả tóm tắt {head, applied, models, pending} để log và test."""
+    """Một chu kỳ deployer; trả tóm tắt để log và test: `head`, `applied`, `models` (pipeline vừa kiểm/cài ở chu kỳ này),
+    `pending` (số callback chưa báo được), `unresolved` (pipeline đổi chưa xong: {model: trạng thái})."""
     state = load_state(config)
     if not (Path(config.deploy_dir) / "workspace.yaml").exists():
         install.write_workspace(config.deploy_dir)  # Dagster cần workspace.yaml (rỗng) ngay cả khi chưa có pipeline
     if not _flush(config, state, post, sleep):
         log.warning("Còn %d kết quả chưa báo được backend; chưa cài commit mới.", len(state["pending"]))
-        return {"head": None, "applied": state["applied"], "models": [], "pending": len(state["pending"])}
+        unresolved = {model: record["status"] for model, record in state["models"].items() if record["status"] != DONE}
+        return {
+            "head": None,
+            "applied": state["applied"],
+            "models": [],
+            "pending": len(state["pending"]),
+            "unresolved": unresolved,
+        }
     head = fetch(config)
+    if reinstall:
+        state["models"] = {}
     applied = None if reinstall else state["applied"]
     if head == applied:
-        return {"head": head, "applied": applied, "models": [], "pending": 0}
-    models = changed_models(config, applied, head)
-    log.info("Commit %s: %d pipeline đổi %s.", head[:12], len(models), models)
-    payloads = [payload for model in models if (payload := apply_pipeline(config, head, model))]
-    state.update(installed=head, pending=payloads)
-    save_state(config, state)
+        return {"head": head, "applied": applied, "models": [], "pending": 0, "unresolved": {}}
+    changed, trees = changed_models(config, applied, head), pipeline_trees(config, head)
+    models = [model for model in changed if _process(config, state, head, model, trees.get(model))]
+    save_state(config, state)  # callback chờ báo được lưu trước khi gửi: deployer tắt giữa chừng thì lần sau báo tiếp
     _flush(config, state, post, sleep)
-    return {"head": head, "applied": state["applied"], "models": models, "pending": len(state["pending"])}
+    unresolved = {}
+    for model in changed:
+        record = state["models"].get(model)
+        if record is None or record["tree"] != trees.get(model) or record["status"] != DONE:
+            unresolved[model] = record["status"] if record else "chưa xử lý"
+    if not unresolved:
+        state.update(applied=head, models={})
+        save_state(config, state)
+    elif models:
+        log.warning("Chưa ghi nhận commit %s: pipeline chưa cài và báo xong %s.", head[:12], unresolved)
+    return {
+        "head": head,
+        "applied": state["applied"],
+        "models": models,
+        "pending": len(state["pending"]),
+        "unresolved": unresolved,
+    }
