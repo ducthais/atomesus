@@ -1,4 +1,4 @@
-export type User = { id: string; name: string; role: 'Engineer' | 'Reviewer' };
+export type User = { id: string; username?: string; email?: string | null; name: string; role: 'Engineer' | 'Reviewer' | 'Admin'; managed?: boolean };
 export const COLUMN_TYPES = ['bigint', 'integer', 'decimal(18,2)', 'double', 'varchar', 'boolean', 'date', 'timestamp'] as const;
 /** `date_formats`: định dạng strptime thử lần lượt cho cột ngày ghi nhiều kiểu; không có thì ép kiểu nghiêm. */
 export type ColumnRule = { from: string; as: string; type: typeof COLUMN_TYPES[number]; date_formats?: string[] };
@@ -69,8 +69,13 @@ export type AgentPlan = {
   concepts?: { term: string; column?: string | null }[];
 };
 export type Approval = { decision: string; reviewer: string; files_hash: string; version: number; at: string; comment: string };
+export type OptimizationVerdict = {
+  improved: boolean; reason?: string; label?: string;
+  comparison?: { rule: string; before?: unknown; after?: unknown; better: boolean; gain_pct?: number; detail?: string }[];
+};
 export type RunReport = {
   run_id: string; version: number; domain: string; created_by: string; created_at: string; user_request: string;
+  trigger?: 'user_request' | 'manual_optimize' | 'regression'; parent_run_id?: string | null;
   status: string; stage_reached: string;
   // Run làm sạch thủ công lưu body RunRequest; run do agent tạo lưu Spec đầy đủ.
   spec: RunRequest | AgentSpec | null; plan?: AgentPlan | null;
@@ -87,6 +92,7 @@ export type RunReport = {
   error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string; need_tables?: string[] }[];
   /** Nguồn và bảng người dùng chọn khi tạo run; null = agent chọn trong mọi nguồn. */
   source_scope?: { source_ref: string; tables: string[] }[] | null; approval: Approval | null;
+  regression?: { verdict?: OptimizationVerdict; [key: string]: unknown } | null;
   review_history?: Approval[];
   timeline?: { event: string; at: string; actor?: string | null }[];
 };

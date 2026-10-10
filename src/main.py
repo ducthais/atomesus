@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.catalog import router as catalog_router
+from src.api.monitor import pipelines_router
 from src.api.monitor import router as monitor_router
 from src.api.orchestration import router as orchestration_router
 from src.api.policy import router as policy_router
@@ -76,6 +77,7 @@ app.include_router(policy_router, prefix="/api/v1")
 app.include_router(catalog_router, prefix="/api/v1")
 app.include_router(orchestration_router, prefix="/api/v1")
 app.include_router(monitor_router, prefix="/api/v1")
+app.include_router(pipelines_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 
 

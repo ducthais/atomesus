@@ -1,9 +1,9 @@
 'use server';
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { refresh } from 'next/cache';
-import type { ColumnRule, RunReport } from '@/lib/postgres-api';
+import type { ColumnRule, RunReport, User } from '@/lib/postgres-api';
 import { chatPayload, type ChatResponse } from '@/lib/studio';
 import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, discoverObjects } from '@/lib/catalog/source';
 import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections';
@@ -11,6 +11,7 @@ import type { Discovery } from '@/lib/catalog/types';
 import { toReconcile, type Reconcile } from '@/lib/catalog/explain';
 
 export type ActionState = { error?: string; message?: string } | null;
+export type RegistrationState = { error?: string; email?: string; developmentCode?: string } | null;
 const failure = (err: unknown): ActionState => ({ error: err instanceof Error ? err.message : 'Thao tác thất bại. Vui lòng thử lại.' });
 const MAX_AGE = 28800; // = SESSION_SECONDS của backend
 // Bản build (deploy sau HTTPS) chỉ gửi cookie qua HTTPS; `next dev` chạy http nên để tắt.
@@ -26,6 +27,7 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
     const accounts: Record<string, { id: string; password: string }> = {
       engineer: { id: 'minh', password: process.env.PIPELINE_ENGINEER_PASSWORD || 'Engineer@123' },
       reviewer: { id: 'an', password: process.env.PIPELINE_REVIEWER_PASSWORD || 'Reviewer@123' },
+      admin: { id: 'admin', password: process.env.PIPELINE_ADMIN_PASSWORD || 'Admin@123' },
     };
     const account = accounts[username];
     if (!account || account.password !== password) return { error: 'Tên đăng nhập hoặc mật khẩu không đúng.' };
@@ -43,12 +45,89 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
   redirect('/');
 }
 
+/** Lưu cookie phiên backend trả về (đăng ký hoặc xác thực xong) rồi vào trang chủ. */
+async function startSession(response: Response): Promise<{ error: string }> {
+  const token = response.headers.getSetCookie().map(cookie => cookie.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
+  if (!token) return { error: 'Backend không trả cookie phiên.' };
+  (await cookies()).set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
+  redirect('/');
+}
+
+/** Đăng ký Engineer. Backend tắt xác thực email: tạo tài khoản và đăng nhập ngay (201). Bật: gửi OTP (202). */
+export async function signUp(_: RegistrationState, form: FormData): Promise<RegistrationState> {
+  const name = String(form.get('name') ?? '').trim();
+  const email = String(form.get('email') ?? '').trim().toLowerCase();
+  const username = String(form.get('username') ?? '').trim().toLowerCase();
+  const password = String(form.get('password') ?? '');
+  const confirmPassword = String(form.get('confirm_password') ?? '');
+  if (name.length < 2) return { error: 'Họ tên phải có ít nhất 2 ký tự.' };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return { error: 'Email không hợp lệ.' };
+  if (!/^[a-z][a-z0-9_.-]{2,31}$/.test(username)) return { error: 'Tên đăng nhập gồm 3–32 ký tự: chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang; bắt đầu bằng chữ.' };
+  if (password !== confirmPassword) return { error: 'Mật khẩu nhập lại không khớp.' };
+  if (password.length < 8 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+    return { error: 'Mật khẩu cần ít nhất 8 ký tự, gồm chữ hoa, chữ thường và chữ số.' };
+  }
+  if (MOCK) return { error: 'Đăng ký cần backend thật. Tắt CATALOG_MOCK rồi thử lại.' };
+  let response: Response;
+  try {
+    // Backend giới hạn đăng ký theo IP người dùng: chuyển tiếp IP mà Caddy ghi vào X-Forwarded-For.
+    const clientIp = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim();
+    response = await fetch(`${BACKEND}/api/v1/pipeline/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(clientIp ? { 'X-Forwarded-For': clientIp } : {}) },
+      body: JSON.stringify({ name, email, username, password }), cache: 'no-store',
+    });
+  } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const detail = body?.detail;
+    return { error: typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((item: { msg: string }) => item.msg).join('; ') : 'Đăng ký thất bại.' };
+  }
+  if (response.status === 201) return startSession(response);
+  const result = await response.json() as { email: string; development_code?: string };
+  return { email: result.email, developmentCode: result.development_code };
+}
+
+/** Xác thực OTP rồi nhận cookie phiên của tài khoản Engineer vừa được tạo. */
+export async function verifySignUp(_: ActionState, form: FormData): Promise<ActionState> {
+  const email = String(form.get('email') ?? '').trim().toLowerCase();
+  const code = String(form.get('code') ?? '').trim();
+  if (!email || !/^\d{6}$/.test(code)) return { error: 'Nhập mã xác thực gồm 6 chữ số.' };
+  if (MOCK) return { error: 'Đăng ký cần backend thật. Tắt CATALOG_MOCK rồi thử lại.' };
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND}/api/v1/pipeline/register/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, code }), cache: 'no-store',
+    });
+  } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    return { error: typeof body?.detail === 'string' ? body.detail : 'Xác thực email thất bại.' };
+  }
+  return startSession(response);
+}
+
 export async function signOut(): Promise<void> {
   const jar = await cookies();
   if (!MOCK) await backend('/pipeline/session', { method: 'DELETE' }).catch(() => null);
   jar.delete(SESSION_COOKIE);
   jar.delete(CONNECTIONS_COOKIE);
   redirect('/');
+}
+
+/** Admin cấp hoặc thu hồi quyền Reviewer; kiểm tra lại phiên ngay trong Server Action và tại backend. */
+export async function updateUserRole(userId: string, role: 'Engineer' | 'Reviewer'): Promise<ActionState> {
+  if (MOCK) return { message: `Mock: đã đổi vai trò thành ${role}.` };
+  try {
+    const actor = await backend<User>('/pipeline/session');
+    if (actor.role !== 'Admin') return { error: 'Chỉ Admin được thay đổi vai trò tài khoản.' };
+    await backend<User>(`/pipeline/users/${encodeURIComponent(userId)}/role`, {
+      method: 'PATCH', body: JSON.stringify({ role }),
+    });
+    refresh();
+    return { message: `Đã cập nhật vai trò thành ${role}.` };
+  } catch (err) {
+    return failure(err);
+  }
 }
 
 /** Thêm / bỏ một nguồn khỏi phiên kết nối. Chỉ ghi cookie khi danh sách thật sự đổi. */
@@ -122,6 +201,18 @@ export async function cancelRun(runId: string): Promise<ActionState> {
     if (err instanceof BackendError && err.status === 409) refresh();
     return failure(err);
   }
+}
+
+/** Yêu cầu Người 3 tối ưu pipeline đang deploy; backend tạo run mới và tự đánh giá có tốt hơn hay không. */
+export async function optimizePipeline(model: string): Promise<ActionState> {
+  if (MOCK) return { message: 'Mock: đã gửi yêu cầu tối ưu pipeline.' };
+  let report: RunReport;
+  try {
+    report = await backend<RunReport>(`/pipelines/${encodeURIComponent(model)}/optimize`, { method: 'POST' });
+  } catch (err) {
+    return failure(err);
+  }
+  redirect(`/runs/${report.run_id.slice(0, 8)}`);
 }
 
 /** Làm sạch thủ công một bảng nguồn (POST /pipeline/runs): đổi tên, ép kiểu, tách dòng lỗi trong sandbox. */
@@ -237,7 +328,7 @@ export async function resolveAlert(alertId: number): Promise<ActionState> {
   } catch (err) { return failure(err); }
 }
 
-export type BatchReviewResult = { results: { runId: string; ok: boolean; message: string }[] } | { error: string };
+export type BatchReviewResult = { results: { runId: string; ok: boolean; status?: string | null; message: string }[] } | { error: string };
 
 /**
  * Duyệt / từ chối nhiều run một lượt. Mỗi run đi qua đúng API duyệt từng run (kiểm files_hash, chặn tự duyệt, chỉ
@@ -245,17 +336,20 @@ export type BatchReviewResult = { results: { runId: string; ok: boolean; message
  */
 export async function reviewRuns(items: { runId: string; filesHash: string }[], decision: 'approve' | 'reject', comment: string): Promise<BatchReviewResult> {
   if (!items.length) return { error: 'Chọn ít nhất một run.' };
+  if (items.length > 50) return { error: 'Mỗi lượt chỉ được duyệt tối đa 50 run.' };
+  if (new Set(items.map(item => item.runId)).size !== items.length) return { error: 'Mỗi run chỉ được chọn một lần.' };
   if (decision === 'reject' && !comment.trim()) return { error: 'Từ chối nhiều run cần ghi lý do.' };
   if (MOCK) return { results: items.map(i => ({ runId: i.runId, ok: true, message: 'Mock: chưa gọi backend.' })) };
-  const results = [];
-  for (const { runId, filesHash } of items) {
-    try {
-      const report = await backend<RunReport>(`/runs/${encodeURIComponent(runId)}/${decision}`, { method: 'POST', body: JSON.stringify({ files_hash: filesHash || null, comment: comment.trim() }) });
-      results.push({ runId, ok: true, message: report.status === 'DEPLOY_FAILED' ? 'Đã duyệt nhưng ghi project Dagster thất bại' : decision === 'approve' ? 'Đã duyệt' : 'Đã từ chối' });
-    } catch (err) {
-      results.push({ runId, ok: false, message: err instanceof Error ? err.message : 'Thao tác thất bại' });
-    }
+  try {
+    const result = await backend<{ results: { run_id: string; ok: boolean; status?: string | null; message: string }[] }>('/runs/batch-review', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: items.map(item => ({ run_id: item.runId, files_hash: item.filesHash })), decision, comment: comment.trim(),
+      }),
+    });
+    refresh();
+    return { results: result.results.map(item => ({ runId: item.run_id, ok: item.ok, status: item.status, message: item.message })) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Duyệt hàng loạt thất bại.' };
   }
-  refresh();
-  return { results };
 }

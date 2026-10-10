@@ -4,7 +4,11 @@ Mỗi run ghi một `RunReport` vào sổ bằng chứng; đọc lại qua `GET 
 """
 
 import hashlib
+import ipaddress
+import math
 import secrets
+import smtplib
+import sqlite3
 import time
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -12,6 +16,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from src.config import get_settings
+from src.pipeline import email as email_delivery
 from src.pipeline import postgres, store
 from src.pipeline.auth import (
     ACCOUNTS,
@@ -21,39 +26,52 @@ from src.pipeline.auth import (
     USERS,
     current_user,
     demo_only,
+    hash_password,
     session_digest,
     settings,
+    verify_password,
 )
 from src.pipeline.cleaning import clean_rows
-from src.pipeline.models import LoginRequest, RunRequest
+from src.pipeline.models import LoginRequest, RegisterRequest, RoleUpdateRequest, RunRequest, VerifyRegistrationRequest
 from src.pipeline.settings import PipelineSettings
 from src.run_report import Check, Cost, GateResult, RunReport, Timing, save_run_report
 
 router = APIRouter(prefix="/pipeline", tags=["Postgres pipeline"])
-DEFAULT_PASSWORDS = {"Engineer@123", "Reviewer@123"}
+DEFAULT_PASSWORDS = {"Engineer@123", "Reviewer@123", "Admin@123"}
 DOMAIN = "sales"
 SAMPLE_ROWS = 20
 MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema nguồn."
+VERIFICATION_SECONDS = 600
+MAX_VERIFICATION_ATTEMPTS = 5
+REGISTRATION_IP_SECONDS = 600  # mỗi IP đăng ký được 1 tài khoản trong cửa sổ này
 
 
 @router.get("/users", dependencies=[Depends(current_user)])
-def users():
-    return list(USERS.values())
+def users(config: PipelineSettings = Depends(settings)):
+    built_in = [{**USERS[user_id], "username": username, "managed": False} for username, user_id in ACCOUNTS.items()]
+    registered = [{**user, "managed": True} for user in store.list_users(config.store_path)]
+    return [*built_in, *registered]
 
 
-@router.post("/session", dependencies=[Depends(demo_only)])
-def login(body: LoginRequest, response: Response, config: PipelineSettings = Depends(settings)):
-    username = body.username.strip().lower()
-    user_id = ACCOUNTS.get(username)
-    expected = {
-        "engineer": config.engineer_password.get_secret_value(),
-        "reviewer": config.reviewer_password.get_secret_value(),
-    }.get(username, "")
-    if get_settings().app_env == "staging" and expected in DEFAULT_PASSWORDS:
-        # Bản demo đã deploy ra Internet: mật khẩu mặc định ai cũng biết, và ai đăng nhập được là tiêu được tiền LLM.
-        raise HTTPException(503, "Môi trường staging phải đặt PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD.")
-    if not user_id or not secrets.compare_digest(body.password, expected):
-        raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
+@router.patch("/users/{user_id}/role", dependencies=[Depends(demo_only)])
+def update_role(
+    user_id: str,
+    body: RoleUpdateRequest,
+    user: dict = Depends(current_user),
+    config: PipelineSettings = Depends(settings),
+):
+    """Admin cấp hoặc thu hồi quyền Reviewer của tài khoản đăng ký; tài khoản hệ thống là bất biến."""
+    if user["role"] != "Admin":
+        raise HTTPException(403, "Chỉ Admin được thay đổi vai trò tài khoản.")
+    if user_id in USERS:
+        raise HTTPException(409, "Không thể thay đổi vai trò của tài khoản hệ thống.")
+    updated = store.update_user_role(config.store_path, user_id, body.role)
+    if updated is None:
+        raise HTTPException(404, f"Không tìm thấy tài khoản {user_id}")
+    return {**updated, "managed": True}
+
+
+def _start_session(response: Response, user_id: str, config: PipelineSettings) -> None:
     token = secrets.token_urlsafe(32)
     with store.database(config.store_path) as conn:
         conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
@@ -66,11 +84,172 @@ def login(body: LoginRequest, response: Response, config: PipelineSettings = Dep
         token,
         httponly=True,
         samesite="strict",
-        secure=get_settings().app_env not in ("development", "test"),  # bản deploy chạy sau HTTPS
+        secure=get_settings().app_env not in ("development", "test"),
         max_age=SESSION_SECONDS,
         path=COOKIE_PATH,
     )
-    return USERS[user_id]
+
+
+@router.post("/session", dependencies=[Depends(demo_only)])
+def login(body: LoginRequest, response: Response, config: PipelineSettings = Depends(settings)):
+    username = body.username.strip().lower()
+    registered = store.get_user_by_username(config.store_path, username)
+    if registered is not None:
+        user, encoded = registered
+        valid = verify_password(body.password, encoded)
+    else:
+        user_id = ACCOUNTS.get(username)
+        user = USERS.get(user_id or "")
+        expected = {
+            "engineer": config.engineer_password.get_secret_value(),
+            "reviewer": config.reviewer_password.get_secret_value(),
+            "admin": config.admin_password.get_secret_value(),
+        }.get(username, "")
+        valid = bool(user_id) and secrets.compare_digest(body.password, expected)
+    if registered is None and get_settings().app_env == "staging" and expected in DEFAULT_PASSWORDS:
+        # Bản demo đã deploy ra Internet: mật khẩu mặc định ai cũng biết, và ai đăng nhập được là tiêu được tiền LLM.
+        raise HTTPException(
+            503,
+            "Môi trường staging phải đặt PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD / PIPELINE_ADMIN_PASSWORD.",
+        )
+    if user is None or not valid:
+        raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
+    _start_session(response, user["id"], config)
+    return user
+
+
+def _verification_hash(email: str, code: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.sha256(f"{salt}:{email}:{code}".encode()).hexdigest()
+    return f"{salt}${digest}"
+
+
+def client_ip(request: Request) -> str:
+    """IP của người dùng gửi request.
+
+    Bản deploy đi Caddy → web → backend: Caddy thay mọi X-Forwarded-For client tự gửi bằng IP thật, web chuyển tiếp
+    nó. Chỉ tin header khi kết nối tới từ địa chỉ nội bộ (proxy); kết nối trực tiếp từ Internet dùng IP kết nối.
+    """
+    peer = request.client.host if request.client else ""
+    try:
+        trusted = ipaddress.ip_address(peer).is_private
+    except ValueError:
+        trusted = False
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if trusted and forwarded:
+        try:
+            return str(ipaddress.ip_address(forwarded))
+        except ValueError:
+            pass
+    return peer or "unknown"
+
+
+@router.post("/register", status_code=202, dependencies=[Depends(demo_only)])
+def register(body: RegisterRequest, request: Request, response: Response, config: PipelineSettings = Depends(settings)):
+    """Đăng ký tài khoản Engineer. Mỗi IP một lần mỗi REGISTRATION_IP_SECONDS.
+
+    `registration_email_verification` tắt: tạo tài khoản, đăng nhập ngay và trả 201. Bật: gửi mã email, trả 202,
+    tài khoản chỉ được tạo ở /register/verify.
+    """
+    if body.username in ACCOUNTS or body.username in USERS:
+        raise HTTPException(409, "Tên đăng nhập này đã được sử dụng.")
+    if store.email_or_username_exists(config.store_path, body.email, body.username):
+        raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.")
+    ip = client_ip(request)
+    wait = store.claim_registration_slot(config.store_path, ip, REGISTRATION_IP_SECONDS)
+    if wait > 0:
+        raise HTTPException(
+            429,
+            f"Mỗi địa chỉ IP chỉ được đăng ký 1 tài khoản trong {REGISTRATION_IP_SECONDS // 60} phút. "
+            f"Vui lòng thử lại sau {math.ceil(wait / 60)} phút.",
+            headers={"Retry-After": str(math.ceil(wait))},
+        )
+
+    if not config.registration_email_verification:
+        try:
+            user = store.create_user(
+                config.store_path,
+                user_id=f"user_{uuid4().hex}",
+                username=body.username,
+                name=body.name,
+                role="Engineer",
+                password_hash=hash_password(body.password),
+                created_at=time.time(),
+                email=body.email,
+            )
+        except sqlite3.IntegrityError as exc:  # request đồng thời vừa lấy cùng email/username
+            store.release_registration_slot(config.store_path, ip)
+            raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.") from exc
+        _start_session(response, user["id"], config)
+        response.status_code = 201
+        return user
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    store.save_pending_registration(
+        config.store_path,
+        email=body.email,
+        username=body.username,
+        name=body.name,
+        password_hash=hash_password(body.password),
+        verification_hash=_verification_hash(body.email, code),
+        expires=time.time() + VERIFICATION_SECONDS,
+    )
+    try:
+        sent = email_delivery.send_verification_code(config, body.email, code)
+    except (OSError, smtplib.SMTPException) as exc:
+        store.delete_pending_registration(config.store_path, body.email)
+        store.release_registration_slot(config.store_path, ip)
+        raise HTTPException(503, "Không gửi được email xác thực. Vui lòng thử lại sau.") from exc
+
+    environment = get_settings().app_env
+    if not sent and environment not in ("development", "test"):
+        store.delete_pending_registration(config.store_path, body.email)
+        store.release_registration_slot(config.store_path, ip)
+        raise HTTPException(503, "Máy chủ chưa được cấu hình SMTP để gửi email xác thực.")
+    result: dict[str, str | int] = {"email": body.email, "expires_in": VERIFICATION_SECONDS}
+    if not sent and environment in ("development", "test"):
+        result["development_code"] = code
+    return result
+
+
+@router.post("/register/verify", status_code=201, dependencies=[Depends(demo_only)])
+def verify_registration(
+    body: VerifyRegistrationRequest, response: Response, config: PipelineSettings = Depends(settings)
+):
+    """Xác thực OTP một lần, tạo Engineer rồi đăng nhập ngay."""
+    pending = store.get_pending_registration(config.store_path, body.email)
+    if pending is None:
+        raise HTTPException(404, "Không tìm thấy yêu cầu đăng ký. Vui lòng gửi lại mã.")
+    email, username, name, password_hash, encoded, expires, attempts = pending
+    if expires < time.time():
+        store.delete_pending_registration(config.store_path, email)
+        raise HTTPException(410, "Mã xác thực đã hết hạn. Vui lòng gửi lại mã.")
+    if attempts >= MAX_VERIFICATION_ATTEMPTS:
+        store.delete_pending_registration(config.store_path, email)
+        raise HTTPException(429, "Bạn đã nhập sai quá nhiều lần. Vui lòng gửi lại mã.")
+    salt, _digest = encoded.split("$", 1)
+    if not secrets.compare_digest(_verification_hash(email, body.code, salt), encoded):
+        store.increment_verification_attempts(config.store_path, email)
+        raise HTTPException(400, "Mã xác thực không đúng.")
+    if username in ACCOUNTS or username in USERS or store.email_or_username_exists(config.store_path, email, username):
+        store.delete_pending_registration(config.store_path, email)
+        raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.")
+    try:
+        user = store.create_user(
+            config.store_path,
+            user_id=f"user_{uuid4().hex}",
+            username=username,
+            name=name,
+            role="Engineer",
+            password_hash=password_hash,
+            created_at=time.time(),
+            email=email,
+        )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.") from exc
+    store.delete_pending_registration(config.store_path, email)
+    _start_session(response, user["id"], config)
+    return user
 
 
 @router.get("/session")

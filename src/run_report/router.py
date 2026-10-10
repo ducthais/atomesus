@@ -1,8 +1,9 @@
 import subprocess
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.codegen.render import file_hashes
 from src.pipeline.auth import current_user, settings
@@ -20,6 +21,40 @@ class ReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     files_hash: str | None = Field(description="files_hash Reviewer đã xem; lệch với run hiện tại thì từ chối")
     comment: str = Field(default="", max_length=500)
+
+
+class BatchReviewItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: str = Field(min_length=1)
+    files_hash: str = Field(min_length=1)
+
+
+class BatchReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[BatchReviewItem] = Field(min_length=1, max_length=50)
+    decision: Literal["approve", "reject"]
+    comment: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def _valid_batch(self) -> "BatchReviewRequest":
+        ids = [item.run_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Mỗi run chỉ được xuất hiện một lần trong mẻ duyệt.")
+        self.comment = self.comment.strip()
+        if self.decision == "reject" and not self.comment:
+            raise ValueError("Từ chối nhiều run cần ghi lý do.")
+        return self
+
+
+class BatchReviewResult(BaseModel):
+    run_id: str
+    ok: bool
+    status: str | None = None
+    message: str
+
+
+class BatchReviewResponse(BaseModel):
+    results: list[BatchReviewResult]
 
 
 class RequestChangesRequest(BaseModel):
@@ -193,6 +228,40 @@ def reject_run(
     if not transition_run_report(config.store_path, rejected, "READY_FOR_REVIEW", report.version, report.files_hash):
         raise HTTPException(409, "Run đã thay đổi kể từ lúc review. Tải lại trước khi từ chối.")
     return rejected
+
+
+@router.post("/batch-review", response_model=BatchReviewResponse)
+def batch_review_runs(
+    body: BatchReviewRequest,
+    user: dict = Depends(current_user),
+    config: PipelineSettings = Depends(settings),
+) -> BatchReviewResponse:
+    """Duyệt hoặc từ chối tối đa 50 run trong một request; lỗi của một run không chặn các run còn lại."""
+    if user["role"] != "Reviewer":
+        raise HTTPException(403, "Chỉ Reviewer được duyệt hoặc từ chối run.")
+    results = []
+    for item in body.items:
+        request = ReviewRequest(files_hash=item.files_hash, comment=body.comment)
+        try:
+            report = (
+                approve_run(item.run_id, request, user=user, config=config)
+                if body.decision == "approve"
+                else reject_run(item.run_id, request, user=user, config=config)
+            )
+            message = (
+                "Đã duyệt nhưng ghi project Dagster thất bại"
+                if report.status == "DEPLOY_FAILED"
+                else "Đã duyệt"
+                if body.decision == "approve"
+                else "Đã từ chối"
+            )
+            results.append(BatchReviewResult(run_id=item.run_id, ok=True, status=report.status, message=message))
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "Thao tác thất bại"
+            results.append(BatchReviewResult(run_id=item.run_id, ok=False, message=detail))
+        except OSError as exc:
+            results.append(BatchReviewResult(run_id=item.run_id, ok=False, message=str(exc)))
+    return BatchReviewResponse(results=results)
 
 
 @router.post("/{run_id}/request-changes", response_model=RunReport)

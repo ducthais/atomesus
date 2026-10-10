@@ -9,6 +9,7 @@ import type { CatalogRun, Dataset, Domain, GlossaryTerm, Orchestration, Person, 
 export const PEOPLE: Person[] = [
   { id: 'minh', name: 'Minh Trần', email: 'minh@company.vn', role: 'Engineer' },
   { id: 'lan', name: 'Lan Phạm', email: 'lan@company.vn', role: 'Reviewer' },
+  { id: 'admin', name: 'Quản trị viên', email: 'admin', role: 'Admin' },
   { id: 'an', name: 'An Nguyễn', email: 'an@company.vn', role: 'Steward' },
   { id: 'binh', name: 'Bình Lê', email: 'binh@company.vn', role: 'Steward' },
 ];

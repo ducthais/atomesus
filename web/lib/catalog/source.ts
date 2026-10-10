@@ -52,7 +52,16 @@ export async function backend<T>(path: string, init?: RequestInit): Promise<T> {
 export const listUsers = cache(async (): Promise<Person[]> => {
   if (MOCK) return PEOPLE;
   const users = await backend<User[]>('/pipeline/users');
-  return users.map(u => ({ id: u.id, name: u.name, email: u.id, role: u.role }));
+  return users.map(u => ({ id: u.id, name: u.name, email: u.email ?? u.username ?? u.id, role: u.role }));
+});
+
+/** Danh sách tài khoản cho màn quản trị; `managed=false` là tài khoản hệ thống không được đổi quyền. */
+export const listAccounts = cache(async (): Promise<User[]> => {
+  if (MOCK) return PEOPLE.filter(person => person.role !== 'Steward').map(person => ({
+    id: person.id, username: person.email, name: person.name,
+    role: person.role as User['role'], managed: false,
+  }));
+  return backend<User[]>('/pipeline/users');
 });
 
 /** Người dùng đang đăng nhập; null khi chưa đăng nhập hoặc phiên hết hạn. */
@@ -63,7 +72,7 @@ export const currentUser = cache(async (): Promise<Person | null> => {
   }
   try {
     const user = await backend<User>('/pipeline/session');
-    return { id: user.id, name: user.name, email: user.id, role: user.role };
+    return { id: user.id, name: user.name, email: user.email ?? user.username ?? user.id, role: user.role };
   } catch (err) {
     if (err instanceof BackendError && err.status === 401) return null;
     throw err;

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CircleAlert, GitBranch, RotateCcw } from 'lucide-react';
+import { CircleAlert, GitBranch, RotateCcw, Sparkles } from 'lucide-react';
 import { currentUser, getCatalog, getComparison, runFiles, runMessages } from '@/lib/catalog/source';
 import { STAGES, STAGE_IDS, canReview, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
@@ -11,7 +11,7 @@ import { RunProgress } from '../../_components/run-progress';
 import { RunChat } from '../../_components/run-chat';
 import { EffortPanel } from '../../_components/effort';
 import { StagingEvidenceView } from '../../_components/staging-evidence';
-import { CancelRunButton } from '../../_components/run-controls';
+import { CancelRunButton, OptimizeRunButton } from '../../_components/run-controls';
 import { isAgentSpec } from '@/lib/postgres-api';
 import { RunCompareView, impactNotes } from '../../_components/run-compare';
 import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, StatusBadge, Tabs, fmtDate, statusTone } from '../../_components/ui';
@@ -74,17 +74,19 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const reviewReason = eligible ? 'Duyệt sẽ ghi đúng bộ file này thành project Dagster local.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
   const blocked = statusTone(run.status) === 'bad';
   const canCancel = user.role === 'Engineer' && user.id === run.owner && ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'].includes(run.status);
+  const canOptimize = user.role === 'Engineer' && run.status === 'DEPLOYED' && run.plan.model !== '—';
   const limits = policy.limits;
 
   return <>
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/runs">Hoạt động</Link><span>/</span><span className="mono">{shortId(run.id)}</span></nav>
     <PageHeader icon={<GitBranch size={22} />} kicker={<><StatusBadge status={run.status} /><span className="meta-tag">v{run.version}</span><span className="meta-tag">Phase {run.stage + 1}/{STAGES.length} · {STAGES[run.stage]}</span></>} title={run.title}
-      actions={<div className="header-actions">{canCancel && <CancelRunButton runId={run.id} />}<Link href={retryHref} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link></div>}>
+      actions={<div className="header-actions">{canOptimize && <OptimizeRunButton model={run.plan.model} />}{canCancel && <CancelRunButton runId={run.id} />}<Link href={retryHref} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link></div>}>
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
 
     {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Run dừng ở “{STAGES[run.stage]}”</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
     {run.status === 'CANCELLED' && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>Run đã được Engineer hủy ở phase “{STAGES[run.stage]}”. Bằng chứng đã ghi trước đó vẫn được giữ lại.</span></div>}
+    {run.status === 'NO_IMPROVEMENT' && <div className="callout warn"><Sparkles size={16} aria-hidden /><div><strong>Không có bản tốt hơn</strong><p>{run.optimization?.verdict?.reason ?? 'Bản đề xuất không cải thiện pipeline đang chạy nên không được chuyển sang hàng đợi duyệt.'}</p></div></div>}
 
     {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={progressFrom} specRetries={run.specRetries} />}
 

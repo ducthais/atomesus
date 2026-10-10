@@ -72,6 +72,19 @@ test('stopped run exposes the recorded reason and stage', () => {
   assert.equal(run.plan.model, 'fct_daily_orders');
 });
 
+test('manual optimization exposes the no-improvement verdict to the UI', () => {
+  const run = toStudioRun({
+    ...agentReport,
+    trigger: 'manual_optimize',
+    status: 'NO_IMPROVEMENT',
+    stage_reached: 'report',
+    regression: { verdict: { improved: false, reason: 'Bản đề xuất không nhanh hơn bản đang chạy.' } },
+  });
+  assert.equal(run.trigger, 'manual_optimize');
+  assert.equal(run.optimization?.verdict?.improved, false);
+  assert.equal(run.optimization?.verdict?.reason, 'Bản đề xuất không nhanh hơn bản đang chạy.');
+});
+
 test('run stopped at a gate with a half-written Spec falls back to the plan instead of crashing', () => {
   // Spec LLM viết dở, lưu nguyên khi cổng kiểm tra chặn (run 870fe465): nguồn thiếu primary_key, write_disposition.
   const partial = { domain: 'rental', sources: [{ id: 'customer', kind: 'postgres', source_ref: 'pagila_pg', table: 'customer' }], transform: {}, schedule: {} };
@@ -146,14 +159,15 @@ test('chat payload trims the message and never sends identity fields', () => {
 
 test('duyệt nhiều run: chỉ chọn được run của người khác, đạt mọi kiểm tra', async () => {
   const { batchReviewItems } = await import('../lib/studio.ts');
-  const base = { status: 'READY_FOR_REVIEW', owner: 'minh', checks: [{ id: 'a', name: 'a', state: 'pass', value: '', detail: '' }] };
+  const base = { status: 'READY_FOR_REVIEW', owner: 'minh', filesHash: 'sha256:abc', checks: [{ id: 'a', name: 'a', state: 'pass', value: '', detail: '' }] };
   const runs = [
     { ...base, id: 'r1' },
     { ...base, id: 'r2', owner: 'an' },
     { ...base, id: 'r3', checks: [{ id: 'b', name: 'b', state: 'fail', value: '', detail: '' }] },
+    { ...base, id: 'r5', filesHash: '' },
     { ...base, id: 'r4', status: 'DEPLOYED' },
   ] as unknown as Parameters<typeof batchReviewItems>[0];
   assert.deepEqual(batchReviewItems(runs, 'Reviewer', 'an').map(i => [i.run.id, i.eligible, i.reason]),
-    [['r1', true, null], ['r2', false, 'Run của bạn: không tự duyệt'], ['r3', false, '1 kiểm tra chưa đạt']]);
+    [['r1', true, null], ['r2', false, 'Run của bạn: không tự duyệt'], ['r3', false, '1 kiểm tra chưa đạt'], ['r5', false, 'Run chưa có bộ file để duyệt']]);
   assert.ok(batchReviewItems(runs, 'Engineer', 'minh').every(i => !i.eligible));
 });

@@ -8,7 +8,7 @@ import type { AgentPlan } from '../postgres-api.ts';
 
 export type Layer = 'source' | 'bronze' | 'staging' | 'gold';
 export type Platform = 'postgres' | 'mongodb' | 'rest_api' | 'filesystem' | 'duckdb';
-export type Role = 'Engineer' | 'Reviewer' | 'Steward';
+export type Role = 'Engineer' | 'Reviewer' | 'Admin' | 'Steward';
 
 export type Person = { id: string; name: string; email: string; role: Role };
 

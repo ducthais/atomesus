@@ -154,6 +154,7 @@ a.tag:hover { border-color: var(--accent); color: var(--accent); text-decoration
 .callout p { margin-top: 4px; }
 .callout.info { background: var(--accent-soft); border-color: transparent; }
 .callout.info > svg { color: var(--accent); }
+.callout.good { background: var(--good-soft); border-color: transparent; }
 .callout.warn { background: var(--wait-soft); border-color: transparent; }
 .callout.bad { background: var(--bad-soft); border-color: transparent; }
 .callout.warn > svg { color: var(--wait); } .callout.bad > svg { color: var(--bad); }
@@ -371,8 +372,14 @@ a.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login-card { width: min(440px, 100%); display: grid; gap: 14px; padding: 32px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-panel); box-shadow: var(--shadow-hover); }
 .login-card .brand-mark { width: 44px; height: 44px; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border: 1px solid var(--rule); border-radius: var(--r-card); background: var(--surface-2); }
+.auth-tabs button { padding: 8px 12px; border: 0; border-radius: calc(var(--r-card) - 3px); background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.auth-tabs button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.auth-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .login-form { display: grid; gap: 14px; margin-top: 6px; }
 .login-form .button { justify-content: center; margin-top: 2px; padding: 11px 16px; }
+.verification-intro { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; padding: 12px; border: 1px solid var(--rule); border-radius: var(--r-card); background: var(--surface-2); }
+.verification-intro p { margin: 4px 0 0; font-size: 13px; }
 .login-help { color: var(--muted); font-size: 12px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -662,7 +669,21 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 
 /* ── Theo dõi pipeline (Day 2) ── */
 .monitor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.monitor-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.monitor-summary > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.monitor-summary span { color: var(--muted); font-size: 13px; }
+.monitor-summary strong { font-size: 22px; }
+.monitor-summary .summary-bad { border-color: var(--bad); color: var(--bad); }
+.monitor-summary .summary-warn { border-color: var(--wait); color: var(--wait); }
+.monitor-findings { display: grid; gap: 8px; min-width: 220px; }
+.monitor-findings > div { display: grid; gap: 4px; }
+.monitor-findings small { color: var(--muted); line-height: 1.4; }
 .monitor-alerts li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
 .monitor-alerts li:last-child { border-bottom: 0; }
 .monitor-alerts p { margin: 4px 0; }
+@media (max-width: 760px) { .monitor-summary { grid-template-columns: 1fr; } }
+.admin-role-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 260px; }
+.admin-role-control select { min-width: 130px; }
+.admin-role-control small { display: inline-flex; align-items: center; gap: 4px; }
+.success-text { color: var(--good); }
 .row-muted td { color: var(--ink-3, #888); }

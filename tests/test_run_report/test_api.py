@@ -171,6 +171,44 @@ async def test_reject_records_decision_without_deploy(logged_in, generated_run, 
 
 
 @pytest.mark.asyncio
+async def test_batch_review_processes_each_run_and_reports_partial_failure(logged_in, generated_run):
+    response = await logged_in.post(
+        "/api/v1/runs/batch-review",
+        json={
+            "decision": "reject",
+            "comment": "Sai định nghĩa metric",
+            "items": [
+                {"run_id": READY_RUN_ID, "files_hash": generated_run.files_hash},
+                {"run_id": "missing-run", "files_hash": "sha256:missing"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [
+        {"run_id": READY_RUN_ID, "ok": True, "status": "REJECTED", "message": "Đã từ chối"},
+        {"run_id": "missing-run", "ok": False, "status": None, "message": "Không tìm thấy run missing-run"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_batch_review_validates_duplicates_and_role(client, store_path, generated_run, logged_in):
+    item = {"run_id": READY_RUN_ID, "files_hash": generated_run.files_hash}
+    duplicate = await logged_in.post(
+        "/api/v1/runs/batch-review",
+        json={"decision": "approve", "comment": "", "items": [item, item]},
+    )
+    assert duplicate.status_code == 422
+
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+    forbidden = await client.post(
+        "/api/v1/runs/batch-review",
+        json={"decision": "approve", "comment": "", "items": [item]},
+    )
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_reviewer_can_request_changes_and_restart_from_spec(logged_in, generated_run):
     from src.run_report.router import request_change_deps
     from src.run_report.store import get_run_report
