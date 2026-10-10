@@ -1,13 +1,18 @@
 # Toàn bộ Atomesus trên một máy (VM Oracle Cloud Always Free), xem docs/deploy.md.
 #   docker compose --env-file .env -f deploy/compose.yml up -d --build
 # Chỉ Caddy mở cổng ra ngoài (80/443, HTTPS tự động). Các dịch vụ khác nói chuyện qua mạng nội bộ của compose.
-# Dữ liệu sống qua mỗi lần deploy: ../data (sổ bằng chứng, warehouse, project Dagster đã duyệt), volume pgdata, caddy.
+# Dữ liệu sống qua mỗi lần deploy: ../data (sổ bằng chứng, warehouse, lịch sử Dagster), volume pgdata, caddy,
+# dagster_code (code location production) và deployer_state.
+# Code location của Dagster production (volume dagster_code, mount ở /app/data/dagster_local) CHỈ service deployer
+# ghi được (SPEC §9.5 bước 4, mục 19); dagster và backend mount chỉ đọc (:ro). Bật deployer: docs/deploy.md mục 6.
 name: atomesus
 
+x-build: &build
+  context: ..
+  dockerfile: Dockerfile
+
 x-app: &app
-  build:
-    context: ..
-    dockerfile: Dockerfile
+  build: *build
   image: atomesus-app
   env_file: ../.env
   volumes:
@@ -44,6 +49,9 @@ services:
 
   backend:
     <<: *app
+    volumes:
+      - ../data:/app/data
+      - dagster_code:/app/data/dagster_local:ro  # Day 2 đọc pipeline đang chạy; không ghi được
     depends_on:
       postgres: { condition: service_healthy }
       mock-api: { condition: service_started }
@@ -54,6 +62,10 @@ services:
     environment:
       DAGSTER_HOST: 0.0.0.0
       DAGSTER_PORT: "3070"
+      DAGSTER_CODE_READONLY: "1"
+    volumes:
+      - ../data:/app/data
+      - dagster_code:/app/data/dagster_local:ro  # chỉ deployer ghi; workspace.yaml đổi thì Dagster tự khởi động lại
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3070/server_info')"]
       interval: 30s
@@ -63,6 +75,54 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       backend: { condition: service_started }
+      code-volumes: { condition: service_completed_successfully }
+
+  # Volume Docker mới tạo thuộc root: đổi chủ sang user `app` (uid 1000) để deployer ghi được, tạo workspace.yaml rỗng
+  # để Dagster lên được cả khi chưa bật deployer, rồi thoát. Không đụng tới nội dung code location đã cài.
+  code-volumes:
+    build: *build
+    image: atomesus-app
+    user: "0"
+    command:
+      - sh
+      - -c
+      - >-
+        cd /app/data/dagster_local &&
+        { [ -e workspace.yaml ] || printf 'load_from: []\n' > workspace.yaml; } &&
+        chown 1000:1000 . workspace.yaml /app/state
+    volumes:
+      - dagster_code:/app/data/dagster_local
+      - deployer_state:/app/state
+    restart: "no"
+
+  # Kéo nhánh mặc định của repo pipeline bằng deploy key CHỈ ĐỌC, kiểm manifest, cài vào dagster_code, báo backend
+  # (scripts/deployer.py). Không dùng ../.env: không có OpenAI key hay mật khẩu nguồn, chỉ các biến dưới đây.
+  # Chỉ chạy khi bật profile `deployer` (COMPOSE_PROFILES=deployer trong .env, xem docs/deploy.md mục 6).
+  deployer:
+    build: *build
+    image: atomesus-app
+    profiles: [deployer]
+    command: ["python", "scripts/deployer.py"]
+    environment:
+      DEPLOYER_REPO_URL: ${DEPLOYER_REPO_URL:-}
+      PIPELINE_DEPLOYER_SECRET: ${PIPELINE_DEPLOYER_SECRET:-}
+      DEPLOYER_INTERVAL_SEC: ${DEPLOYER_INTERVAL_SEC:-60}
+      DEPLOYER_SSH_KEY: /run/secrets/deploy_key
+      DEPLOYER_KNOWN_HOSTS: /run/secrets/known_hosts
+      DEPLOYER_STATE_DIR: /app/state
+      DEPLOYER_BACKEND_URL: http://backend:8000
+      PIPELINE_DEPLOY_DIR: /app/data/dagster_local
+      DO_NOT_TRACK: "1"
+    # Khóa nằm ngoài ~/atomesus (rsync của workflow Deploy xóa file lạ trong đó) và ngoài ../data (backend đọc được).
+    volumes:
+      - dagster_code:/app/data/dagster_local
+      - deployer_state:/app/state
+      - ${DEPLOYER_SSH_DIR:-/etc/atomesus-deployer}/deploy_key:/run/secrets/deploy_key:ro
+      - ${DEPLOYER_SSH_DIR:-/etc/atomesus-deployer}/known_hosts:/run/secrets/known_hosts:ro
+    depends_on:
+      code-volumes: { condition: service_completed_successfully }
+      backend: { condition: service_started }
+    restart: unless-stopped
 
   web:
     build:
@@ -97,3 +157,5 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  dagster_code:
+  deployer_state:

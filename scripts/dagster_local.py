@@ -9,6 +9,9 @@
   vòng này), chờ người duyệt.
 - Tự khởi động lại khi workspace.yaml đổi: cài một pipeline (src/deployer/install.py) thì file này được ghi lại, và
   `dagster dev` chỉ đọc danh sách code location lúc khởi động (nút Reload không thêm được location mới).
+- Production (deploy/compose.yml, DAGSTER_CODE_READONLY=1): code location do service deployer ghi, Dagster mount chỉ
+  đọc. Không ghi workspace.yaml (chờ deployer tạo), không chạy `dagster dev` (nó chạy `dbt parse` ghi vào thư mục
+  project) mà chạy dagster-webserver + dagster-daemon; dbt ghi target/log của từng lần chạy vào DAGSTER_HOME.
 
 Chạy: python scripts/dagster_local.py  (hoặc make dagster), mở http://127.0.0.1:3070
 """
@@ -31,14 +34,29 @@ from src.pipeline.settings import PipelineSettings  # noqa: E402
 from src.policy.loader import load_policy  # noqa: E402
 
 HOST, PORT = os.environ.get("DAGSTER_HOST", "127.0.0.1"), os.environ.get("DAGSTER_PORT", "3070")
+READ_ONLY = os.environ.get("DAGSTER_CODE_READONLY") == "1"
 POLL_SECONDS = 3
 COLLECT_SECONDS = 60
 
 
-def start() -> tuple[subprocess.Popen, Path]:
-    """Ghi workspace từ các project đã deploy rồi bật `dagster dev`. Đọc lại policy để có credential của nguồn mới."""
+def _wait_workspace(deploy_dir: str) -> Path:
+    """Chế độ chỉ đọc: workspace.yaml do deployer ghi (kể cả khi chưa có pipeline nào); chưa có thì chờ."""
+    workspace = Path(deploy_dir).resolve() / "workspace.yaml"
+    if not workspace.exists():
+        print(f"Chờ service deployer tạo {workspace}…", flush=True)
+    while not workspace.exists():
+        time.sleep(POLL_SECONDS)
+    return workspace
+
+
+def _executable(name: str) -> str:
+    return str(Path(sys.executable).with_name(f"{name}.exe" if os.name == "nt" else name))
+
+
+def start() -> tuple[list[subprocess.Popen], Path]:
+    """Ghi workspace từ các project đã deploy rồi bật Dagster. Đọc lại policy để có credential của nguồn mới."""
     settings = PipelineSettings()
-    workspace = write_workspace(settings.deploy_dir).resolve()
+    workspace = _wait_workspace(settings.deploy_dir) if READ_ONLY else write_workspace(settings.deploy_dir).resolve()
     home = ROOT / "data" / "dagster_home"
     home.mkdir(parents=True, exist_ok=True)
     (home / "dagster.yaml").touch()
@@ -51,29 +69,44 @@ def start() -> tuple[subprocess.Popen, Path]:
         "PATH": scripts_dir + os.pathsep + os.environ.get("PATH", ""),
         "DAGSTER_HOME": str(home),
         "WAREHOUSE_PATH": str(warehouse),
-        "DAGSTER_IS_DEV_CLI": "1",
         "PYTHONIOENCODING": "utf-8",
     }
     locations = workspace.read_text(encoding="utf-8").count("location_name:")
     print(f"Dagster: http://{HOST}:{PORT}  ·  {locations} pipeline  ·  warehouse {warehouse}", flush=True)
-    dagster = Path(sys.executable).with_name("dagster.exe" if os.name == "nt" else "dagster")
-    command = [str(dagster), "dev", "-w", str(workspace), "-h", HOST, "-p", PORT]
-    process = subprocess.Popen(command, cwd=workspace.parent, env=env, start_new_session=os.name != "nt")
-    return process, workspace
-
-
-def stop(process: subprocess.Popen) -> None:
-    """Tắt cả cây tiến trình: `dagster dev` sinh webserver, daemon và code server; chỉ tắt cha thì cổng vẫn bị giữ."""
-    if process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True)
+    if READ_ONLY:
+        # Không đặt DAGSTER_IS_DEV_CLI: DbtProject.prepare_if_dev() khi đó không chạy `dbt parse` vào thư mục chỉ
+        # đọc, dùng target/manifest.json deployer đã biên dịch lúc cài. dagster-dbt đặt target/log từng lần chạy
+        # dưới DBT_TARGET_PATH.
+        env.pop("DAGSTER_IS_DEV_CLI", None)
+        env.update(DBT_TARGET_PATH=str(home / "dbt_target"), DO_NOT_TRACK="1")
+        commands = [
+            [_executable("dagster-webserver"), "-w", str(workspace), "-h", HOST, "-p", PORT],
+            [_executable("dagster-daemon"), "run", "-w", str(workspace)],
+        ]
     else:
-        os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        process.kill()
+        env["DAGSTER_IS_DEV_CLI"] = "1"
+        commands = [[_executable("dagster"), "dev", "-w", str(workspace), "-h", HOST, "-p", PORT]]
+    processes = [
+        subprocess.Popen(command, cwd=workspace.parent, env=env, start_new_session=os.name != "nt")
+        for command in commands
+    ]
+    return processes, workspace
+
+
+def stop(processes: list[subprocess.Popen]) -> None:
+    """Tắt cả cây tiến trình: `dagster dev` sinh webserver, daemon và code server; chỉ tắt cha thì cổng vẫn bị giữ."""
+    for process in processes:
+        if process.poll() is not None:
+            continue
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True)
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
+    for process in processes:
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
 
 
 def _in_thread(job) -> None:
@@ -110,24 +143,26 @@ def collect() -> None:
 
 
 def main() -> int:
-    process, workspace = start()
+    processes, workspace = start()
     stamp = workspace.stat().st_mtime
     collected = time.monotonic()
     try:
         while True:
             time.sleep(POLL_SECONDS)
-            if process.poll() is not None:
-                return process.returncode
+            exited = next((process for process in processes if process.poll() is not None), None)
+            if exited is not None:
+                stop(processes)  # webserver hoặc daemon chết thì tắt cả, để container khởi động lại
+                return exited.returncode
             if time.monotonic() - collected >= COLLECT_SECONDS:
                 collect()
                 collected = time.monotonic()
             if workspace.stat().st_mtime != stamp:
                 print("workspace.yaml đổi (có pipeline vừa được cài): khởi động lại Dagster…", flush=True)
-                stop(process)
-                process, workspace = start()
+                stop(processes)
+                processes, workspace = start()
                 stamp = workspace.stat().st_mtime
     except KeyboardInterrupt:
-        stop(process)
+        stop(processes)
         return 0
 
 
