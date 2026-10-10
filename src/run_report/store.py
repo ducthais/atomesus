@@ -112,10 +112,11 @@ def transition_run_report(
     with _database(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT status, report FROM run_reports WHERE run_id = ?", (report.run_id,)).fetchone()
-        if row is None:
+        # So trạng thái trước khi đọc JSON: người thắng race đã đổi status thì trả False ngay, không phụ thuộc nội dung.
+        if row is None or row[0] != expected_status:
             return False
         current = RunReport.model_validate_json(row[1])
-        if row[0] != expected_status or current.version != expected_version:
+        if current.version != expected_version:
             return False
         if expected_files_hash is not None and current.files_hash != expected_files_hash:
             return False

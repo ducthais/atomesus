@@ -19,6 +19,7 @@ from src.codegen import deploy, render, sandbox
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import load_policy
 from src.run_report import RunReport
+from src.run_report.router import _decide
 from src.run_report.store import (
     abandon_unfinished,
     get_run_report,
@@ -296,7 +297,12 @@ def test_concurrent_review_decisions_only_one_wins(tmp_path):
     store = str(tmp_path / "runs.sqlite3")
     base = RunReport.model_validate_json(Path("fixtures/run_reports/ready_for_review.json").read_text(encoding="utf-8"))
     save_run_report(store, base)
-    decisions = [base.model_copy(update={"status": status}) for status in ("APPROVED", "REJECTED")]
+    # Hai quyết định hợp lệ như router ghi (APPROVED bắt buộc có chữ ký approval).
+    reviewer = {"id": "an"}
+    decisions = [
+        _decide(base, "approved", reviewer, "", status="APPROVED", stage_reached="review"),
+        _decide(base, "rejected", reviewer, "", status="REJECTED", stage_reached="review"),
+    ]
     barrier = threading.Barrier(3)
     outcomes = []
 
