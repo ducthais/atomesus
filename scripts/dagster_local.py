@@ -7,7 +7,7 @@
 - Mỗi `COLLECT_SECONDS` thu số đo các lần chạy theo lịch vừa xong (src/monitor/runs.py), rồi chạy 4 luật suy giảm
   (src/monitor/day2.py): nguồn ngừng cấp thì cảnh báo, pipeline suy giảm thì tạo run sửa chạy ở luồng riêng (không chặn
   vòng này), chờ người duyệt.
-- Tự khởi động lại khi workspace.yaml đổi: Reviewer duyệt một pipeline thì deploy ghi lại file này, và
+- Tự khởi động lại khi workspace.yaml đổi: cài một pipeline (src/deployer/install.py) thì file này được ghi lại, và
   `dagster dev` chỉ đọc danh sách code location lúc khởi động (nút Reload không thêm được location mới).
 
 Chạy: python scripts/dagster_local.py  (hoặc make dagster), mở http://127.0.0.1:3070
@@ -25,8 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)  # PipelineSettings đọc .env theo đường dẫn tương đối
 
-from src.codegen.deploy import write_workspace  # noqa: E402
 from src.codegen.sandbox import credentials_env  # noqa: E402
+from src.deployer.install import write_workspace  # noqa: E402
 from src.pipeline.settings import PipelineSettings  # noqa: E402
 from src.policy.loader import load_policy  # noqa: E402
 
@@ -122,7 +122,7 @@ def main() -> int:
                 collect()
                 collected = time.monotonic()
             if workspace.stat().st_mtime != stamp:
-                print("workspace.yaml đổi (có pipeline vừa được duyệt): khởi động lại Dagster…", flush=True)
+                print("workspace.yaml đổi (có pipeline vừa được cài): khởi động lại Dagster…", flush=True)
                 stop(process)
                 process, workspace = start()
                 stamp = workspace.stat().st_mtime

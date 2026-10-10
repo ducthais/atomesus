@@ -1,4 +1,3 @@
-import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -107,36 +106,172 @@ def generated_run(store_path, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_approve_deploys_approved_files_to_local_dagster(logged_in, generated_run, tmp_path):
+async def test_approve_only_records_signature_and_writes_nothing(logged_in, generated_run, tmp_path):
     response = await logged_in.post(
         f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": generated_run.files_hash, "comment": "ok"}
     )
 
     assert response.status_code == 200, response.text
     report = response.json()
-    assert report["status"] == "DEPLOYED"
+    assert report["status"] == "APPROVED" and report["stage_reached"] == "review"
     assert report["approval"]["reviewer"] == "an"
     assert report["approval"]["files_hash"] == generated_run.files_hash
-    project = tmp_path / "dagster_local" / "fct_daily_orders"
-    assert (project / "infra/dagster/generated/fct_daily_orders_asset.py").is_file()
-    assert (project / "dbt_project/models/gold/fct_daily_orders.sql").is_file()
-    assert (project / "dbt_project/dbt_project.yml").is_file()
+    assert report["deployment"] is None
+    assert not (tmp_path / "dagster_local").exists(), "duyệt không ghi file nào ra đĩa hay Dagster"
 
 
 @pytest.mark.asyncio
-async def test_deploy_timeout_is_recorded_as_deploy_failed(logged_in, generated_run, monkeypatch):
-    from src.codegen import deploy
+async def test_batch_approve_only_records_signature(logged_in, generated_run, tmp_path):
+    response = await logged_in.post(
+        "/api/v1/runs/batch-review",
+        json={
+            "decision": "approve",
+            "comment": "",
+            "items": [{"run_id": READY_RUN_ID, "files_hash": generated_run.files_hash}],
+        },
+    )
 
-    def timeout(*_args, **_kwargs):
-        raise subprocess.TimeoutExpired("dbt parse", 120)
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [
+        {"run_id": READY_RUN_ID, "ok": True, "status": "APPROVED", "message": "Đã duyệt"}
+    ]
+    assert not (tmp_path / "dagster_local").exists()
 
-    monkeypatch.setattr(deploy, "deploy_local", timeout)
+
+@pytest.fixture
+def github():
+    """GitHub giả cho POST /runs/{id}/deploy; không ra mạng."""
+    from src.run_report.router import pipeline_github
+    from tests.test_codegen.test_deploy_pr import FakeGithub
+
+    fake = FakeGithub()
+    app.dependency_overrides[pipeline_github] = fake.client
+    yield fake
+    app.dependency_overrides.pop(pipeline_github, None)
+
+
+@pytest_asyncio.fixture
+async def approved_run(logged_in, generated_run):
     response = await logged_in.post(
         f"/api/v1/runs/{READY_RUN_ID}/approve", json={"files_hash": generated_run.files_hash}
     )
+    assert response.status_code == 200, response.text
+    return RunReport.model_validate(response.json())
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "DEPLOY_FAILED"
+
+@pytest.mark.asyncio
+async def test_deploy_opens_pull_request_and_keeps_approved(logged_in, approved_run, github, tmp_path):
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["status"] == "APPROVED" and report["stage_reached"] == "deploy"
+    deployment = report["deployment"]
+    assert deployment["repo"] == "acme/atomesus-pipelines"
+    assert deployment["branch"] == f"pipeline/fct_daily_orders/v{approved_run.version}"
+    assert deployment["pr_number"] == 1 and deployment["pr_url"].endswith("/pull/1")
+    assert deployment["state"] == "open" and deployment["head_sha"] and deployment["opened_at"]
+    stored = (await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")).json()
+    assert stored["deployment"] == deployment and stored["status"] == "APPROVED"
+    assert not (tmp_path / "dagster_local").exists()
+
+
+@pytest.mark.asyncio
+async def test_deploy_again_returns_the_same_pull_request(logged_in, approved_run, github):
+    first = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+    writes = len(github.writes())
+
+    again = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert again.status_code == 200
+    assert again.json()["deployment"]["pr_url"] == first.json()["deployment"]["pr_url"]
+    assert len(github.writes()) == writes and len(github.pulls) == 1
+
+
+@pytest.mark.asyncio
+async def test_only_reviewer_can_deploy(client, approved_run, github):
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+
+    response = await client.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 403 and github.requests == []
+
+
+@pytest.mark.asyncio
+async def test_deploy_requires_approved_status(logged_in, generated_run, github):
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 409 and "READY_FOR_REVIEW" in response.json()["detail"]
+    assert github.requests == []
+
+
+@pytest.mark.asyncio
+async def test_deploy_refuses_stored_files_that_no_longer_match_signature(logged_in, approved_run, github, store_path):
+    from src.run_report.store import get_run_files, save_run_files
+
+    files = get_run_files(store_path, READY_RUN_ID, approved_run.version)
+    tampered = {**files, next(iter(files)): "-- sửa sau khi duyệt\n"}
+    save_run_files(store_path, READY_RUN_ID, approved_run.version, tampered)
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 409 and "files_hash" in response.json()["detail"]
+    assert github.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fail", "status_code"),
+    [(401, 502), (403, 502), (404, 502), (422, 502), (500, 503), ("timeout", 503), ("unconfigured", 503)],
+)
+async def test_github_failure_keeps_approved_and_records_deploy_error(
+    logged_in, approved_run, github, fail, status_code, caplog
+):
+    from pydantic import SecretStr
+
+    from src.codegen.github import GithubClient
+    from src.run_report.router import pipeline_github
+    from tests.test_codegen.test_deploy_pr import TOKEN
+
+    if fail == "unconfigured":
+        app.dependency_overrides[pipeline_github] = lambda: GithubClient("", SecretStr(TOKEN))
+    else:
+        github.fail = {"POST /git/trees" if fail == 422 else "GET": fail}
+    caplog.set_level("DEBUG")
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == status_code
+    detail = response.json()["detail"]
+    assert detail and TOKEN not in response.text
+    stored = await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")
+    report = stored.json()
+    assert report["status"] == "APPROVED" and report["deployment"] is None
+    assert report["error_trace"][-1] == {"stage": "deploy", "error": f"Mở pull request thất bại: {detail}"}
+    assert TOKEN not in stored.text and TOKEN not in caplog.text
+    if fail == "unconfigured":
+        assert "PIPELINE_GITHUB_REPO" in detail
+
+
+@pytest.mark.asyncio
+async def test_retry_after_github_failure_opens_pull_request(logged_in, approved_run, github):
+    github.fail = {"GET": 500}
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 503
+
+    github.fail = {}
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200 and response.json()["deployment"]["pr_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reports_without_deployment_field_still_load(logged_in):
+    old = (FIXTURES_DIR / "deployed.json").read_text(encoding="utf-8")
+    assert '"deployment"' not in old and RunReport.model_validate_json(old).deployment is None
+
+    response = await logged_in.get("/api/v1/runs", params={"status": "DEPLOYED"})
+
+    assert response.status_code == 200 and response.json()[0]["deployment"] is None
 
 
 @pytest.mark.asyncio

@@ -1,18 +1,18 @@
-import subprocess
 from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.codegen.github import GithubClient, GithubError
 from src.codegen.render import file_hashes
+from src.deployer.manifest import ManifestError
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, RunReport, RunStatus
 from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report, transition_run_report
-from src.spec.models import Spec
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
 
@@ -194,28 +194,77 @@ def _decide(report: RunReport, decision: Decision, user: dict, comment: str, **c
 def approve_run(
     run_id: str, body: ReviewRequest, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
 ) -> RunReport:
-    """Duyệt đúng bộ file theo files_hash rồi ghi ra Dagster local (Sprint 1; Sprint 3 thay bằng pull request)."""
-    # Import muộn: codegen.sandbox import run_report.models, import sớm ở đầu file sẽ thành vòng.
-    from src.codegen.deploy import deploy_local
+    """Duyệt đúng bộ file theo files_hash: chỉ ghi chữ ký và chuyển APPROVED, không ghi file nào ra đĩa hay Dagster.
 
+    Đưa lên production là bước riêng: POST /runs/{id}/deploy mở pull request (SPEC §9.5).
+    """
     report = _reviewable(run_id, body, user, config.store_path)
     files = get_run_files(config.store_path, run_id, report.version)
     if file_hashes(files)[1] != report.files_hash:
-        raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không triển khai được.")
+        raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không duyệt được.")
     approved = _decide(report, "approved", user, body.comment, status="APPROVED", stage_reached="review")
     if not transition_run_report(config.store_path, approved, "READY_FOR_REVIEW", report.version, report.files_hash):
         raise HTTPException(409, "Run đã thay đổi kể từ lúc review. Tải lại trước khi duyệt.")
+    return approved
+
+
+def pipeline_github() -> GithubClient:
+    """Client GitHub của repo pipeline (PIPELINE_GITHUB_*); tách thành dependency để test thay transport giả."""
+    return GithubClient.from_settings()
+
+
+@router.post("/{run_id}/deploy", response_model=RunReport)
+def deploy_run(
+    run_id: str,
+    user: dict = Depends(current_user),
+    config: PipelineSettings = Depends(settings),
+    github: GithubClient = Depends(pipeline_github),
+) -> RunReport:
+    """P16: mở pull request chứa đúng bộ file đã duyệt vào repo pipeline (SPEC §9.5, FR-17).
+
+    Không merge, không ghi Dagster; status giữ APPROVED đến khi deploy production xong. Gọi lại an toàn: pull request
+    đã mở thì trả lại pull request đó. Lỗi GitHub ghi error_trace stage deploy và giữ APPROVED để bấm Deploy lại.
+    """
+    # Import muộn: codegen.deploy import run_report.models, import sớm ở đầu file sẽ thành vòng.
+    from src.codegen.deploy import open_pull_request
+
+    if user["role"] != "Reviewer":
+        raise HTTPException(403, "Chỉ Reviewer được deploy run.")
+    report = get_run_report(config.store_path, run_id)
+    if report is None:
+        raise HTTPException(404, f"Không tìm thấy run {run_id}")
+    if report.status != "APPROVED":
+        raise HTTPException(409, f"Run đang ở trạng thái {report.status}, chỉ run đã duyệt mới deploy được.")
+    approval = report.approval
+    if (
+        approval is None
+        or approval.decision != "approved"
+        or not report.files_hash
+        or approval.files_hash != report.files_hash
+        or approval.version != report.version
+        or not report.spec
+    ):
+        raise HTTPException(409, "Chữ ký duyệt không khớp bộ file hoặc version hiện tại nên không deploy được.")
+    files = get_run_files(config.store_path, run_id, report.version)
+    if not files or file_hashes(files)[1] != report.files_hash:
+        raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không deploy được.")
     try:
-        deploy_local(Spec.model_validate(report.spec), files, config.deploy_dir)
-    except (OSError, subprocess.SubprocessError) as exc:
-        trace = [*approved.error_trace, {"stage": "deploy", "error": f"Ghi project Dagster local thất bại: {exc}"}]
-        result = approved.model_copy(
-            update={"status": "DEPLOY_FAILED", "stage_reached": "deploy", "error_trace": trace}
+        deployment = open_pull_request(report, files, github)
+    except ManifestError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except GithubError as exc:
+        trace = [*report.error_trace, {"stage": "deploy", "error": f"Mở pull request thất bại: {exc.message}"}]
+        failed = report.model_copy(update={"stage_reached": "deploy", "error_trace": trace})
+        transition_run_report(config.store_path, failed, "APPROVED", report.version, report.files_hash)
+        raise HTTPException(exc.status_code, exc.message) from None
+    opened = RunReport.model_validate(
+        {**report.model_dump(), "stage_reached": "deploy", "deployment": deployment.model_dump()}
+    )
+    if not transition_run_report(config.store_path, opened, "APPROVED", report.version, report.files_hash):
+        raise HTTPException(
+            409, f"Đã mở pull request {deployment.pr_url} nhưng run vừa thay đổi; tải lại run rồi bấm Deploy lại."
         )
-    else:
-        result = approved.model_copy(update={"status": "DEPLOYED", "stage_reached": "deploy"})
-    save_run_report(config.store_path, result)
-    return result
+    return opened
 
 
 @router.post("/{run_id}/reject", response_model=RunReport)
@@ -248,13 +297,7 @@ def batch_review_runs(
                 if body.decision == "approve"
                 else reject_run(item.run_id, request, user=user, config=config)
             )
-            message = (
-                "Đã duyệt nhưng ghi project Dagster thất bại"
-                if report.status == "DEPLOY_FAILED"
-                else "Đã duyệt"
-                if body.decision == "approve"
-                else "Đã từ chối"
-            )
+            message = "Đã duyệt" if body.decision == "approve" else "Đã từ chối"
             results.append(BatchReviewResult(run_id=item.run_id, ok=True, status=report.status, message=message))
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, str) else "Thao tác thất bại"

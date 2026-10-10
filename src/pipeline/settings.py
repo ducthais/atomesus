@@ -19,7 +19,9 @@ class PipelineSettings(BaseSettings):
     smtp_starttls: bool = True
     # Bật thì đăng ký phải nhập mã gửi qua email (cần SMTP ở staging); tắt thì tạo tài khoản và đăng nhập ngay.
     registration_email_verification: bool = False
-    # Sprint 1: duyệt xong thì ghi project Dagster ra đây (Sprint 3 chuyển sang pull request).
+    # Thư mục code location của Dagster local (src/deployer/install.py ghi, Day 2 đọc). Duyệt không ghi gì ra đây:
+    # deploy mở pull request vào repo pipeline, cấu hình PIPELINE_GITHUB_* nằm riêng ở src/codegen/github.py để token
+    # không đi theo PipelineSettings vào agent và sandbox.
     deploy_dir: str = "data/dagster_local"
     # Dagster local (make dagster): trang dataset đọc trạng thái run qua GraphQL ở đây.
     dagster_url: str = "http://127.0.0.1:3070"

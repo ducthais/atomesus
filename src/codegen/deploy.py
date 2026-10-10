@@ -1,94 +1,124 @@
-"""P15 deploy (bước tạm của Sprint 1): ghi bộ file đã duyệt thành một project Dagster local.
+"""P16 deploy (SPEC §9.5): mở pull request chứa đúng bộ file Reviewer đã duyệt vào repo pipeline.
 
-Mỗi pipeline một thư mục `<deploy_dir>/<model_name>/`, gồm scaffold dbt + đúng bộ file Reviewer đã duyệt.
-Duyệt lại cùng model thì thay toàn bộ thư mục. Sprint 3 thay bước này bằng pull request.
+Nhánh `pipeline/<model_name>/v<version>` tạo từ nhánh mặc định; một commit ghi `pipelines/<model_name>/` gồm 4 + N
+file đã duyệt, `run_report.json` và `manifest.json` (src/deployer/manifest.py). Backend chỉ mở pull request: CI của
+repo pipeline kiểm manifest, người có quyền merge, service deployer cài lên Dagster production (src/deployer/).
+Gọi lại khi pull request đã mở thì trả pull request cũ; nhánh đã có mà chưa có pull request thì mở trên nhánh đó.
 """
 
-import os
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-from uuid import uuid4
+import json
+from datetime import UTC, datetime
 
-from src.codegen.sandbox import prepare_project
-from src.spec.models import Spec
+from pydantic import ValidationError
 
-DBT_PARSE_TIMEOUT_SEC = 120
+from src.codegen.github import GithubClient, GithubError
+from src.deployer.manifest import MANIFEST_FILE, REPORT_FILE, ManifestError, build_manifest, project_dir
+from src.run_report.models import Deployment, RunReport
 
 
-def write_workspace(deploy_dir: str) -> Path:
-    """Ghi `<deploy_dir>/workspace.yaml`: mỗi project đã deploy là một code location của Dagster.
-
-    `make dagster` nạp file này; deploy thêm pipeline thì bấm "Reload" trong Dagster UI là thấy.
-    """
-    root = Path(deploy_dir)
-    root.mkdir(parents=True, exist_ok=True)
-    lines = ["# Sinh tự động bởi src/codegen/deploy.py; không sửa tay.", "load_from:"]
-    for module in sorted(root.glob("*/infra/dagster/generated/*_asset.py")):
-        project = module.parents[3]
-        lines += [
-            "  - python_module:",
-            f"      module_name: infra.dagster.generated.{module.stem}",
-            f"      working_directory: ./{project.name}",
-            f"      location_name: {project.name}",
-        ]
-    if len(lines) == 2:
-        lines[-1] = "load_from: []"
-    path = root / "workspace.yaml"
-    temporary = root / f".workspace-{uuid4().hex}.tmp"
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
-    return path
+def branch_name(model_name: str, version: int) -> str:
+    return f"pipeline/{model_name}/v{version}"
 
 
-def _compile_manifest(project_root: Path) -> None:
-    """Biên dịch trước manifest.json cho dbt để Dagster nạp được code location ngay."""
-    dbt_dir = project_root / "dbt_project"
-    warehouse = Path("data/warehouse/warehouse.duckdb").resolve()
-    env = {
-        **os.environ,
-        "WAREHOUSE_PATH": str(warehouse),
-        "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
-    }
-    done = subprocess.run(
-        [sys.executable, "-m", "dbt.cli.main", "parse", "--project-dir", str(dbt_dir), "--profiles-dir", str(dbt_dir)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-        timeout=DBT_PARSE_TIMEOUT_SEC,
+def _body(report: RunReport, model_name: str, report_url: str) -> str:
+    approval = report.approval
+    lines = [
+        f"Pipeline `{model_name}` version {report.version}, mở tự động sau khi Reviewer duyệt (SPEC §9.5).",
+        "",
+        f"- run_id: `{report.run_id}`",
+        f"- files_hash: `{report.files_hash}`",
+        f"- Chữ ký duyệt: `{approval.reviewer}` lúc {approval.at.isoformat()} (version {approval.version}, "
+        f"files_hash `{approval.files_hash}`)",
+    ]
+    if approval.comment:
+        lines.append(f"- Nhận xét của Reviewer: {approval.comment}")
+    lines += [
+        f"- RunReport: [{REPORT_FILE}]({report_url})",
+        "",
+        f"CI phải kiểm `{MANIFEST_FILE}` (sha256 từng file và files_hash khớp chữ ký duyệt) trước khi merge. "
+        "Hệ thống không có quyền merge; người có quyền merge của repo quyết định.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _deployment(github: GithubClient, branch: str, pull: dict) -> Deployment:
+    return Deployment(
+        repo=github.repo,
+        branch=branch,
+        pr_number=pull["number"],
+        pr_url=pull["html_url"],
+        head_sha=pull["head"]["sha"],
+        state="open",
+        opened_at=pull.get("created_at") or datetime.now(UTC),
     )
-    if done.returncode:
-        detail = (done.stderr or done.stdout).strip()[-1000:]
-        raise OSError(f"dbt parse thất bại (mã {done.returncode}): {detail}")
 
 
-def deploy_local(spec: Spec, files: dict[str, str], deploy_dir: str) -> Path:
-    """Ghi project ra đĩa, trả đường dẫn thư mục project."""
-    target = Path(deploy_dir) / spec.transform.model_name
-    token = uuid4().hex
-    staging = target.with_name(f"{target.name}.tmp-{token}")
-    backup = target.with_name(f"{target.name}.old-{token}")
-    old_moved = new_active = False
+def _commit_branch(
+    report: RunReport, files: dict[str, str], manifest: dict, base: str, branch: str, github: GithubClient
+) -> None:
+    """Một commit trên nhánh mới: thư mục pipeline chứa đúng bộ file đã duyệt (file cũ không còn trong bộ bị xóa)."""
+    base_sha = github.ref_sha(base)
+    if base_sha is None:
+        raise GithubError(
+            502, f"Nhánh mặc định {base} của repo pipeline chưa có commit; tạo commit đầu tiên rồi Deploy lại."
+        )
+    base_tree = github.commit_tree(base_sha)
+    folder = project_dir(manifest["model_name"])
+    content = {f"{folder}/{path}": text for path, text in files.items()}
+    content[f"{folder}/{REPORT_FILE}"] = report.model_dump_json(indent=2, exclude={"deployment"}) + "\n"
+    content[f"{folder}/{MANIFEST_FILE}"] = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    stale = [path for path in github.tree_paths(base_tree) if path.startswith(f"{folder}/") and path not in content]
+    tree = github.create_tree(base_tree, content, delete=stale)
+    message = (
+        f"pipeline({manifest['model_name']}): v{report.version} đã duyệt\n\n"
+        f"run_id: {report.run_id}\nfiles_hash: {report.files_hash}\nreviewer: {report.approval.reviewer}\n"
+    )
+    commit = github.create_commit(message, tree, [base_sha])
     try:
-        prepare_project(staging, files)
-        _compile_manifest(staging)
-        if target.exists():
-            target.rename(backup)
-            old_moved = True
-        staging.rename(target)
-        new_active = True
-        write_workspace(deploy_dir)
-    except (OSError, subprocess.SubprocessError):
-        if new_active and target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        if old_moved and backup.exists():
-            backup.rename(target)
-        raise
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
-    if backup.exists():
-        shutil.rmtree(backup, ignore_errors=True)
-    return target
+        github.create_ref(branch, commit)
+    except GithubError as exc:
+        # Request Deploy khác vừa tạo nhánh này: dùng nhánh đó, commit vừa tạo không gắn ref nào và GitHub tự dọn.
+        if exc.upstream != 422 or github.ref_sha(branch) is None:
+            raise
+
+
+def open_pull_request(report: RunReport, files: dict[str, str], github: GithubClient) -> Deployment:
+    """Mở (hoặc trả lại) pull request của bản đã duyệt. Lỗi GitHub ra GithubError; bộ file lệch chữ ký ra ManifestError."""
+    approval = report.approval
+    if report.status != "APPROVED" or approval is None or approval.decision != "approved":
+        raise ManifestError("Run chưa được duyệt nên không mở pull request.")
+    model_name = (report.spec or {}).get("transform", {}).get("model_name", "")
+    manifest = build_manifest(
+        run_id=report.run_id,
+        version=report.version,
+        model_name=model_name,
+        files=files,
+        reviewer=approval.reviewer,
+        approved_at=approval.at,
+    )
+    signed = approval.files_hash == report.files_hash == manifest["files_hash"] and approval.version == report.version
+    if not signed:
+        raise ManifestError("Bộ file không khớp chữ ký duyệt nên không mở pull request.")
+    branch = branch_name(model_name, report.version)
+    try:
+        repo = github.repository()
+        base = repo["default_branch"]
+        if github.ref_sha(branch) is None:
+            _commit_branch(report, files, manifest, base, branch, github)
+        elif opened := github.open_pull_requests(branch):
+            return _deployment(github, branch, opened[0])
+        report_url = f"{repo['html_url']}/blob/{branch}/{project_dir(model_name)}/{REPORT_FILE}"
+        title = f"Pipeline {model_name} v{report.version} (run {report.run_id[:8]})"
+        try:
+            pull = github.create_pull_request(
+                title=title, body=_body(report, model_name, report_url), head=branch, base=base
+            )
+        except GithubError as exc:
+            # Request Deploy khác vừa mở pull request cho nhánh này: trả lại pull request đó.
+            opened = github.open_pull_requests(branch) if exc.upstream == 422 else []
+            if not opened:
+                raise
+            pull = opened[0]
+        return _deployment(github, branch, pull)
+    except (KeyError, TypeError, IndexError, ValidationError) as exc:
+        raise GithubError(502, f"GitHub trả dữ liệu không đúng định dạng ({type(exc).__name__}).") from None
