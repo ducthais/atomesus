@@ -1,0 +1,6 @@
+# Thay bằng tài khoản người có quyền duyệt/merge của repo pipeline trước khi bật bảo vệ nhánh.
+# * @nguoi-duyet
+# /pipelines/ @nguoi-duyet
+# /.github/ @nguoi-duyet
+# /ci/ @nguoi-duyet
+# /CODEOWNERS @nguoi-duyet
