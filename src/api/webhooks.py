@@ -6,7 +6,8 @@ ký → 401, cả hai trước khi đọc body; body lớn hơn MAX_BODY_BYTES �
 - `POST /webhooks/github` (X-Hub-Signature-256, PIPELINE_GITHUB_WEBHOOK_SECRET): pull request merge → deployment
   merged, status vẫn APPROVED chờ deployer; đóng không merge hoặc CI đỏ (kể cả sau merge) → version mới về P4 (vòng
   người); CI xanh chỉ ghi lại. Mỗi X-GitHub-Delivery, kể cả sự kiện bỏ qua, chỉ xử lý một lần, ghi cùng giao dịch với
-  thay đổi của run.
+  thay đổi của run. Merge / CI đến sau callback deployer vẫn ghi vào deployment (giữ status). Sự kiện đến khi Deploy
+  chưa lưu pull request được giữ lại và áp khi lưu (`replay_pending`).
 - `POST /deployments/callback` (X-Atomesus-Signature, PIPELINE_DEPLOYER_SECRET): deployer báo deployed / failed →
   DEPLOYED / DEPLOY_FAILED (hợp đồng chung trong kế hoạch DEPLOY-PR).
 
@@ -29,8 +30,14 @@ from starlette.concurrency import run_in_threadpool
 from src.codegen.github import GithubSettings
 from src.pipeline.auth import settings
 from src.pipeline.settings import PipelineSettings
-from src.run_report.models import RunReport
-from src.run_report.store import find_run_reports, get_run_report, record_webhook_delivery, update_run_report
+from src.run_report.models import RunReport, RunStatus
+from src.run_report.router import rework_deps
+from src.run_report.store import (
+    get_run_report,
+    record_webhook_delivery,
+    replay_webhook_deliveries,
+    update_run_report,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["webhooks"])
@@ -42,7 +49,9 @@ PIPELINE_BRANCH_PREFIX = "pipeline/"
 CI_FAILED = frozenset({"failure", "cancelled", "timed_out"})
 DETAIL_LIMIT = 2000
 DELIVERY_LIMIT = 200
-DUPLICATE = {"status": "duplicate", "detail": "Delivery này đã được xử lý."}
+# Mã commit Git: SHA-1 (40) hoặc SHA-256 (64) ký tự hex thường.
+GIT_SHA = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+DUPLICATE ={"status": "duplicate", "detail": "Delivery này đã được xử lý."}
 
 
 class DeployerSettings(BaseSettings):
@@ -57,13 +66,6 @@ def github_settings() -> GithubSettings:
 
 def deployer_settings() -> DeployerSettings:
     return DeployerSettings()
-
-
-def rework_deps(config: PipelineSettings = Depends(settings)) -> Callable[[], Any]:
-    """Tạo AgentDeps khi cần (chỉ sự kiện đưa run về P4); ping, CI xanh không nạp policy hay LLM."""
-    from src.run_report.router import request_change_deps  # import muộn, xem request_change_deps
-
-    return lambda: request_change_deps(config)
 
 
 async def _signed_body(request: Request, secret: SecretStr, header: str, secret_name: str) -> bytes:
@@ -97,16 +99,17 @@ def _field(data: Any, *keys: str) -> Any:
 
 
 class _Signal(BaseModel):
-    """Phần cần dùng của một sự kiện GitHub liên quan đến run."""
+    """Phần cần dùng của một sự kiện GitHub liên quan đến run (cũng là dạng lưu của sự kiện đang giữ chờ Deploy)."""
 
     kind: Literal["merged", "closed", "ci"]
-    head_sha: str = Field(min_length=1)
+    repo: str = Field(min_length=1, max_length=200)
+    head_sha: str = Field(min_length=1, max_length=100)
     pr_number: int | None = None
     at: datetime
-    actor: str
-    merge_commit_sha: str | None = None
+    actor: str = Field(max_length=200)
+    merge_commit_sha: str | None = Field(default=None, max_length=100)
     conclusion: str | None = None
-    url: str | None = None
+    url: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def _pull_request_has_number(self) -> "_Signal":
@@ -115,7 +118,7 @@ class _Signal(BaseModel):
         return self
 
 
-def _signal(event: str, payload: dict) -> _Signal | str:
+def _signal(event: str, payload: dict, repo: str) -> _Signal | str:
     """Sự kiện làm đổi run → _Signal; còn lại → lý do bỏ qua. Dữ liệu sai kiểu ra ValidationError."""
     action = payload.get("action")
     actor = f"github:{_field(payload, 'sender', 'login') or 'unknown'}"
@@ -129,6 +132,7 @@ def _signal(event: str, payload: dict) -> _Signal | str:
         merged = _field(pull, "merged") is True
         return _Signal(
             kind="merged" if merged else "closed",
+            repo=repo,
             head_sha=_field(pull, "head", "sha"),
             pr_number=_field(pull, "number"),
             at=_field(pull, "merged_at" if merged else "closed_at") or now,
@@ -146,6 +150,7 @@ def _signal(event: str, payload: dict) -> _Signal | str:
             return f"Kết luận CI {conclusion} không làm đổi trạng thái run."
         return _Signal(
             kind="ci",
+            repo=repo,
             head_sha=_field(suite, "head_sha"),
             at=_field(suite, "updated_at") or now,
             actor=actor,
@@ -155,13 +160,19 @@ def _signal(event: str, payload: dict) -> _Signal | str:
     return f"Sự kiện {event or 'không rõ'} không liên quan đến run."
 
 
-def _matches(report: RunReport, repo: str, signal: _Signal) -> bool:
-    """Đúng pull request của bản đã duyệt: run APPROVED, cùng repo, cùng head sha (và cùng số PR nếu sự kiện có)."""
+def _statuses(signal: _Signal) -> tuple[RunStatus, ...]:
+    """Status run có thể nhận sự kiện. Deployer có thể báo kết quả trước khi webhook merge / CI đến, nên merge và CI
+    vẫn ghi vào deployment của run DEPLOYED / DEPLOY_FAILED (giữ nguyên status); đóng không merge chỉ áp khi APPROVED."""
+    return ("APPROVED",) if signal.kind == "closed" else ("APPROVED", "DEPLOYED", "DEPLOY_FAILED")
+
+
+def _matches(report: RunReport, signal: _Signal) -> bool:
+    """Đúng pull request của bản đã duyệt: status hợp lệ, cùng repo, cùng head sha (và cùng số PR nếu sự kiện có)."""
     deployment = report.deployment
     return (
-        report.status == "APPROVED"
+        report.status in _statuses(signal)
         and deployment is not None
-        and deployment.repo.lower() == repo.lower()
+        and deployment.repo.lower() == signal.repo.lower()
         and deployment.head_sha == signal.head_sha
         and (signal.pr_number is None or deployment.pr_number == signal.pr_number)
     )
@@ -189,26 +200,17 @@ def _rework_reason(report: RunReport, signal: _Signal) -> str:
     )
 
 
-def _handle_github(
-    store_path: str, repo: str, delivery: str, event: str, signal: _Signal, make_deps: Callable[[], Any] | None
-) -> tuple[str, RunReport | None, Callable | None]:
-    """Áp một sự kiện vào run khớp, ghi cùng giao dịch với delivery. Trả (kết quả, run sau khi đổi, việc chạy nền)."""
+def _change(
+    signal: _Signal, make_deps: Callable[[], Any], store_path: str, jobs: list[Callable]
+) -> Callable[[RunReport], RunReport | None]:
+    """Thay đổi `signal` gây ra trên run đã khớp (`_matches`); None nếu không cần đổi. Việc chạy nền vào `jobs`."""
     from src.agents.service import deploy_rework  # import muộn: src.agents import gói src.run_report
 
-    # Tìm theo head sha trên mọi run APPROVED (không giới hạn lịch sử) rồi kiểm đủ repo / số PR.
-    found = next(
-        (r for r in find_run_reports(store_path, "APPROVED", signal.head_sha) if _matches(r, repo, signal)), None
-    )
-    jobs: list[Callable] = []
-
     def change(current: RunReport) -> RunReport | None:
-        # Đọc lại trong giao dịch ghi: request khác có thể vừa đổi run sau lúc tìm.
-        if not _matches(current, repo, signal):
-            return None
         deployment = current.deployment
         if signal.kind == "ci":
             ci = {"ci_conclusion": signal.conclusion, "ci_url": signal.url, "ci_at": signal.at}
-            if signal.conclusion in CI_FAILED:
+            if signal.conclusion in CI_FAILED and current.status == "APPROVED":
                 # CI đỏ về P4 kể cả khi webhook merge đến trước (run vẫn APPROVED chờ deployer).
                 marked = _with_deployment(current, **ci)
             elif deployment.ci_conclusion == signal.conclusion and deployment.ci_url == signal.url:
@@ -223,17 +225,55 @@ def _handle_github(
             )
         else:
             marked = _with_deployment(current, state="closed", closed_at=signal.at)
-        started, job = deploy_rework(marked, _rework_reason(marked, signal), signal.actor, deps, store_path)
+        started, job = deploy_rework(marked, _rework_reason(marked, signal), signal.actor, make_deps, store_path)
         jobs.append(job)
         return started
 
-    # AgentDeps chỉ tạo khi sự kiện có thể đưa run về P4, và tạo trước giao dịch ghi để không giữ khóa store.
-    reworks = signal.kind == "closed" or signal.conclusion in CI_FAILED
-    deps = make_deps() if found and reworks and make_deps else None
+    return change
+
+
+def _handle_github(
+    store_path: str, delivery: str, event: str, signal: _Signal, make_deps: Callable[[], Any]
+) -> tuple[str, RunReport | None, Callable | None]:
+    """Áp một sự kiện vào run khớp, tìm và ghi cùng giao dịch với delivery. Chưa có run khớp (Deploy chưa lưu pull
+    request) thì giữ sự kiện để `replay_pending` áp sau. Trả (kết quả, run sau khi đổi, việc chạy nền)."""
+    jobs: list[Callable] = []
     outcome, updated = record_webhook_delivery(
-        store_path, delivery, event, found.run_id if found else None, change if found else None
+        store_path,
+        delivery,
+        event,
+        _statuses(signal),
+        signal.head_sha,
+        lambda report: _matches(report, signal),
+        _change(signal, make_deps, store_path, jobs),
+        pending=signal.model_dump_json(),
     )
     return outcome, updated, jobs[0] if outcome == "applied" and jobs else None
+
+
+def replay_pending(
+    store_path: str, report: RunReport, make_deps: Callable[[], Any]
+) -> tuple[RunReport | None, Callable | None]:
+    """Gọi ngay sau khi Deploy lưu deployment: áp các sự kiện GitHub của pull request này đến trước lúc lưu (CI, đóng,
+    merge), theo thứ tự nhận. Trả (run sau khi đổi hoặc None, việc chạy nền nếu run về P4)."""
+    if report.deployment is None:
+        return None, None
+    jobs: list[Callable] = []
+
+    def apply(current: RunReport, pending: str) -> tuple[bool, RunReport | None]:
+        try:
+            signal = _Signal.model_validate_json(pending)
+        except ValidationError:
+            return False, None
+        if not _matches(current, signal):
+            return False, None
+        return True, _change(signal, make_deps, store_path, jobs)(current)
+
+    updated = replay_webhook_deliveries(store_path, report.run_id, report.deployment.head_sha, apply)
+    if updated is not None:
+        log.info("Áp sự kiện GitHub đến trước Deploy cho run %s: %s", report.run_id, updated.status)
+    # Run về P4 thì không còn APPROVED nên sự kiện giữ sau đó không khớp nữa: nhiều nhất một job.
+    return updated, jobs[0] if updated is not None and jobs else None
 
 
 @router.post("/webhooks/github")
@@ -264,7 +304,7 @@ async def github_webhook(
         signal: _Signal | str = "Sự kiện không thuộc repo pipeline đã cấu hình."
     else:
         try:
-            signal = _signal(event, payload)
+            signal = _signal(event, payload, repo)
         except ValidationError:
             raise HTTPException(400, f"Nội dung sự kiện {event} thiếu trường hoặc sai kiểu.") from None
     if isinstance(signal, str):
@@ -275,14 +315,21 @@ async def github_webhook(
         response.status_code = 202
         return {"status": "ignored", "detail": signal}
     outcome, updated, job = await run_in_threadpool(
-        _handle_github, config.store_path, repo, delivery, event, signal, make_deps
+        _handle_github, config.store_path, delivery, event, signal, make_deps
     )
     log.info("Webhook GitHub %s delivery %s: %s", event, delivery, outcome)
     if outcome == "duplicate":
         return DUPLICATE
     if outcome == "ignored":
         response.status_code = 202
-        return {"status": "ignored", "detail": "Không có run đã duyệt nào khớp pull request / commit này."}
+        return {"status": "ignored", "detail": "Run khớp pull request / commit này không cần thay đổi."}
+    if outcome == "pending":
+        response.status_code = 202
+        return {
+            "status": "ignored",
+            "detail": "Chưa có run đã duyệt nào khớp pull request / commit này; sự kiện được giữ để áp khi Deploy "
+            "lưu pull request.",
+        }
     if job is not None:
         background.add_task(job)
     return {"status": "applied", "run_id": updated.run_id, "version": updated.version, "run_status": updated.status}
@@ -296,7 +343,8 @@ class DeployCallback(BaseModel):
     version: int = Field(ge=1)
     files_hash: str = Field(min_length=1, max_length=200)
     model_name: str = Field(min_length=1, max_length=200)
-    commit_sha: str = Field(max_length=100)
+    # Commit đã cài, rỗng nếu deployer lỗi trước khi lấy được code; chỉ nhận mã commit Git để không ghi chuỗi tùy ý.
+    commit_sha: str = Field(pattern=f"{GIT_SHA}|^$")
     status: Literal["deployed", "failed"]
     detail: str = ""
     at: datetime
@@ -349,7 +397,8 @@ def _apply_callback(store_path: str, result: DeployCallback, secrets: tuple[Secr
     if updated is not None:
         return updated
     if not seen:
-        raise HTTPException(409, f"Không tìm thấy run {result.run_id} (hoặc bản lưu không đọc được).")
+        # Không lặp lại run_id trong response: đó là chuỗi bên gửi tự đặt.
+        raise HTTPException(409, "Không tìm thấy run trong callback (hoặc bản lưu không đọc được).")
     return get_run_report(store_path, result.run_id) or seen[-1]
 
 
@@ -367,8 +416,10 @@ async def deployer_callback(
     except ValidationError as exc:
         fields = ", ".join(".".join(str(p) for p in error["loc"]) or "body" for error in exc.errors())
         raise HTTPException(422, f"Callback không đúng hợp đồng (trường lỗi: {fields}).") from None
-    report = await run_in_threadpool(
-        _apply_callback, config.store_path, result, (deployer.secret, github.webhook_secret, github.token)
-    )
+    secrets = (deployer.secret, github.webhook_secret, github.token)
+    if _redact(result.commit_sha, *secrets) != result.commit_sha:
+        # Secret dạng hex trùng mã commit: không ghi vào RunReport hay trả lại trong response.
+        raise HTTPException(422, "Callback không đúng hợp đồng (trường lỗi: commit_sha).")
+    report = await run_in_threadpool(_apply_callback, config.store_path, result, secrets)
     log.info("Deployer báo %s cho run %s version %s", result.status, result.run_id, result.version)
     return report

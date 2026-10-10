@@ -510,6 +510,187 @@ async def test_callback_with_malformed_body_returns_422(client, approved):
     assert response.status_code == 422
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "target"), [("deployed", "DEPLOYED"), ("failed", "DEPLOY_FAILED")])
+async def test_merge_arriving_after_callback_still_records_merge(client, approved, store_path, status, target):
+    """Deployer báo kết quả trước khi GitHub gửi webhook merge: merge vẫn ghi vào deployment, status giữ nguyên."""
+    assert (await callback(client, callback_body(approved, status, detail="x"))).status_code == 200
+
+    response = await send(client, "pull_request", pull_closed(merged=True))
+    green = await send(client, "check_suite", ci("check_suite", "success"), delivery="ci-after-callback")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "applied", "run_id": RUN_ID, "version": 3, "run_status": target}
+    assert green.status_code == 200 and green.json()["run_status"] == target
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == target and report.version == 3 and report.approval == approved.approval
+    assert report.deployment.state == "merged" and report.deployment.merge_commit_sha == "m" * 40
+    assert report.deployment.merged_at == datetime(2026, 10, 10, 10, tzinfo=UTC)
+    assert report.deployment.ci_conclusion == "success"
+    if status == "deployed":
+        assert report.deployment.deployed_commit_sha == "c" * 40, "merge không xóa kết quả deployer đã ghi"
+
+
+@pytest.mark.asyncio
+async def test_red_ci_or_close_after_callback_does_not_reopen_the_loop(client, approved, store_path):
+    assert (await callback(client, callback_body(approved))).status_code == 200
+
+    closed = await send(client, "pull_request", pull_closed(merged=False), delivery="close")
+    red = await send(client, "workflow_run", ci("workflow_run", "failure"), delivery="red")
+
+    assert closed.status_code == 202
+    assert red.status_code == 200 and red.json()["run_status"] == "DEPLOYED"
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == "DEPLOYED" and report.version == 3 and report.deployment.ci_conclusion == "failure"
+
+
+HEX_SECRET = "ab" * 32  # secret sinh bằng `openssl rand -hex 32` có đúng dạng mã commit SHA-256
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["deployed", "failed"])
+@pytest.mark.parametrize(
+    ("commit_sha", "configured"),
+    [
+        (SECRET, DEPLOYER_SECRET),
+        (HEX_SECRET, HEX_SECRET),
+        (HEX_SECRET[:40], HEX_SECRET),
+        ("not a sha", DEPLOYER_SECRET),
+    ],
+    ids=["webhook-secret", "hex-deployer-secret", "secret-prefix", "free-text"],
+)
+async def test_callback_commit_sha_never_carries_a_secret(client, approved, store_path, status, commit_sha, configured):
+    app.dependency_overrides[deployer_settings] = lambda: DeployerSettings(_env_file=None, secret=configured)
+    before = stored(store_path)
+    body = json.dumps(callback_body(approved, status, commit_sha=commit_sha, detail="x")).encode()
+    headers = {"Content-Type": "application/json", "X-Atomesus-Signature": sign(body, configured)}
+
+    response = await client.post(CALLBACK, content=body, headers=headers)
+
+    assert response.status_code == 422 and "commit_sha" in response.json()["detail"]
+    for secret in (SECRET, configured, commit_sha):
+        assert secret not in response.text
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_callback_for_unknown_run_does_not_echo_run_id(client, approved):
+    response = await callback(client, callback_body(approved, run_id=SECRET))
+
+    assert response.status_code == 409 and SECRET not in response.text
+
+
+# ---- Sự kiện đến trước khi Deploy lưu pull request ---------------------------------------------------------------
+
+
+def deliver_now(event: str, payload: dict, delivery: str):
+    """Gửi webhook qua HTTP ngay lúc đang chạy request Deploy (client đồng bộ riêng, như GitHub gọi song song)."""
+    from fastapi.testclient import TestClient
+
+    body = json.dumps(payload).encode()
+    headers = {"X-GitHub-Event": event, "X-GitHub-Delivery": delivery, "X-Hub-Signature-256": sign(body)}
+    return TestClient(app).post(WEBHOOK, content=body, headers=headers)
+
+
+@pytest.mark.parametrize(
+    ("event", "payload"),
+    [
+        ("workflow_run", lambda sha: ci("workflow_run", "failure", sha=sha)),
+        ("pull_request", lambda sha: pull_closed(merged=False, sha=sha, number=1)),
+    ],
+    ids=["red-ci", "closed"],
+)
+def test_event_during_initial_deploy_is_applied_once_deployment_is_saved(approved, store_path, event, payload):
+    """GitHub báo CI đỏ / PR bị đóng khi Deploy đã mở PR nhưng chưa lưu deployment: sự kiện được giữ, áp khi lưu."""
+    from fastapi import BackgroundTasks
+
+    from src.run_report.router import deploy_run
+    from tests.test_agents.test_graph import SPEC, FakeLLM, deps
+    from tests.test_codegen.test_deploy_pr import FakeGithub
+
+    save_run_report(store_path, approved.model_copy(update={"deployment": None}))
+    github = FakeGithub()
+    early = []
+    github.before = {"POST /pulls": lambda: early.append(deliver_now(event, payload(github.refs[BRANCH]), "early"))}
+    background = BackgroundTasks()
+    config = app.dependency_overrides[auth.settings]()
+
+    deployed = deploy_run(
+        RUN_ID,
+        background,
+        user={"id": "an", "role": "Reviewer"},
+        config=config,
+        github=github.client(),
+        make_deps=lambda: deps(FakeLLM(SPEC)),
+    )
+
+    assert early[0].status_code == 202, "lúc đó chưa có deployment khớp: giữ lại, chưa áp"
+    assert deployed.version == 4 and deployed.status == "GENERATING" and deployed.approval is None
+    assert len(background.tasks) == 1
+    for task in background.tasks:
+        task.func(*task.args, **task.kwargs)
+    revised = get_run_report(store_path, RUN_ID)
+    assert revised.version == 4 and revised.status == "READY_FOR_REVIEW", revised.error_trace
+    entry = next(item for item in revised.spec_history if "deployment" in item)
+    assert entry["version"] == 3 and entry["deployment"]["pr_number"] == 1
+    if event == "pull_request":
+        assert entry["deployment"]["state"] == "closed"
+    else:
+        assert entry["deployment"]["ci_conclusion"] == "failure"
+    again = deliver_now(event, payload(github.refs[BRANCH]), "early")
+    assert again.status_code == 200 and again.json()["status"] == "duplicate"
+    assert get_run_report(store_path, RUN_ID).model_dump_json() == revised.model_dump_json()
+
+
+def test_merge_during_initial_deploy_is_applied_once_deployment_is_saved(approved, store_path):
+    from fastapi import BackgroundTasks
+
+    from src.run_report.router import deploy_run
+    from tests.test_codegen.test_deploy_pr import FakeGithub
+
+    save_run_report(store_path, approved.model_copy(update={"deployment": None}))
+    github = FakeGithub()
+    merged = lambda: pull_closed(merged=True, sha=github.refs[BRANCH], number=1)  # noqa: E731
+    github.before = {"POST /pulls": lambda: deliver_now("pull_request", merged(), "early-merge")}
+    background = BackgroundTasks()
+
+    report = deploy_run(
+        RUN_ID,
+        background,
+        user={"id": "an", "role": "Reviewer"},
+        config=app.dependency_overrides[auth.settings](),
+        github=github.client(),
+        make_deps=lambda: pytest.fail("merge không cần agent"),
+    )
+
+    assert report.status == "APPROVED" and report.deployment.state == "merged" and not background.tasks
+    assert get_run_report(store_path, RUN_ID).deployment.merge_commit_sha == "m" * 40
+
+
+def test_pending_event_for_another_pull_request_stays_unapplied(approved, store_path):
+    """Sự kiện giữ lại của PR khác (số PR khác) không áp vào deployment vừa lưu."""
+    from fastapi import BackgroundTasks
+
+    from src.run_report.router import deploy_run
+    from tests.test_codegen.test_deploy_pr import FakeGithub
+
+    save_run_report(store_path, approved.model_copy(update={"deployment": None}))
+    github = FakeGithub()
+    other = lambda: pull_closed(merged=False, sha=github.refs[BRANCH], number=99)  # noqa: E731
+    github.before = {"POST /pulls": lambda: deliver_now("pull_request", other(), "other-pr")}
+
+    report = deploy_run(
+        RUN_ID,
+        BackgroundTasks(),
+        user={"id": "an", "role": "Reviewer"},
+        config=app.dependency_overrides[auth.settings](),
+        github=github.client(),
+        make_deps=lambda: pytest.fail("không được về P4"),
+    )
+
+    assert report.status == "APPROVED" and report.version == 3 and report.deployment.state == "open"
+
+
 # ---- Secret, dữ liệu cũ, vòng người ----------------------------------------------------------------------------
 
 
@@ -556,7 +737,7 @@ def test_deploy_rework_resets_attempts_and_drops_signature_without_writing(appro
 
     before = stored(store_path)
 
-    started, _job = deploy_rework(approved, "CI đỏ", "github:octo", deps(FakeLLM(SPEC)), store_path)
+    started, _job = deploy_rework(approved, "CI đỏ", "github:octo", lambda: deps(FakeLLM(SPEC)), store_path)
 
     assert started.version == 4 and started.status == "GENERATING" and started.stage_reached == "propose"
     assert started.attempts.spec == 0 and started.approval is None and started.files_hash is None

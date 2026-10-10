@@ -529,9 +529,13 @@ def _revision_state(
     }
 
 
-def _revision_job(state: AgentState, created_at: datetime, deps: AgentDeps, store_path: str) -> Job:
+def _revision_job(state: AgentState, created_at: datetime, make_deps: Callable[[], AgentDeps], store_path: str) -> Job:
+    """Việc chạy nền của version mới; AgentDeps tạo lúc job chạy (lỗi tạo deps cũng kết thúc run qua _guarded)."""
     return _guarded(
-        lambda: _run(state, created_at, deps, store_path, draft=False, entry="codegen"), state, created_at, store_path
+        lambda: _run(state, created_at, make_deps(), store_path, draft=False, entry="codegen"),
+        state,
+        created_at,
+        store_path,
     )
 
 
@@ -550,23 +554,24 @@ def _new_version(
     started = _report(state, report.created_at)
     if not transition_run_report(store_path, started, report.status, report.version, report.files_hash):
         raise RunChangedError("Run đã thay đổi kể từ lúc thao tác. Tải lại và thử lại.")
-    return started, _revision_job(state, report.created_at, deps, store_path)
+    return started, _revision_job(state, report.created_at, lambda: deps, store_path)
 
 
 def deploy_rework(
-    report: RunReport, reason: str, actor: str, deps: AgentDeps, store_path: str
+    report: RunReport, reason: str, actor: str, make_deps: Callable[[], AgentDeps], store_path: str
 ) -> tuple[RunReport, Job]:
     """P16 → P4 (SPEC §11.2): CI của pull request đỏ hoặc pull request bị đóng không merge.
 
     Version mới chạy lại từ bước viết Spec với `reason` làm yêu cầu thay đổi; chữ ký cũ mất hiệu lực, attempts.spec = 0.
     Pull request của version cũ (đã cập nhật CI / closed) được giữ trong mục spec_history của version đó. Hàm KHÔNG ghi
-    gì: webhook ghi `started` trong cùng giao dịch với delivery, ghi xong mới chạy `job`.
+    gì: webhook ghi `started` trong cùng giao dịch với delivery, ghi xong mới chạy `job`. `make_deps` chỉ gọi khi
+    job chạy, để giao dịch ghi không phải chờ nạp policy / LLM.
     """
     entry = {"reason": reason}
     if report.deployment is not None:
         entry["deployment"] = report.deployment.model_dump(mode="json")
     state = _revision_state(report, reason, actor, "changes_requested", entry)
-    return _report(state, report.created_at), _revision_job(state, report.created_at, deps, store_path)
+    return _report(state, report.created_at), _revision_job(state, report.created_at, make_deps, store_path)
 
 
 def start_request_changes(

@@ -53,11 +53,17 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
                 " run_id TEXT NOT NULL, version INTEGER NOT NULL, category TEXT NOT NULL, usd REAL NOT NULL,"
                 " reserved_at TEXT NOT NULL, PRIMARY KEY (run_id, version, category))"
             )
-            # Delivery webhook GitHub đã xử lý (X-GitHub-Delivery), để gửi lại không áp hai lần.
+            # Delivery webhook GitHub đã xử lý (X-GitHub-Delivery), để gửi lại không áp hai lần. `pending`: sự kiện
+            # liên quan đến chưa có run nào khớp (Deploy chưa lưu pull request), áp lại khi deployment được lưu.
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS webhook_deliveries ("
-                " delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, run_id TEXT, received_at TEXT NOT NULL)"
+                " delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, run_id TEXT, received_at TEXT NOT NULL,"
+                " head_sha TEXT, pending TEXT)"
             )
+            delivery_columns = {row[1] for row in conn.execute("PRAGMA table_info(webhook_deliveries)")}
+            for column in ("head_sha", "pending"):
+                if column not in delivery_columns:
+                    conn.execute(f"ALTER TABLE webhook_deliveries ADD COLUMN {column} TEXT")
             conn.commit()  # schema/migration work must finish before callers request BEGIN IMMEDIATE
             yield conn
     finally:
@@ -171,13 +177,27 @@ def update_run_report(path: str, run_id: str, change: Change) -> RunReport | Non
         return _apply_change(conn, run_id, change)
 
 
+Match = Callable[[RunReport], bool]
+
+
 def record_webhook_delivery(
-    path: str, delivery_id: str, event: str, run_id: str | None = None, change: Change | None = None
-) -> tuple[Literal["duplicate", "ignored", "applied"], RunReport | None]:
+    path: str,
+    delivery_id: str,
+    event: str,
+    statuses: tuple[RunStatus, ...] = (),
+    head_sha: str | None = None,
+    match: Match | None = None,
+    change: Change | None = None,
+    pending: str | None = None,
+) -> tuple[Literal["duplicate", "ignored", "pending", "applied"], RunReport | None]:
     """Ghi nhận một delivery webhook và áp thay đổi của nó vào run trong cùng một giao dịch ghi.
 
-    Delivery đã ghi → ("duplicate", None), không đổi gì. Không có run / `change` trả None → ghi delivery,
-    ("ignored", None); sự kiện bỏ qua (ping, push, repo khác…) cũng ghi như vậy để gửi lại vẫn ra "duplicate". Ngược lại → ("applied", bản mới). `change` lỗi thì delivery không được ghi, GitHub gửi lại được.
+    Run khớp được tìm ngay trong giao dịch (run ở `statuses` có JSON chứa `head_sha`, mới nhất trước, `match` đúng):
+    Deploy lưu pull request trước hay sau delivery thì delivery cũng thấy đúng một trong hai trạng thái.
+    Delivery đã ghi → ("duplicate", None), không đổi gì. Có run khớp, `change` trả bản mới → ("applied", bản mới);
+    trả None → ("ignored", None). Không run nào khớp: có `pending` thì giữ lại để `replay_webhook_deliveries` áp khi
+    Deploy lưu deployment → ("pending", None), không thì ("ignored", None). Sự kiện bỏ qua (ping, push, repo khác…)
+    cũng ghi delivery để gửi lại vẫn ra "duplicate". `change` lỗi thì delivery không được ghi, GitHub gửi lại được.
     Delivery cũ hơn DELIVERY_RETENTION_DAYS được dọn để bảng không phình mãi.
     """
     now = datetime.now(UTC)
@@ -185,16 +205,91 @@ def record_webhook_delivery(
         conn.execute("BEGIN IMMEDIATE")
         if conn.execute("SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?", (delivery_id,)).fetchone():
             return "duplicate", None
-        updated = _apply_change(conn, run_id, change) if run_id and change else None
+        matched, updated = False, None
+        if statuses and head_sha and match and change:
+            matched, updated = _match_and_apply(conn, statuses, head_sha, match, change)
+        kept = pending if not matched else None
         conn.execute(
             "DELETE FROM webhook_deliveries WHERE received_at < ?",
             ((now - timedelta(days=DELIVERY_RETENTION_DAYS)).isoformat(),),
         )
         conn.execute(
-            "INSERT INTO webhook_deliveries VALUES (?, ?, ?, ?)",
-            (delivery_id, event, run_id if updated else None, now.isoformat()),
+            "INSERT INTO webhook_deliveries (delivery_id, event, run_id, received_at, head_sha, pending)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (delivery_id, event, updated.run_id if updated else None, now.isoformat(), head_sha, kept),
         )
-        return ("applied", updated) if updated else ("ignored", None)
+        if updated:
+            return "applied", updated
+        return ("pending", None) if kept else ("ignored", None)
+
+
+def _match_and_apply(
+    conn: sqlite3.Connection, statuses: tuple[RunStatus, ...], head_sha: str, match: Match, change: Change
+) -> tuple[bool, RunReport | None]:
+    """Run đầu tiên (mới nhất trước, không giới hạn lịch sử) thỏa `match` → (True, bản mới nếu `change` có đổi)."""
+    marks = ", ".join("?" * len(statuses))
+    rows = conn.execute(
+        f"SELECT run_id, status, report FROM run_reports WHERE status IN ({marks}) AND instr(report, ?) > 0"
+        " ORDER BY created_at DESC, rowid DESC",
+        (*statuses, head_sha),
+    ).fetchall()
+    for run_id, status, raw in rows:
+        try:
+            current = RunReport.model_validate_json(raw)
+        except ValidationError:
+            continue
+        if not match(current):
+            continue
+        updated = change(current)
+        if updated is not None:
+            _write(conn, run_id, status, updated)
+        return True, updated
+    return False, None
+
+
+def _write(conn: sqlite3.Connection, run_id: str, status: str, updated: RunReport) -> None:
+    conn.execute(
+        "UPDATE run_reports SET status = ?, report = ?, updated_at = ? WHERE run_id = ? AND status = ?",
+        (updated.status, updated.model_dump_json(), datetime.now(UTC).isoformat(), run_id, status),
+    )
+
+
+def replay_webhook_deliveries(
+    path: str, run_id: str, head_sha: str, apply: Callable[[RunReport, str], tuple[bool, RunReport | None]]
+) -> RunReport | None:
+    """Áp các delivery đang giữ (`pending`) của `head_sha` vào run `run_id`, theo thứ tự nhận, trong một giao dịch ghi.
+
+    `apply(bản hiện tại, pending)` → (khớp run không, bản mới hoặc None nếu không đổi). Delivery khớp thôi được giữ
+    nên không áp lần hai; delivery không khớp ở lại. Trả bản mới nếu run có đổi, ngược lại None.
+    """
+    with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        deliveries = conn.execute(
+            "SELECT delivery_id, pending FROM webhook_deliveries WHERE head_sha = ? AND pending IS NOT NULL"
+            " ORDER BY received_at, rowid",
+            (head_sha,),
+        ).fetchall()
+        row = conn.execute("SELECT status, report FROM run_reports WHERE run_id = ?", (run_id,)).fetchone()
+        if not deliveries or row is None:
+            return None
+        try:
+            current = RunReport.model_validate_json(row[1])
+        except ValidationError:
+            return None
+        changed = None
+        for delivery_id, pending in deliveries:
+            matched, updated = apply(current, pending)
+            if not matched:
+                continue
+            if updated is not None:
+                current = changed = updated
+            conn.execute(
+                "UPDATE webhook_deliveries SET pending = NULL, run_id = ? WHERE delivery_id = ?",
+                (run_id if updated else None, delivery_id),
+            )
+        if changed is not None:
+            _write(conn, run_id, row[0], changed)
+        return changed
 
 
 def reserve_budget(
@@ -261,26 +356,6 @@ def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HI
     with _database(path) as conn:
         rows = conn.execute(query + " ORDER BY created_at DESC, rowid DESC LIMIT ?", [*params, limit]).fetchall()
     return [RunReport.model_validate_json(row[0]) for row in rows]
-
-
-def find_run_reports(path: str, status: RunStatus, text: str) -> list[RunReport]:
-    """Mọi run ở `status` có JSON chứa `text` (vd. head sha của pull request), mới nhất trước, không giới hạn lịch sử.
-
-    Lọc thô trong SQL để không phải đọc mọi run; người gọi tự kiểm lại trường cần khớp. Bản không đọc được bị bỏ qua.
-    """
-    with _database(path) as conn:
-        rows = conn.execute(
-            "SELECT report FROM run_reports WHERE status = ? AND instr(report, ?) > 0"
-            " ORDER BY created_at DESC, rowid DESC",
-            (status, text),
-        ).fetchall()
-    reports = []
-    for (raw,) in rows:
-        try:
-            reports.append(RunReport.model_validate_json(raw))
-        except ValidationError:
-            continue
-    return reports
 
 
 def abandon_unfinished(path: str, stale_before: datetime | None = None) -> list[str]:

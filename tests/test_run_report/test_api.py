@@ -293,6 +293,7 @@ async def test_branch_moved_while_opening_pull_request_is_409_without_deployment
 async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logged_in, approved_run, github, store_path):
     """Request A đọc run rồi chờ GitHub; trong lúc đó request B mở pull request và lưu deployment; sau đó A lỗi."""
     import httpx
+    from fastapi import BackgroundTasks
     from pydantic import SecretStr
 
     from src.codegen.github import GithubClient
@@ -306,9 +307,8 @@ async def test_failed_deploy_keeps_deployment_saved_by_overlapping_request(logge
     def overlap_then_fail(request: httpx.Request) -> httpx.Response:
         if not overlapped:
             winner = GithubClient(REPO, SecretStr(TOKEN), transport=httpx.MockTransport(github.handle))
-            overlapped.append(
-                deploy_run(READY_RUN_ID, user={"id": "an", "role": "Reviewer"}, config=config, github=winner)
-            )
+            reviewer = {"id": "an", "role": "Reviewer"}
+            overlapped.append(deploy_run(READY_RUN_ID, BackgroundTasks(), user=reviewer, config=config, github=winner))
             return httpx.Response(500, json={"message": "lỗi giả"})
         return github.handle(request)
 
