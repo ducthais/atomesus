@@ -30,7 +30,13 @@ from src.agents.state import AgentState
 from src.agents.timeout import timed
 from src.agents.validate import validate_spec
 from src.run_report.models import Approval, Attempts, Check, Cost, GateResult, LlmCall, RunReport, Timing
-from src.run_report.store import get_run_report, is_run_cancelled, save_run_files, save_run_report
+from src.run_report.store import (
+    get_run_report,
+    is_run_cancelled,
+    save_run_files,
+    save_run_report,
+    transition_run_report,
+)
 
 log = logging.getLogger(__name__)
 Job = Callable[[], RunReport]
@@ -63,6 +69,10 @@ class RunCancelledError(Exception):
     def __init__(self, report: RunReport):
         super().__init__(report.run_id)
         self.report = report
+
+
+class RunChangedError(Exception):
+    pass
 
 
 def _report(state: AgentState, created_at: datetime) -> RunReport:
@@ -369,7 +379,11 @@ def start_confirm(
         "stage_reached": "confirm",
         "timeline": timeline,
     }
-    started = _save(state, report.created_at, store_path)
+    started = _report(state, report.created_at)
+    if not transition_run_report(store_path, started, "DRAFT", report.version):
+        current = get_run_report(store_path, report.run_id)
+        status = current.status if current else "không tồn tại"
+        raise PlanNotAwaitingError(f"Run đang ở trạng thái {status}, không còn chờ xác nhận kế hoạch.")
     running: AgentState = {**state, "status": "GENERATING"}
     job = _guarded(
         lambda: _run(running, report.created_at, deps, store_path, draft=review_mapping, entry="codegen"),
@@ -434,7 +448,9 @@ def start_continue(
         "stage_reached": "static",
         "timeline": [*(e.model_dump(mode="json") for e in draft.timeline), _event("mapping_submitted", edited_by)],
     }
-    started = _save(state, draft.created_at, store_path)
+    started = _report(state, draft.created_at)
+    if not transition_run_report(store_path, started, "DRAFT", draft.version, draft.files_hash):
+        raise RunChangedError("Run đã thay đổi kể từ lúc mở bản nháp. Tải lại trước khi chạy tiếp.")
 
     def job() -> RunReport:
         current = state
@@ -499,6 +515,7 @@ def _new_version(
         "gates": [gate.model_dump() for gate in report.gates if gate.name == "semantic"],
         "checks": [],
         "attempts": {"spec": 0, "sql": 0},
+        "cost": report.cost.model_dump(),
         # Trần gọi LLM tính lại cho version mới (SPEC §14.5), nhưng tiền đã tiêu của các version trước vẫn thuộc run:
         # giữ llm_usage để cost.llm_usd và ngân sách ngày không bị tính thiếu khi báo cáo ghi đè theo run_id.
         "llm_calls": 0,
@@ -512,7 +529,9 @@ def _new_version(
         "stage_reached": "propose",
         "timeline": timeline,
     }
-    started = _save(state, report.created_at, store_path)
+    started = _report(state, report.created_at)
+    if not transition_run_report(store_path, started, report.status, report.version, report.files_hash):
+        raise RunChangedError("Run đã thay đổi kể từ lúc thao tác. Tải lại và thử lại.")
     job = _guarded(
         lambda: _run(state, report.created_at, deps, store_path, draft=False, entry="codegen"),
         state,

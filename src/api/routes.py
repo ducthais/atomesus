@@ -7,6 +7,7 @@ from src.agents.resolve import ResolveError
 from src.agents.service import (
     PlanNotAwaitingError,
     PlanRejectedError,
+    RunChangedError,
     SpecRejectedError,
     start_agent,
     start_confirm,
@@ -42,6 +43,8 @@ class AgentRunRequest(BaseModel):
 
 def agent_deps(config: PipelineSettings = Depends(settings)) -> AgentDeps:
     """Nạp lại chính sách mỗi run (sửa YAML có hiệu lực ngay, NFR-04)."""
+    from src.agents import budget
+
     try:
         policy = load_policy()
     except PolicyError as exc:
@@ -51,6 +54,7 @@ def agent_deps(config: PipelineSettings = Depends(settings)) -> AgentDeps:
         policy=policy,
         settings=config,
         cancelled=lambda run_id: is_run_cancelled(config.store_path, run_id),
+        reserve_daily=budget.reserve_daily,
     )
 
 
@@ -156,6 +160,8 @@ def continue_draft(
         started, job = start_continue(draft, body.spec, user["name"], deps, config.store_path)
     except SpecRejectedError as exc:
         raise HTTPException(422, "Spec chưa hợp lệ: " + "; ".join(exc.errors)) from exc
+    except RunChangedError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except (ResolveError, SourceUnavailableError) as exc:
         raise HTTPException(503, str(exc)) from exc
     background.add_task(job)

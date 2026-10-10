@@ -32,9 +32,15 @@ def optimize_pipeline(
     return started
 
 
+def _engineer(user: dict) -> None:
+    if user["role"] != "Engineer":
+        raise HTTPException(403, "Chỉ Engineer được chạy monitor hoặc xử lý cảnh báo.")
+
+
 @router.post("/collect")
-def collect_runs(config: PipelineSettings = Depends(settings)) -> dict:
+def collect_runs(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
     """Thu số đo các lần chạy theo lịch đã xong mà chưa ghi (đọc Dagster, dbt, warehouse, nguồn). Chỉ đọc."""
+    _engineer(user)
     try:
         written = runs.collect(config, load_policy())
     except runs.MonitorError as exc:
@@ -67,10 +73,12 @@ def pipeline_series(model: str, config: PipelineSettings = Depends(settings)) ->
 @router.post("/check")
 def check_pipelines(
     background: BackgroundTasks,
+    user: dict = Depends(current_user),
     config: PipelineSettings = Depends(settings),
     deps: AgentDeps = Depends(agent_deps),
 ) -> dict:
     """Chạy 4 luật suy giảm cho mọi pipeline đã deploy (Day 2). Run sửa chạy nền; trả việc đã làm."""
+    _engineer(user)
     actions = day2.check(config, deps.policy, day2.launcher(deps, config.store_path, background.add_task))
     return {"actions": actions}
 
@@ -84,8 +92,11 @@ def list_alerts(
 
 
 @router.post("/alerts/{alert_id}/resolve")
-def resolve_alert(alert_id: int, config: PipelineSettings = Depends(settings)) -> dict:
+def resolve_alert(
+    alert_id: int, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
+) -> dict:
     """Đánh dấu cảnh báo đã xử lý."""
+    _engineer(user)
     found = alerts.resolve_alert(config.store_path, alert_id)
     if found is None:
         raise HTTPException(404, f"Không có cảnh báo {alert_id}")

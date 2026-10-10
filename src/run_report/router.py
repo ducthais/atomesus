@@ -1,3 +1,4 @@
+import subprocess
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -10,7 +11,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, RunReport, RunStatus
-from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report
+from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report, transition_run_report
 from src.spec.models import Spec
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
@@ -77,6 +78,7 @@ def request_change_deps(config: PipelineSettings = Depends(settings)):
     run_report → router → agents → run_report và làm hỏng mọi chỗ import src.run_report trước src.main
     (scripts/dagster_local.py, src.codegen.sandbox, src.monitor.runs).
     """
+    from src.agents import budget
     from src.agents.llm import openai_llm
     from src.agents.nodes.common import AgentDeps
     from src.run_report.store import is_run_cancelled
@@ -91,6 +93,7 @@ def request_change_deps(config: PipelineSettings = Depends(settings)):
         policy=policy,
         settings=config,
         cancelled=lambda run_id: is_run_cancelled(config.store_path, run_id),
+        reserve_daily=budget.reserve_daily,
     )
 
 
@@ -200,10 +203,11 @@ def approve_run(
     if file_hashes(files)[1] != report.files_hash:
         raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không triển khai được.")
     approved = _decide(report, "approved", user, body.comment, status="APPROVED", stage_reached="review")
-    save_run_report(config.store_path, approved)  # chữ ký được ghi trước, deploy lỗi vẫn còn dấu vết duyệt
+    if not transition_run_report(config.store_path, approved, "READY_FOR_REVIEW", report.version, report.files_hash):
+        raise HTTPException(409, "Run đã thay đổi kể từ lúc review. Tải lại trước khi duyệt.")
     try:
         deploy_local(Spec.model_validate(report.spec), files, config.deploy_dir)
-    except OSError as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         trace = [*approved.error_trace, {"stage": "deploy", "error": f"Ghi project Dagster local thất bại: {exc}"}]
         result = approved.model_copy(
             update={"status": "DEPLOY_FAILED", "stage_reached": "deploy", "error_trace": trace}
@@ -221,7 +225,8 @@ def reject_run(
     """Từ chối run; không ghi file nào ra Dagster."""
     report = _reviewable(run_id, body, user, config.store_path)
     rejected = _decide(report, "rejected", user, body.comment, status="REJECTED", stage_reached="review")
-    save_run_report(config.store_path, rejected)
+    if not transition_run_report(config.store_path, rejected, "READY_FOR_REVIEW", report.version, report.files_hash):
+        raise HTTPException(409, "Run đã thay đổi kể từ lúc review. Tải lại trước khi từ chối.")
     return rejected
 
 
@@ -284,9 +289,12 @@ def request_changes(
         raise HTTPException(409, "Bộ file đã thay đổi kể từ lúc bạn xem. Tải lại run rồi review lại.")
     if body.version is not None and body.version != report.version:
         raise HTTPException(409, "Version đã thay đổi kể từ lúc bạn xem. Tải lại run rồi review lại.")
-    from src.agents.service import start_request_changes  # import muộn, xem request_change_deps
+    from src.agents.service import RunChangedError, start_request_changes  # import muộn, xem request_change_deps
 
-    started, job = start_request_changes(report, body.feedback, user["id"], deps, config.store_path)
+    try:
+        started, job = start_request_changes(report, body.feedback, user["id"], deps, config.store_path)
+    except RunChangedError as exc:
+        raise HTTPException(409, str(exc)) from exc
     background.add_task(job)
     return started
 

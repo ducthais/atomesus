@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.agents import budget, resolve
+from src.agents.cancellation import raise_if_phase_cancelled
 from src.agents.llm import JsonLLM
 from src.agents.state import AgentState
 from src.codegen.sandbox import run_in_sandbox
@@ -29,6 +30,7 @@ class AgentDeps:
     sandbox: Callable = run_in_sandbox
     estimate_cost: Callable = budget.estimate
     spent_today: Callable = budget.spent_today
+    reserve_daily: Callable | None = None
     checkpointer: object = None
     cancelled: Callable[[str], bool] | None = None
 
@@ -81,6 +83,7 @@ def llm_usage(reply: str, stage: str, tier: str, policy: Policy) -> dict:
 
 def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: str, user: str) -> str:
     """Gọi LLM nếu còn trong trần `budgets.yml: per_run.max_llm_calls`; chạm trần → NEEDS_HUMAN (SPEC §11.4)."""
+    raise_if_phase_cancelled()
     if deps.cancelled and deps.cancelled(state["run_id"]):
         raise CancellationRequestedError
     limit = deps.policy.budgets.per_run.max_llm_calls
@@ -96,7 +99,25 @@ def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: 
             f"Hôm nay đã tiêu {spent:.4f} USD, chạm trần {day_limit} USD/ngày (budgets.yml per_day.max_usd); "
             "không gọi LLM nữa tới ngày mai (UTC).",
         )
+    category = f"llm:{stage}:{state.get('llm_calls', 0) + 1}"
+    if deps.reserve_daily:
+        reserved, spent = deps.reserve_daily(
+            deps.settings,
+            state["run_id"],
+            state.get("version", 1),
+            category,
+            deps.policy.budgets.per_run.max_usd,
+            day_limit,
+        )
+        if not reserved:
+            raise StopError(
+                "BLOCKED_BUDGET",
+                stage,
+                f"Hôm nay đã dùng hoặc giữ chỗ {spent:.4f} USD; không đủ hạn mức {day_limit} USD/ngày cho lần gọi LLM.",
+            )
     try:
-        return deps.llm(tier, system, user)
+        reply = deps.llm(tier, system, user)
+        raise_if_phase_cancelled()
+        return reply
     except Exception as exc:  # lỗi mạng/khóa API của nhà cung cấp LLM
         raise StopError("INFRA_ERROR", stage, f"Gọi LLM thất bại: {type(exc).__name__}: {str(exc)[:300]}") from exc

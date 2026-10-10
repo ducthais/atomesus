@@ -180,7 +180,7 @@ async def test_reconcile_deployed_endpoint(client, tmp_path, monkeypatch):
         config.store_path, report("dep", 0, "DEPLOYED", spec_=sales_spec().model_dump(by_alias=True, mode="json"))
     )
     try:
-        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         body = (await client.post("/api/v1/catalog/datasets/sales/fct_daily_sales/reconcile")).json()
         assert body["available"] is True and body["matched"] is False and body["run_id"] == "dep"
         assert seen["gold"] == [{"ordered_at": date(2026, 1, 1), "revenue": Decimal("1000.00")}]

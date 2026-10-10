@@ -76,13 +76,18 @@ def _pct(before: float, after: float) -> float:
 
 def compare(report: RunReport, parent: RunReport, current, current_usd: float | None) -> list[dict]:
     """So từng luật đã kích hoạt: bản đề xuất (`report`) với bản đang chạy chạy lại lúc này (`current`)."""
-    broken = current is None or current.status != "READY_FOR_REVIEW"
+    unavailable = current is None or current.status == "INFRA_ERROR"
+    broken = current is not None and current.status in {"NEEDS_HUMAN", "BLOCKED_AST"}
     rows = []
     for rule in (report.regression or {}).get("rules", []):
         name, row = rule["rule"], {"rule": rule["rule"]}
-        if broken:
+        if unavailable:
+            row |= {"better": False, "detail": "không đo được bản đang chạy để so sánh"}
+        elif broken:
             reason = "bản đang chạy không còn chạy thử đạt trên dữ liệu hiện tại"
             row |= {"better": True, "detail": reason}
+        elif current.status != "READY_FOR_REVIEW":
+            row |= {"better": False, "detail": f"bản đang chạy trả trạng thái {current.status}, không thể so sánh"}
         elif name == "runtime_regression":
             before, after = current.duration_sec, report.timing.baseline_sec or 0.0
             row |= {"before": before, "after": after, "better": after < before, "gain_pct": _pct(before, after)}

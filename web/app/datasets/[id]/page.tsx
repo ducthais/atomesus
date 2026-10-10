@@ -105,7 +105,7 @@ export default async function DatasetPage({ params, searchParams }: { params: Pr
         </Panel>
       </div>
     </div>
-    {managed && dataset.layer === 'gold' && table && <Panel title="Đối chiếu với nguồn"><ReconcileButton domain={dataset.domain} model={table} /></Panel>}
+    {managed && dataset.layer === 'gold' && table && <Panel title="Đối chiếu với nguồn"><ReconcileButton domain={dataset.domain} model={table} canRun={user.role === 'Engineer'} /></Panel>}
     </>}
 
     {tab === 'schema' && (dataset.columns.length ? <Panel flush><div className="table-scroll"><table>

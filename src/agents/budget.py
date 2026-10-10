@@ -14,18 +14,17 @@ Trần một run (`per_run.max_usd`) chỉ áp cho chi phí quét dữ liệu, n
 """
 
 import json
-from datetime import UTC, datetime
 
 from src.agents import bigquery
 from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report.models import GateResult
-from src.run_report.store import list_run_reports
+from src.run_report.store import reserve_budget
+from src.run_report.store import spent_today as ledger_spent_today
 from src.spec.models import Spec
 
 BYTES_PER_TB = 10**12
-DAY_SCAN_LIMIT = 1000  # số run gần nhất đọc để cộng chi phí trong ngày
 
 # Bảng thường: kích thước của chính nó. Bảng phân vùng (pagila.payment): bảng cha rỗng, dữ liệu nằm ở các partition.
 TABLE_BYTES_SQL = """
@@ -89,14 +88,19 @@ def estimate(spec: Spec, policy: Policy, settings: PipelineSettings, dry_run: bi
 
 
 def spent_today(settings: PipelineSettings) -> float:
-    """Tổng chi phí (quét dữ liệu + LLM) của các run tạo trong ngày hôm nay, theo giờ UTC."""
-    today = datetime.now(UTC).date()
-    spent = 0.0
-    for report in list_run_reports(settings.store_path, limit=DAY_SCAN_LIMIT):  # mới nhất trước
-        if report.created_at.astimezone(UTC).date() != today:
-            break
-        spent += report.cost.usd + report.cost.llm_usd
-    return spent
+    """Tổng chi phí đã ghi và khoản đang giữ chỗ trong ngày UTC hiện tại."""
+    return ledger_spent_today(settings.store_path)
+
+
+def reserve_daily(
+    settings: PipelineSettings,
+    run_id: str,
+    version: int,
+    category: str,
+    usd: float,
+    daily_limit: float,
+) -> tuple[bool, float]:
+    return reserve_budget(settings.store_path, run_id, version, category, usd, daily_limit)
 
 
 def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, list[str]]:

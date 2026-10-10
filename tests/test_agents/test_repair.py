@@ -71,7 +71,7 @@ def test_metric_mismatch_goes_round_the_sql_loop_and_only_sql_changes():
     assert state["status"] == "READY_FOR_REVIEW" and state["attempts"] == {"spec": 0, "sql": 1}
     prompt = llm.calls[-1]["user"]
     assert "sql_fix" in prompt["yêu_cầu_sửa"] and "metric_reconcile" in prompt["lỗi_chạy_thử"][0]
-    assert "2026-01-01" in prompt["lỗi_chạy_thử"][0], "kèm ví dụ dòng lệch để LLM biết lệch ở đâu"
+    assert "2026-01-01" not in prompt["lỗi_chạy_thử"][0], "không gửi giá trị nguồn thật cho LLM ngoài hệ thống"
     second = sandbox.seen[1]
     assert second["transform"]["metrics"][0]["expr"] == "SUM(DISTINCT amount_vnd)"
     assert second["transform"]["model_name"] == "fct_daily_orders" and second["schedule"] == sandbox.seen[0]["schedule"]
@@ -80,7 +80,7 @@ def test_metric_mismatch_goes_round_the_sql_loop_and_only_sql_changes():
     assert not any(g["name"] == "post_run" and g["result"] == "fail" for g in state["gates"])
 
 
-def test_staging_rejects_go_back_to_propose_with_reasons_and_samples():
+def test_staging_rejects_go_back_to_propose_with_counts_but_without_samples():
     rejects = Check(
         name="staging_reconcile",
         source_id="orders",
@@ -102,7 +102,7 @@ def test_staging_rejects_go_back_to_propose_with_reasons_and_samples():
 
     assert state["status"] == "READY_FOR_REVIEW" and state["attempts"]["spec"] == 1
     error = llm.calls[-1]["user"]["lỗi_chạy_thử"][0]
-    assert "nguồn orders" in error and "date_format: 30 dòng" in error and "01.02.2026" in error
+    assert "nguồn orders" in error and "date_format: 30 dòng" in error and "01.02.2026" not in error
     assert "date_formats" in error, "kèm hướng sửa của bảng định tuyến"
 
 

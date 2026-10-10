@@ -138,6 +138,8 @@ async def test_alert_api(client, env, monkeypatch):
     try:
         assert (await client.post("/api/v1/monitor/check")).status_code == 401
         await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
+        assert (await client.post("/api/v1/monitor/check")).status_code == 403
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         checked = (await client.post("/api/v1/monitor/check")).json()
         assert [a["action"] for a in checked["actions"]] == ["alert"]
         (alert,) = (await client.get("/api/v1/monitor/alerts")).json()
