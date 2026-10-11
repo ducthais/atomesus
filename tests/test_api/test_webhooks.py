@@ -283,17 +283,32 @@ async def test_red_ci_starts_new_version_from_p4(client, approved, store_path, e
 
 
 @pytest.mark.asyncio
-async def test_red_ci_after_merge_still_starts_new_version_from_p4(client, approved, store_path):
+@pytest.mark.parametrize("event", ["workflow_run", "check_suite"])
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out"])
+@pytest.mark.parametrize("result", ["deployed", "failed"])
+async def test_red_ci_after_merge_only_records_ci_and_leaves_status_to_deployer(
+    client, approved, store_path, event, conclusion, result
+):
     await send(client, "pull_request", pull_closed(merged=True), delivery="merge")
 
-    response = await send(client, "workflow_run", ci("workflow_run", "failure"), delivery="ci")
+    response = await send(client, event, ci(event, conclusion), delivery="ci")
 
     assert response.status_code == 200, response.text
-    assert response.json()["run_status"] == "GENERATING" and response.json()["version"] == 4
-    revised = get_run_report(store_path, RUN_ID)
-    assert revised.version == 4 and revised.approval is None and revised.deployment is None
-    entry = next(item for item in revised.spec_history if "deployment" in item)
-    assert entry["deployment"]["state"] == "merged" and entry["deployment"]["ci_conclusion"] == "failure"
+    assert response.json()["run_status"] == "APPROVED" and response.json()["version"] == 3
+    report = get_run_report(store_path, RUN_ID)
+    assert report.version == approved.version and report.approval == approved.approval
+    assert report.spec_history == approved.spec_history and report.timeline == approved.timeline
+    assert report.deployment.state == "merged" and report.deployment.ci_conclusion == conclusion
+    assert report.deployment.ci_url.endswith("/actions/runs/42") and report.deployment.ci_at
+
+    response = await callback(
+        client, callback_body(approved, result, detail="Chạy thử Dagster FAILURE; đã quay về bản trước.")
+    )
+
+    assert response.status_code == 200
+    report = get_run_report(store_path, RUN_ID)
+    assert report.status == ("DEPLOYED" if result == "deployed" else "DEPLOY_FAILED")
+    assert report.deployment.ci_conclusion == conclusion and report.version == 3
 
 
 @pytest.mark.asyncio

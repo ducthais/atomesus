@@ -86,6 +86,28 @@ def test_model_name_cannot_escape_deploy_dir(tmp_path):
     assert not (tmp_path / "evil").exists()
 
 
+def test_install_runs_real_dbt_parse_without_dotenv(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WAREHOUSE_PATH", raising=False)
+    # Không được ghi manifest sang thư mục artifact của Dagster do biến môi trường thừa kế.
+    monkeypatch.setenv("DBT_TARGET_PATH", str(tmp_path / "unwanted-target"))
+    assert not (tmp_path / ".env").exists()
+
+    project = install.install_project(
+        "fct_x",
+        {
+            "dbt_project/models/gold/fct_x.sql": "select 1 as n\n",
+            "infra/dagster/generated/fct_x_asset.py": "# asset\n",
+        },
+        str(tmp_path / "deploy"),
+    )
+
+    manifest = json.loads((project / "dbt_project/target/manifest.json").read_text(encoding="utf-8"))
+    assert any(node["name"] == "fct_x" for node in manifest["nodes"].values())
+    assert not (tmp_path / "unwanted-target").exists()
+    assert "location_name: fct_x" in (project.parent / "workspace.yaml").read_text(encoding="utf-8")
+
+
 def _dagster_local():
     spec = importlib.util.spec_from_file_location("dagster_local_under_test", ROOT / "scripts" / "dagster_local.py")
     module = importlib.util.module_from_spec(spec)

@@ -139,9 +139,17 @@ Chưa có SSO, nên chỉ đưa mật khẩu cho người cần dùng; ai đăng
 
 Pipeline chỉ lên Dagster production qua repo pipeline (SPEC §9.5): Reviewer bấm Deploy → backend mở pull request → CI
 kiểm manifest → người có quyền merge → service `deployer` trên VM kéo nhánh mặc định (mặc định mỗi 60 giây), kiểm
-manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, lỗi thì giữ bản đang chạy), Dagster tự khởi động lại để nạp
-pipeline, rồi deployer báo backend (`POST /api/v1/deployments/callback`, ký HMAC) để run chuyển `DEPLOYED` /
-`DEPLOY_FAILED`.
+manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, giữ bản trước tới khi xác nhận xong). Deployer nạp lại
+workspace qua GraphQL nội bộ rồi kích hoạt đúng **một** lần chạy `<model>_job` của code location vừa cài, chờ tối đa
+120 giây (mức D2). Chỉ khi lần chạy đó `SUCCESS` mới báo `deployed` kèm run id Dagster trong `detail` và xóa bản sao
+lưu. `FAILURE`, `CANCELED`, quá hạn, mất kết nối hoặc lỗi GraphQL thì khôi phục đúng thư mục pipeline trước đó; lần
+cài đầu thì gỡ code location. Deployer ghi lại `workspace.yaml` để Dagster nạp bản khôi phục, rồi báo `failed` với lý
+do ngắn. Callback (`POST /api/v1/deployments/callback`, ký HMAC) chuyển run sang `DEPLOYED` / `DEPLOY_FAILED`.
+
+CI đỏ đến sau khi PR đã merge chỉ ghi kết quả CI, không đưa run về P4: code đã ở nhánh mặc định, trạng thái production
+do callback deployer quyết định. Rollback khôi phục code; dữ liệu mà lần chạy thử đã ghi vào warehouse không được
+hoàn tác. Khi quá hạn hoặc mất phản hồi sau launch, deployer yêu cầu hủy run (tối đa thêm 3 giây cho yêu cầu dọn dẹp);
+nếu Dagster mất kết nối thì cần kiểm tra run còn chạy trên UI khi dịch vụ hoạt động lại.
 
 Chỉ `deployer` ghi được `dagster_code`; `dagster` và `backend` mount chỉ đọc, không service nào khác ghi volume này.
 `deployer` không đọc `.env` nên không có OpenAI key hay mật khẩu nguồn; nó chỉ có deploy key **chỉ đọc** của repo
@@ -182,6 +190,8 @@ Repo pipeline → **Settings → Deploy keys → Add deploy key**: dán nội du
 | `DEPLOYER_REPO_URL` | URL SSH repo pipeline, vd. `git@github.com:<owner>/atomesus-pipelines.git` |
 | `PIPELINE_DEPLOYER_SECRET` | `openssl rand -hex 32`; backend đọc cùng biến này từ `.env` để kiểm chữ ký callback |
 | `DEPLOYER_INTERVAL_SEC` | tùy chọn, chu kỳ kéo repo (mặc định `60`, tối thiểu `5`) |
+| `DEPLOYER_DAGSTER_URL` | tùy chọn, URL GraphQL nội bộ của Dagster, mặc định `http://dagster:3070` (deployer thêm `/graphql`) |
+| `DEPLOYER_VERIFY_TIMEOUT_SEC` | tùy chọn, tổng hạn chờ nạp workspace, kích hoạt và xác nhận lần chạy thử; mặc định `120`, số giây nguyên từ `1` |
 | `DEPLOYER_SSH_DIR` | tùy chọn, thư mục chứa `deploy_key` (mặc định `/etc/atomesus-deployer`) |
 | `DEPLOYER_KNOWN_HOSTS` | tùy chọn cho Git host khác: đường dẫn **trong container**, vd. `/run/secrets/deployer/known_hosts`; đặt file khóa host đã xác minh vào `DEPLOYER_SSH_DIR`. Mặc định dùng khóa GitHub ghim trong image. |
 
@@ -206,7 +216,7 @@ docker compose --env-file .env -f deploy/compose.yml exec dagster cat /app/data/
 docker compose --env-file .env -f deploy/compose.yml exec deployer cat /app/state/state.json
 ```
 
-Log bình thường: `Đã cài fct_x v2 …`, `Commit <sha>: kiểm/cài ['fct_x'] …`; Dagster in `workspace.yaml đổi … khởi
+Log bình thường sau khi chạy thử xanh: `Đã cài fct_x v2 …`, `Commit <sha>: kiểm/cài ['fct_x'] …`; Dagster in `workspace.yaml đổi … khởi
 động lại` và pipeline hiện trên `https://dagster.<DOMAIN>`. Không có commit mới thì deployer im lặng. Muốn kéo ngay thì
 `restart deployer`.
 
@@ -214,10 +224,14 @@ Log bình thường: `Đã cài fct_x v2 …`, `Commit <sha>: kiểm/cài ['fct_
 quả từng pipeline của commit mới nhất chưa xong). Chỉ khi mọi pipeline xong thì `applied` mới tiến; pipeline chưa xong
 không bị bỏ qua ở chu kỳ sau. Một pipeline lỗi không chặn pipeline khác: pipeline tốt vẫn được cài và báo (một lần).
 
-**Xử lý khi cài lỗi** (bản đang chạy luôn được giữ nguyên):
+**Xử lý khi cài hoặc chạy thử lỗi:** xem `logs -f deployer` để đọc lý do `Chạy thử <model> lỗi: …`, và `error_trace`
+(stage `deploy`) của RunReport trên app/API để xem lý do callback đã lưu. `state.json` ghi kết quả `failed` theo sha
+cây của pipeline: không cài/chạy thử lại cùng nội dung ở mỗi chu kỳ, kể cả commit mới chỉ đổi pipeline khác. Commit
+mới đụng pipeline đó (nội dung mới đã duyệt) mới được thử lại; `--reinstall` là thao tác ép thử lại của người vận hành.
 
 | Log / trạng thái trong `models` | Nghĩa và cách xử lý |
 |---|---|
+| `Chạy thử <model> lỗi: … Đã quay về bản trước` → `failed` | Job `FAILURE` / `CANCELED` / quá hạn hoặc Dagster không trả lời / lỗi GraphQL. Bản cũ đã khôi phục, lần cài đầu đã gỡ location; run chuyển `DEPLOY_FAILED`. Kiểm tra lần chạy trên Dagster UI và lỗi trong RunReport, sửa pipeline rồi duyệt/merge nội dung mới. |
 | `Không cài <model> … sha256 không khớp` / `run_report.json không khớp` / `Chỉ cài file thường` → `failed` | Nội dung trên nhánh mặc định khác chữ ký duyệt (bị sửa tay sau khi duyệt). Run chuyển `DEPLOY_FAILED`. Không sửa tay repo pipeline: Deploy lại từ app để mở pull request mới; version mới merge thì deployer tự cài. |
 | `… không báo được backend` → `unreported` | `manifest.json` hỏng tới mức thiếu run_id/version/files_hash; không báo được run nào. Xử lý như dòng trên. |
 | `Cài <model> lỗi, giữ bản đang chạy: dbt parse …` / `Sẽ cài lại … ở chu kỳ sau` → `retry` | Lỗi môi trường khi biên dịch (đĩa, dbt). Deployer tự cài lại ở 2 chu kỳ sau; vẫn lỗi thì báo `failed` (trạng thái `failed`). Sửa môi trường xong thì cài lại: `stop deployer`, `run --rm deployer python scripts/deployer.py --once --reinstall`, `start deployer`. |

@@ -9,7 +9,8 @@ Dagster production, backend chỉ mount đọc. Mỗi chu kỳ (`run_once`):
 4. Mỗi pipeline: chỉ file thường theo `git ls-tree`, manifest.json khớp bộ file (manifest.py), run_report.json khớp
    chữ ký; sai thì không cài và báo failed. Đúng thì install_project (nguyên tử, có rollback); install ghi lại
    workspace.yaml, đó là tín hiệu để scripts/dagster_local.py khởi động lại Dagster nạp workspace mới. Lỗi lúc cài
-   (môi trường: dbt parse, đĩa) thử lại ở chu kỳ sau, quá INSTALL_ATTEMPTS lần mới báo failed.
+   (môi trường: dbt parse, đĩa) thử lại ở chu kỳ sau, quá INSTALL_ATTEMPTS lần mới báo failed. Sau khi cài, chạy thử
+   đúng một job trên Dagster: chỉ SUCCESS mới giữ bản mới; lỗi/hủy/quá hạn thì khôi phục bản trước và báo failed.
 5. Báo backend từng kết quả (POST /api/v1/deployments/callback, ký HMAC theo .harness/plans/DEPLOY-PR.md); chỉ ghi
    nhận commit đã áp dụng khi mọi pipeline trong commit đã cài VÀ backend đã nhận báo `deployed`.
 
@@ -29,6 +30,7 @@ import shlex
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -36,7 +38,7 @@ from http.client import HTTPException
 from pathlib import Path
 from uuid import uuid4
 
-from src.deployer import install
+from src.deployer import install, verify
 from src.deployer.manifest import (
     MANIFEST_FILE,
     REPORT_FILE,
@@ -82,6 +84,8 @@ class Config:
     ssh_key: str = field(default="", repr=False)
     known_hosts: str = field(default="", repr=False)
     interval: int = 60
+    dagster_url: str = field(default="http://dagster:3070", repr=False)
+    verify_timeout_sec: int = 120
 
     @classmethod
     def from_env(cls, env=None) -> "Config":
@@ -101,6 +105,20 @@ class Config:
             raise DeployerError("DEPLOYER_INTERVAL_SEC phải là số giây nguyên.") from None
         if interval < 5:
             raise DeployerError("DEPLOYER_INTERVAL_SEC phải từ 5 giây trở lên.")
+        dagster_url = env.get("DEPLOYER_DAGSTER_URL", "http://dagster:3070").strip().rstrip("/")
+        try:
+            parsed = urllib.parse.urlsplit(dagster_url)
+            valid_url = parsed.scheme in {"http", "https"} and bool(parsed.hostname) and parsed.port != 0
+        except ValueError:
+            valid_url = False
+        if not valid_url:
+            raise DeployerError("DEPLOYER_DAGSTER_URL phải là URL HTTP hoặc HTTPS hợp lệ của Dagster nội bộ.")
+        try:
+            verify_timeout_sec = int(env.get("DEPLOYER_VERIFY_TIMEOUT_SEC", "120"))
+        except ValueError:
+            raise DeployerError("DEPLOYER_VERIFY_TIMEOUT_SEC phải là số giây nguyên dương.") from None
+        if verify_timeout_sec < 1:
+            raise DeployerError("DEPLOYER_VERIFY_TIMEOUT_SEC phải từ 1 giây trở lên.")
         ssh_key = env.get("DEPLOYER_SSH_KEY", "")
         if ssh_key and not Path(ssh_key).is_file():
             raise DeployerError(
@@ -118,6 +136,8 @@ class Config:
             ssh_key=ssh_key,
             known_hosts=known_hosts,
             interval=interval,
+            dagster_url=dagster_url,
+            verify_timeout_sec=verify_timeout_sec,
         )
 
 
@@ -360,7 +380,7 @@ def _identity(text: str | None) -> dict | None:
 def apply_pipeline(config: Config, head: str, model: str) -> tuple[str, dict | None]:
     """Kiểm rồi cài một pipeline. Trả (kết quả, callback cần báo): `deployed`; `deleted` (thư mục đã bị xóa, không có
     gì để cài); `rejected` (bộ file / manifest sai; callback None nếu manifest không có danh tính để báo);
-    `install_failed` (lỗi lúc cài, đã giữ bản đang chạy)."""
+    `install_failed` (lỗi lúc cài, đã giữ bản đang chạy); `verify_failed` (chạy thử lỗi, đã quay về bản trước)."""
     manifest_text = None
     try:
         read = read_pipeline(config, head, model)
@@ -385,10 +405,20 @@ def apply_pipeline(config: Config, head: str, model: str) -> tuple[str, dict | N
             log.error("Manifest của %s không có run_id/version/files_hash hợp lệ nên không báo được backend.", model)
             return "rejected", None
         return "rejected", _payload(identity, model, head, "failed", f"Manifest không hợp lệ: {exc}")
+    dagster_run_id = None
+
+    def confirm(_target: Path) -> None:
+        nonlocal dagster_run_id
+        dagster_run_id = verify.verify_pipeline(config.dagster_url, model, config.verify_timeout_sec)
+
     try:
-        target = install.install_project(model, files, config.deploy_dir)
+        target = install.install_project(model, files, config.deploy_dir, verify=confirm)
         if target is None:
             raise OSError("Cài project không trả về code location.")
+    except verify.VerificationError as exc:
+        detail = f"{exc} Đã quay về bản trước; lần cài đầu thì gỡ code location."
+        log.error("Chạy thử %s lỗi: %s", model, detail)
+        return "verify_failed", _payload(manifest, model, head, "failed", detail)
     except (OSError, subprocess.SubprocessError, ManifestError) as exc:
         log.error("Cài %s lỗi, giữ bản đang chạy: %s", model, exc)
         return "install_failed", _payload(
@@ -396,7 +426,7 @@ def apply_pipeline(config: Config, head: str, model: str) -> tuple[str, dict | N
         )
     log.info("Đã cài %s v%s (run %s) từ commit %s.", model, manifest["version"], manifest["run_id"], head[:12])
     return "deployed", _payload(
-        manifest, model, head, "deployed", f"Đã cài lên Dagster production từ commit {head[:12]}."
+        manifest, model, head, "deployed", f"Chạy thử Dagster SUCCESS (run {dagster_run_id}), commit {head[:12]}."
     )
 
 
