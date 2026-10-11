@@ -9,10 +9,11 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from src.codegen.sandbox import prepare_project
+from src.codegen.sandbox import PASSTHROUGH_ENV, prepare_project
 from src.deployer.manifest import project_dir
 
 DBT_PARSE_TIMEOUT_SEC = 120
@@ -27,7 +28,7 @@ def write_workspace(deploy_dir: str) -> Path:
     """Ghi `<deploy_dir>/workspace.yaml`: mỗi project đã cài là một code location của Dagster.
 
     `make dagster` nạp file này; cài thêm pipeline thì scripts/dagster_local.py tự khởi động lại Dagster.
-    Bỏ qua thư mục tạm/sao lưu của install_project vì chúng bị xóa ngay sau khi ghi file này.
+    Bỏ qua thư mục tạm/sao lưu của install_project trong khi chờ xác nhận bản mới.
     """
     root = Path(deploy_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -56,12 +57,23 @@ def _compile_manifest(project_root: Path) -> None:
     dbt_dir = project_root / "dbt_project"
     warehouse = Path("data/warehouse/warehouse.duckdb").resolve()
     env = {
-        **os.environ,
+        **{key: os.environ[key] for key in PASSTHROUGH_ENV if key in os.environ},
         "WAREHOUSE_PATH": str(warehouse),
         "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+        "DBT_SEND_ANONYMOUS_USAGE_STATS": "false",
+        "DO_NOT_TRACK": "1",
     }
     done = subprocess.run(
-        [sys.executable, "-m", "dbt.cli.main", "parse", "--project-dir", str(dbt_dir), "--profiles-dir", str(dbt_dir)],
+        [
+            sys.executable,
+            "-c",
+            "from dbt.cli.main import cli; cli()",
+            "parse",
+            "--project-dir",
+            str(dbt_dir),
+            "--profiles-dir",
+            str(dbt_dir),
+        ],
         capture_output=True,
         text=True,
         env=env,
@@ -69,18 +81,19 @@ def _compile_manifest(project_root: Path) -> None:
         timeout=DBT_PARSE_TIMEOUT_SEC,
     )
     if done.returncode:
-        detail = (done.stderr or done.stdout).strip()[-1000:]
-        raise OSError(f"dbt parse thất bại (mã {done.returncode}): {detail}")
+        raise OSError(f"dbt parse thất bại (mã {done.returncode}); kiểm tra bộ file dbt của pipeline.")
 
 
-def install_project(model_name: str, files: dict[str, str], deploy_dir: str) -> Path:
-    """Ghi project ra đĩa, trả đường dẫn thư mục project."""
+def install_project(
+    model_name: str, files: dict[str, str], deploy_dir: str, *, verify: Callable[[Path], None] | None = None
+) -> Path:
+    """Ghi project ra đĩa; giữ bản cũ tới khi verify xác nhận. Lỗi thì khôi phục project và workspace."""
     project_dir(model_name)  # chặn tên model lạ trước khi ghép đường dẫn
     target = Path(deploy_dir) / model_name
     token = uuid4().hex
     staging = target.with_name(f"{target.name}.tmp-{token}")
     backup = target.with_name(f"{target.name}.old-{token}")
-    old_moved = new_active = False
+    old_moved = new_active = workspace_written = False
     try:
         prepare_project(staging, files)
         _compile_manifest(staging)
@@ -90,11 +103,16 @@ def install_project(model_name: str, files: dict[str, str], deploy_dir: str) -> 
         staging.rename(target)
         new_active = True
         write_workspace(deploy_dir)
-    except (OSError, subprocess.SubprocessError):
+        workspace_written = True
+        if verify is not None:
+            verify(target)
+    except Exception:
         if new_active and target.exists():
-            shutil.rmtree(target, ignore_errors=True)
+            shutil.rmtree(target)
         if old_moved and backup.exists():
             backup.rename(target)
+        if workspace_written:
+            write_workspace(deploy_dir)
         raise
     finally:
         if staging.exists():

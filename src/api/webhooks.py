@@ -215,8 +215,8 @@ def _change(
         deployment = current.deployment
         if signal.kind == "ci":
             ci = {"ci_conclusion": signal.conclusion, "ci_url": signal.url, "ci_at": signal.at}
-            if signal.conclusion in CI_FAILED and current.status == "APPROVED":
-                # CI đỏ về P4 kể cả khi webhook merge đến trước (run vẫn APPROVED chờ deployer).
+            if signal.conclusion in CI_FAILED and current.status == "APPROVED" and deployment.state != "merged":
+                # Đã merge thì code ở nhánh mặc định; callback deployer quyết định trạng thái production.
                 marked = _with_deployment(current, **ci)
             elif deployment.ci_conclusion == signal.conclusion and deployment.ci_url == signal.url:
                 return None

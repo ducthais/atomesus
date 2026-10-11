@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from src.deployer import install, service
+from src.deployer import install, service, verify
 from src.deployer.manifest import build_manifest
 from src.deployer.service import CALLBACK_PATH, SIGNATURE_HEADER, Config, DeployerError
+from tests.test_deployer.test_verify import Clock, Dagster
 
 SECRET = "khoa-ky-callback-cho-test"
+VERIFY_PIPELINE = verify.verify_pipeline
 
 
 def files_v(version: int) -> dict[str, str]:
@@ -121,15 +123,28 @@ def config(tmp_path, remote):
 
 
 @pytest.fixture
-def installs(monkeypatch):
+def dagster(monkeypatch):
+    fake = Dagster()
+    clock = Clock()
+    monkeypatch.setattr(verify.httpx, "post", fake)
+
+    def success(url, model, timeout):
+        return VERIFY_PIPELINE(url, model, timeout, sleep=clock.sleep, clock=clock)
+
+    monkeypatch.setattr(verify, "verify_pipeline", success)
+    return fake
+
+
+@pytest.fixture
+def installs(monkeypatch, dagster):
     """Cài thật (scaffold dbt + bộ file), chỉ bỏ bước dbt parse; ghi lại mỗi lần install_project được gọi."""
     monkeypatch.setattr(install, "_compile_manifest", lambda _root: None)
     calls = []
     real = install.install_project
 
-    def recording(model, files, deploy_dir):
+    def recording(model, files, deploy_dir, **kwargs):
         calls.append(model)
-        return real(model, files, deploy_dir)
+        return real(model, files, deploy_dir, **kwargs)
 
     monkeypatch.setattr(install, "install_project", recording)
     return calls
@@ -143,7 +158,7 @@ def live_entries(config) -> list[str]:
     return sorted(path.name for path in Path(config.deploy_dir).iterdir())
 
 
-def test_first_run_installs_pipeline_and_reports_signed_callback(config, remote, installs):
+def test_first_run_installs_pipeline_and_reports_signed_callback(config, remote, installs, dagster):
     head = remote.commit("fct_x", signed(files_v(1), 1))
     backend = Backend()
 
@@ -165,6 +180,9 @@ def test_first_run_installs_pipeline_and_reports_signed_callback(config, remote,
     assert payload["run_id"] == "run-1" and payload["version"] == 1 and payload["model_name"] == "fct_x"
     assert payload["files_hash"] == manifest["files_hash"] and payload["commit_sha"] == head
     assert payload["status"] == "deployed" and payload["detail"]
+    assert "dagster-run-1" in payload["detail"]
+    assert len(dagster.launches) == 1
+    assert dagster.launches[0]["selector"]["pipelineName"] == "fct_x_job"
     assert datetime.fromisoformat(payload["at"]).tzinfo is not None
 
 
@@ -513,6 +531,36 @@ def test_config_defaults():
 
     assert config.interval == 60 and config.backend_url == "http://backend:8000"
     assert config.deploy_dir == "data/dagster_local"
+    assert config.dagster_url == "http://dagster:3070" and config.verify_timeout_sec == 120
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("DEPLOYER_DAGSTER_URL", "dagster:3070"),
+        ("DEPLOYER_DAGSTER_URL", "http://"),
+        ("DEPLOYER_DAGSTER_URL", "http://dagster:bad"),
+        ("DEPLOYER_DAGSTER_URL", "http://dagster:0"),
+        ("DEPLOYER_VERIFY_TIMEOUT_SEC", "x"),
+        ("DEPLOYER_VERIFY_TIMEOUT_SEC", "0"),
+        ("DEPLOYER_VERIFY_TIMEOUT_SEC", "-1"),
+    ],
+)
+def test_config_rejects_invalid_verification_env(key, value):
+    with pytest.raises(DeployerError, match=key):
+        Config.from_env({"DEPLOYER_REPO_URL": "u", "PIPELINE_DEPLOYER_SECRET": "s", key: value})
+
+
+def test_config_reads_verification_env():
+    config = Config.from_env(
+        {
+            "DEPLOYER_REPO_URL": "u",
+            "PIPELINE_DEPLOYER_SECRET": "s",
+            "DEPLOYER_DAGSTER_URL": "http://internal:3071/",
+            "DEPLOYER_VERIFY_TIMEOUT_SEC": "30",
+        }
+    )
+    assert config.dagster_url == "http://internal:3071" and config.verify_timeout_sec == 30
 
 
 def test_corrupt_state_is_reported_not_silently_reset(config):
@@ -525,7 +573,7 @@ def test_corrupt_state_is_reported_not_silently_reset(config):
 
 def test_install_returning_none_is_retried_without_deployed_callback(config, remote, monkeypatch):
     remote.commit("fct_x", signed(files_v(1), 1))
-    monkeypatch.setattr(install, "install_project", lambda *args: None)
+    monkeypatch.setattr(install, "install_project", lambda *args, **kwargs: None)
     backend = Backend()
 
     summary = run(config, backend)
@@ -604,3 +652,105 @@ def test_pinned_github_host_key_matches_official_fingerprint():
 
     assert host == "github.com" and kind == "ssh-ed25519"
     assert digest == "+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+
+
+@pytest.mark.parametrize("failure", ["FAILURE", "CANCELED", "timeout", "connection", "graphql"])
+@pytest.mark.parametrize("first_install", [False, True])
+def test_verification_failure_rolls_back_and_waits_for_new_pipeline_content(
+    config, remote, installs, dagster, first_install, failure
+):
+    root = Path(config.deploy_dir)
+    backend = Backend()
+    previous = None
+    if not first_install:
+        previous = remote.commit("fct_x", signed(files_v(1), 1))
+        run(config, backend)
+    old_files = {
+        path.relative_to(root / "fct_x"): path.read_bytes() for path in (root / "fct_x").rglob("*") if path.is_file()
+    }
+    old_workspace = install.write_workspace(config.deploy_dir).read_bytes()
+    backend.calls.clear()
+    dagster.calls.clear()
+    if failure in {"FAILURE", "CANCELED"}:
+        dagster.statuses = [failure]
+    elif failure == "timeout":
+        dagster.statuses = ["STARTED"]
+    else:
+        import httpx
+
+        dagster.error_query = verify.STATUS
+        dagster.error = (
+            httpx.ConnectError("secret-url") if failure == "connection" else {"errors": [{"message": "secret-url"}]}
+        )
+    failed_head = remote.commit("fct_x", signed(files_v(2), 2), "v2")
+
+    summary = run(config, backend)
+
+    assert summary["applied"] == previous and summary["unresolved"] == {"fct_x": "failed"}
+    assert (root / "workspace.yaml").read_bytes() == old_workspace
+    assert live_entries(config) == (["workspace.yaml"] if first_install else ["fct_x", "workspace.yaml"])
+    restored_files = {
+        path.relative_to(root / "fct_x"): path.read_bytes() for path in (root / "fct_x").rglob("*") if path.is_file()
+    }
+    assert restored_files == old_files
+    [payload] = backend.payloads()
+    assert payload["status"] == "failed" and payload["commit_sha"] == failed_head
+    assert "Đã quay về bản trước" in payload["detail"] and "secret-url" not in payload["detail"]
+    assert len(dagster.launches) == 1
+    record = service.load_state(config)["models"]["fct_x"]
+    assert record["status"] == "failed" and record["attempts"] == 1
+    installed = len(installs)
+    assert run(config, backend)["models"] == []
+    assert len(installs) == installed and len(backend.calls) == 1 and len(dagster.launches) == 1
+
+    # Commit chỉ đụng README hoặc pipeline khác không cho phép thử lại nội dung đã thất bại.
+    remote.commit("fct_y", signed({p.replace("fct_x", "fct_y"): t for p, t in files_v(1).items()}, 1, "fct_y"))
+    dagster.statuses, dagster.error_query = ["SUCCESS"], None
+    assert run(config, backend)["models"] == ["fct_y"]
+    assert service.load_state(config)["models"]["fct_x"] == record
+    assert len(installs) == installed + 1
+
+    new_head = remote.commit("fct_x", signed(files_v(3), 3), "v3")
+    summary = run(config, backend)
+
+    assert summary["models"] == ["fct_x"] and summary["applied"] == new_head
+    assert (root / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 3 as n\n"
+    assert backend.payloads()[-1]["status"] == "deployed"
+
+
+def test_keeps_backup_and_defers_deployed_callback_until_success(config, remote, installs, dagster):
+    remote.commit("fct_x", signed(files_v(1), 1))
+    run(config, Backend())
+    remote.commit("fct_x", signed(files_v(2), 2), "v2")
+    root = Path(config.deploy_dir)
+    backend = Backend()
+    dagster.statuses = ["STARTED", "SUCCESS"]
+    seen = []
+
+    def check():
+        assert backend.calls == []
+        [backup] = list(root.glob("fct_x.old-*"))
+        assert (backup / "dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 1 as n\n"
+        assert (root / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 2 as n\n"
+        assert ".old-" not in (root / "workspace.yaml").read_text(encoding="utf-8")
+        seen.append(True)
+
+    dagster.on_status = check
+    run(config, backend)
+
+    assert seen == [True, True] and not list(root.glob("*.old-*"))
+    assert backend.payloads()[0]["status"] == "deployed"
+
+
+def test_failed_verification_callback_retries_without_reinstall_or_launch(config, remote, installs, dagster):
+    remote.commit("fct_x", signed(files_v(1), 1))
+    dagster.statuses = ["FAILURE"]
+
+    summary = run(config, Backend(*[503] * service.CALLBACK_ATTEMPTS))
+
+    assert summary["pending"] == 1 and live_entries(config) == ["workspace.yaml"]
+    assert service.load_state(config)["pending"][0]["payload"]["status"] == "failed"
+    backend = Backend()
+    assert run(config, backend)["unresolved"] == {"fct_x": "failed"}
+    assert installs == ["fct_x"] and len(dagster.launches) == 1
+    assert backend.payloads()[0]["status"] == "failed"
