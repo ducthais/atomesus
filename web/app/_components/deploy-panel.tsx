@@ -1,18 +1,20 @@
-import { Check, CircleAlert, Clock3, LoaderCircle } from 'lucide-react';
+import { Check, CircleAlert, Clock3, LoaderCircle, Minus } from 'lucide-react';
 import type { Run } from '@/lib/studio';
 import { deploymentLink, deploymentReworks, deploymentSteps, deployReason } from '@/lib/deploy';
 import { DeployRunButton } from './run-controls';
 import { Panel, fmtDate } from './ui';
 
 export function DeployPanel({ run, role }: { run: Run; role: string }) {
+  if (!run.deployment && !['APPROVED', 'DEPLOYED', 'DEPLOY_FAILED'].includes(run.status)) return null;
   const steps = deploymentSteps(run);
   const reworks = deploymentReworks(run);
   return <div className="deployment-panel"><Panel title="Triển khai">
     <p className="small">Version {run.version} · Duyệt → Mở PR → CI → Merge → Production</p>
-    <DeployRunButton runId={run.id} reason={deployReason(run, role)} />
+    {run.deployment ? <p className="small">Version này đã có pull request; xem liên kết và tiến độ bên dưới.</p>
+      : <DeployRunButton runId={run.id} reason={deployReason(run, role)} />}
     <ol className="deployment-steps" aria-label={`Tiến độ triển khai version ${run.version}`}>
       {steps.map(step => {
-        const Icon = step.state === 'pass' ? Check : step.state === 'fail' ? CircleAlert : step.state === 'running' ? LoaderCircle : Clock3;
+        const Icon = step.state === 'pass' ? Check : step.state === 'fail' ? CircleAlert : step.state === 'neutral' ? Minus : step.state === 'running' ? LoaderCircle : Clock3;
         return <li key={step.id}>
           <span className="q-icon" aria-hidden><Icon size={16} className={step.state === 'running' ? 'spin' : undefined} /></span>
           <div><strong>{step.label}</strong><p className="small">{step.detail}</p>

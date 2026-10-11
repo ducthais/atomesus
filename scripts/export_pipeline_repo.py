@@ -23,6 +23,8 @@ def export_pipeline_repo(destination: Path, source: Path = ROOT) -> list[str]:
         matches = [line.split("#", 1)[0].strip() for line in requirements if re.match(rf"^{name}\s*[=<>!~]", line)]
         if len(matches) != 1:
             raise ValueError(f"requirements.txt: cần đúng một ràng buộc phiên bản cho {name}.")
+        if not re.fullmatch(rf"{name}==\d+\.\d+\.\d+", matches[0]):
+            raise ValueError(f"requirements.txt: cần ghim chính xác phiên bản {name} bằng ==x.y.z.")
         versions += matches
     files["requirements-ci.txt"] = (
         "# Sinh từ requirements.txt của app; không sửa riêng.\n" + "\n".join(versions) + "\n"

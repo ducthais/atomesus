@@ -5,7 +5,7 @@ export const APPROVAL_MESSAGE = 'Đã duyệt, bấm Deploy để mở pull requ
 const CI_FAILED = ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure'];
 export type DeployStep = {
   id: 'approval' | 'pr' | 'ci' | 'merge' | 'production'; label: string;
-  state: 'pass' | 'fail' | 'running' | 'pending'; detail: string; at?: string | null; href?: string;
+  state: 'pass' | 'fail' | 'neutral' | 'running' | 'pending'; detail: string; at?: string | null; href?: string;
 };
 type DeployRun = Pick<Run, 'status' | 'approval' | 'version' | 'deployment' | 'deploymentHistory' | 'deployError'>;
 
@@ -34,17 +34,20 @@ export function deploymentSteps(run: DeployRun): DeployStep[] {
   const d = run.deployment;
   const approved = run.approval?.decision === 'approved' || !!d || ['APPROVED', 'DEPLOYED', 'DEPLOY_FAILED'].includes(run.status);
   const ciFailed = !!d?.ci_conclusion && CI_FAILED.includes(d.ci_conclusion);
+  const ciNeutral = d?.ci_conclusion === 'neutral' || d?.ci_conclusion === 'skipped';
+  const ciRunning = !!d && !d.ci_conclusion && d.state !== 'closed';
   const merged = d?.state === 'merged' || !!d?.merged_at;
   const deployed = !!d?.deployed_at || run.status === 'DEPLOYED';
-  const failed = run.status === 'DEPLOY_FAILED' || !!run.deployError;
+  // error_trace giữ cả lỗi deploy cũ; chỉ status hiện tại xác nhận lần deploy này thất bại.
+  const failed = run.status === 'DEPLOY_FAILED';
   return [
     { id: 'approval', label: approved ? 'Đã duyệt' : 'Chờ duyệt', state: approved ? 'pass' : 'pending',
       detail: approved ? 'Chữ ký duyệt gắn với bộ file của version này.' : 'Cần Reviewer phê duyệt version này.', at: run.approval?.at },
     { id: 'pr', label: d?.state === 'closed' ? 'PR đã đóng' : d ? 'Đã mở PR' : 'Chờ mở PR', state: d?.state === 'closed' ? 'fail' : d ? 'pass' : 'pending',
       detail: d ? `Pull request #${d.pr_number} · ${d.repo}` : approved && !deployed ? 'Bấm Deploy để mở pull request.' : 'Chưa có thông tin pull request.',
       at: d?.state === 'closed' ? d.closed_at : d?.opened_at, href: deploymentLink(d?.pr_url) },
-    { id: 'ci', label: ciFailed ? 'CI đỏ' : d?.ci_conclusion === 'success' ? 'CI xanh' : d && !d.ci_conclusion && d.state !== 'closed' ? 'CI đang chạy' : 'CI chưa có kết quả',
-      state: ciFailed ? 'fail' : d?.ci_conclusion === 'success' ? 'pass' : d && d.state !== 'closed' ? 'running' : 'pending',
+    { id: 'ci', label: ciFailed ? 'CI đỏ' : d?.ci_conclusion === 'success' ? 'CI xanh' : d?.ci_conclusion === 'neutral' ? 'CI trung lập' : d?.ci_conclusion === 'skipped' ? 'CI đã bỏ qua' : ciRunning ? 'CI đang chạy' : 'CI chưa có kết quả',
+      state: ciFailed ? 'fail' : d?.ci_conclusion === 'success' ? 'pass' : ciNeutral ? 'neutral' : ciRunning ? 'running' : 'pending',
       detail: d?.ci_conclusion ? `Kết luận: ${d.ci_conclusion}` : d ? 'Đang chờ kết quả CI từ GitHub.' : 'Chưa có thông tin CI.', at: d?.ci_at, href: deploymentLink(d?.ci_url) },
     { id: 'merge', label: merged ? 'Đã merge' : 'Chờ merge', state: merged ? 'pass' : 'pending',
       detail: merged ? 'Pull request đã được merge vào nhánh production.' : d?.state === 'closed' ? 'PR bị đóng mà không merge.' : 'Cần CI xanh và người có quyền merge.', at: d?.merged_at },
