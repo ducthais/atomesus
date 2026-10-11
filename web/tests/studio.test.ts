@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { canReview, chatMode, chatPayload, pendingRun, stageIndex, toArtifacts, toStudioRun, STAGES } from '../lib/studio.ts';
 import { isAgentSpec, type RunReport } from '../lib/postgres-api.ts';
-import './deploy.test.ts';
 
 const FIXTURES = new URL('../../fixtures/run_reports/', import.meta.url);
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(name, FIXTURES), 'utf-8')) as RunReport;

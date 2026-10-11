@@ -123,6 +123,7 @@ def test_export_is_generated_byte_exact_and_preserves_other_files(tmp_path):
         for line in (ROOT / "requirements.txt").read_text().splitlines()
         if line.startswith(("dbt-core", "dbt-duckdb"))
     ]
+    assert constraints == ["dbt-core==1.10.23", "dbt-duckdb==1.11.0"]
     assert (repo / "requirements-ci.txt").read_text(encoding="utf-8").splitlines()[1:] == constraints
     original = {name: (repo / name).read_bytes() for name in written}
     for name in written:
@@ -133,6 +134,21 @@ def test_export_is_generated_byte_exact_and_preserves_other_files(tmp_path):
     assert {name: (repo / name).read_bytes() for name in written} == original
     assert (repo / "pipelines/existing/keep.txt").read_text(encoding="utf-8") == "giữ nguyên"
     assert (repo / "unrelated.txt").exists()
+
+
+@pytest.mark.parametrize("name", ["dbt-core", "dbt-duckdb"])
+@pytest.mark.parametrize("constraint", ["", ">=1.9,<2", "==1.10.*", "==1.10.23\n{name}==1.10.23"])
+def test_export_rejects_missing_unpinned_or_duplicate_dbt_before_writing(tmp_path, name, constraint):
+    source = tmp_path / "app"
+    for path in ("src/deployer/manifest.py", "docs/deploy-pr.md"):
+        save(source, path, "bộ khung test")
+    other = "dbt-duckdb==1.11.0" if name == "dbt-core" else "dbt-core==1.10.23"
+    requirement = name + constraint.format(name=name) if constraint else ""
+    save(source, "requirements.txt", f"{other}\n{requirement}\n")
+    repo = tmp_path / "exported"
+    with pytest.raises(ValueError, match=name):
+        export_pipeline_repo(repo, source)
+    assert not repo.exists()
 
 
 def test_export_does_not_check_symlinks_above_destination(tmp_path, monkeypatch):

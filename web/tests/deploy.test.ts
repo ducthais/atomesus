@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
+import { createRequire, stripTypeScriptTypes } from 'node:module';
+import { createElement, type ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import * as deploy from '../lib/deploy.ts';
 import { APPROVAL_MESSAGE, deploymentLink, deploymentReworks, deploymentSteps, deployReason, requestDeployment } from '../lib/deploy.ts';
 import { ApiError, apiRequest, type Deployment, type RunReport } from '../lib/postgres-api.ts';
-import { STATUS_LABEL, toStudioRun } from '../lib/studio.ts';
+import { STATUS_LABEL, toStudioRun, type Run } from '../lib/studio.ts';
 import { MOCK_SNAPSHOT } from '../lib/catalog/mock.ts';
 
 const approval = { decision: 'approved', reviewer: 'an', files_hash: 'sha256:a', version: 1, at: '2026-10-10T08:00:00Z', comment: '' };
@@ -34,7 +37,9 @@ test('triển khai: PR mở, CI chạy / xanh / đỏ và PR đóng', () => {
   assert.equal(open[2].label, 'CI đang chạy');
   for (const conclusion of ['success', 'failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'neutral', 'skipped']) {
     const ci = steps({ deployment: { ...deployment, ci_conclusion: conclusion, ci_url: 'https://github.com/ci/12', ci_at: approval.at } })[2];
-    assert.equal(ci.state, conclusion === 'success' ? 'pass' : ['neutral', 'skipped'].includes(conclusion) ? 'running' : 'fail');
+    assert.equal(ci.state, conclusion === 'success' ? 'pass' : ['neutral', 'skipped'].includes(conclusion) ? 'neutral' : 'fail');
+    if (conclusion === 'neutral') assert.equal(ci.label, 'CI trung lập');
+    if (conclusion === 'skipped') assert.equal(ci.label, 'CI đã bỏ qua');
     assert.equal(ci.href, 'https://github.com/ci/12');
     assert.equal(ci.at, approval.at);
   }
@@ -43,6 +48,82 @@ test('triển khai: PR mở, CI chạy / xanh / đỏ và PR đóng', () => {
   assert.equal(closed[1].at, approval.at);
   assert.equal(closed[3].state, 'pending');
   assert.match(closed[3].detail, /không merge/);
+});
+
+test('triển khai: lỗi deploy cũ không làm lỗi lần đang chờ hoặc đã lên production', () => {
+  const error_trace = [{ stage: 'deploy', error: 'Lỗi deploy của lần trước.' }];
+  for (const status of ['APPROVED', 'DEPLOYED']) {
+    for (const d of [undefined, deployment, { ...deployment, deployed_at: approval.at }]) {
+      const run = toStudioRun({ ...report, status, deployment: d, error_trace });
+      assert.equal(run.deployError, error_trace[0].error);
+      const production = deploymentSteps(run)[4];
+      assert.equal(production.state, status === 'DEPLOYED' || d?.deployed_at ? 'pass' : 'pending');
+      assert.doesNotMatch(production.detail, /Lỗi deploy của lần trước/);
+    }
+  }
+  const current = steps({ status: 'DEPLOY_FAILED', deployment, error_trace: [
+    ...error_trace, { stage: 'deploy', message: 'Lỗi deploy hiện tại.' }, { stage: 'persist', error: 'Lỗi khác.' },
+  ] })[4];
+  assert.equal(current.state, 'fail');
+  assert.equal(current.detail, 'Lỗi deploy hiện tại.');
+});
+
+// Biên dịch TSX bằng SWC của Next để kiểm HTML của component thật, không cần chạy server.
+const require = createRequire(import.meta.url);
+const { transformSync } = require('next/dist/build/swc');
+function component(path: string, modules: Record<string, unknown>) {
+  const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+  const { code } = transformSync(source, {
+    filename: path, module: { type: 'commonjs' },
+    jsc: { parser: { syntax: 'typescript', tsx: true }, transform: { react: { runtime: 'automatic' } } },
+  });
+  const exports: Record<string, unknown> = {};
+  new Function('require', 'exports', code)((name: string) => name in modules ? modules[name] : require(name), exports);
+  return exports;
+}
+const controls = component('../app/_components/run-controls.tsx', { '../actions': {} });
+const { DeployPanel } = component('../app/_components/deploy-panel.tsx', {
+  '@/lib/deploy': deploy, './run-controls': controls,
+  './ui': { Panel: ({ children }: { children: ReactNode }) => createElement('section', null, children), fmtDate: (at: string) => at },
+}) as { DeployPanel: (props: { run: Run; role: string }) => ReactNode };
+const panel = (changes: Partial<RunReport> = {}, role = 'Reviewer') => renderToStaticMarkup(createElement(DeployPanel, { run: toStudioRun({ ...report, ...changes }), role }));
+
+test('khối Triển khai chỉ hiện cho run đã duyệt / deploy hoặc có deployment hiện tại', () => {
+  for (const status of Object.keys(STATUS_LABEL)) {
+    const visible = ['APPROVED', 'DEPLOYED', 'DEPLOY_FAILED'].includes(status);
+    const html = panel({ status, approval: null });
+    assert.equal(html.includes('deployment-panel'), visible, status);
+    if (!visible) assert.equal(html, '');
+    assert.match(panel({ status, approval: null, deployment }), /deployment-panel/);
+  }
+  assert.equal(panel({ status: 'GENERATING', approval: null, spec_history: [{ version: 1, deployment }] }), '');
+});
+
+test('PR đã có: ẩn nút Deploy, giữ liên kết an toàn và giải thích cho mọi vai trò', () => {
+  assert.match(panel(), /<button[^>]*>.*Deploy<\/button>/);
+  assert.match(panel({}, 'Engineer'), /<button[^>]*disabled=""/);
+  for (const role of ['Reviewer', 'Engineer', 'Admin']) {
+    for (const state of ['open', 'merged', 'closed'] as const) {
+      const html = panel({ deployment: { ...deployment, state } }, role);
+      assert.doesNotMatch(html, /<button/);
+      assert.match(html, /đã có pull request; xem liên kết và tiến độ/);
+      assert.ok(html.includes(`href="${deployment.pr_url}"`));
+      assert.match(html, /rel="noopener noreferrer"/);
+    }
+  }
+  const unsafe = panel({ deployment: { ...deployment, pr_url: 'javascript:alert(1)' } });
+  assert.doesNotMatch(unsafe, /<button|javascript:/);
+});
+
+test('CI neutral / skipped hiện biểu tượng tĩnh, CI chưa kết thúc vẫn quay', () => {
+  for (const conclusion of ['neutral', 'skipped']) {
+    const html = panel({ deployment: { ...deployment, ci_conclusion: conclusion } });
+    assert.match(html, /lucide-minus/);
+    assert.doesNotMatch(html, /spin|lucide-loader-circle/);
+    assert.ok(html.includes(`Kết luận: ${conclusion}`));
+  }
+  assert.match(panel({ deployment }), /lucide-loader-circle[^\"]*spin/);
+  assert.doesNotMatch(panel({ deployment: { ...deployment, state: 'closed' } }), /spin/);
 });
 
 test('triển khai: merge chưa phải production, callback ghi thời điểm và lỗi stage deploy', () => {
