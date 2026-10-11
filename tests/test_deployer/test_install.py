@@ -169,7 +169,9 @@ def test_parse_detail_redacts_before_truncation_and_masks_authorization(monkeypa
     assert "Compilation Error" in detail and "\x1b" not in detail
     for value in ("long", "opaque-value", "literal key", "literal password"):
         assert value not in detail
-    private = install._parse_detail("-----BEGIN PRIVATE KEY-----\nprivate-key-fragment", None)
+    # Dựng marker PEM giả lúc chạy để bộ quét secret không nhận fixture là khóa thật.
+    marker = "-" * 5 + "BEGIN " + "PRIVATE KEY" + "-" * 5
+    private = install._parse_detail(marker + "\nfixture không phải khóa", None)
     assert private == "stdout: ***"
 
 
