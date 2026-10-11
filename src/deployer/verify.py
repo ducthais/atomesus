@@ -1,10 +1,30 @@
 """Chạy thử đúng job của pipeline vừa cài trên Dagster production (SPEC §9.5 mức D2)."""
 
 import time
+from contextvars import ContextVar
+from math import isfinite
 from uuid import uuid4
 
 import httpx
 
+WORKSPACE = """
+query VerifyWorkspaceReady {
+  workspaceOrError {
+    __typename
+    ... on Workspace {
+      locationEntries {
+        name
+        loadStatus
+        updatedTimestamp
+        locationOrLoadError {
+          __typename
+          ... on RepositoryLocation { repositories { name pipelines { name } } }
+        }
+      }
+    }
+  }
+}
+"""
 RELOAD = """
 mutation VerifyWorkspace {
   reloadWorkspace {
@@ -52,10 +72,29 @@ mutation VerifyTerminate($runId: String!) {
 """
 REQUEST_TIMEOUT_SEC = 10
 POLL_SEC = 2
+# Truyền mốc cài qua callback hiện có, riêng từng ngữ cảnh; không đổi API install/verify.
+WORKSPACE_UPDATED_AFTER: ContextVar[float | None] = ContextVar("workspace_updated_after", default=None)
+LAUNCH_ERRORS = {
+    "RunConfigValidationInvalid",
+    "PipelineNotFoundError",
+    "InvalidStepError",
+    "InvalidOutputError",
+    "ConflictingExecutionParamsError",
+    "PresetNotFoundError",
+    "PythonError",
+    "UnauthorizedError",
+    "RunConflict",
+    "NoModeProvidedError",
+    "InvalidSubsetError",
+}
 
 
 class VerificationError(RuntimeError):
     """Chạy thử không xanh; thông báo ngắn, không chứa nội dung tùy ý từ Dagster."""
+
+
+class DagsterRejectedError(VerificationError):
+    """Lỗi nạp location hoặc từ chối launch dứt khoát; chờ thêm không giải quyết được."""
 
 
 class DagsterUnavailableError(VerificationError):
@@ -96,6 +135,7 @@ def _section(data: dict, field: str, kind: str) -> dict:
 def verify_pipeline(url: str, model: str, timeout: int, *, sleep=time.sleep, clock=time.monotonic) -> str:
     """Nạp code mới, launch một lần, chỉ trả run id khi SUCCESS. Mọi bước dùng chung hạn chờ."""
     deadline = clock() + timeout
+    updated_after = WORKSPACE_UPDATED_AFTER.get()
     run_id = None
     finished = False
     tag = {"key": "atomesus/verify", "value": uuid4().hex}
@@ -128,13 +168,25 @@ def verify_pipeline(url: str, model: str, timeout: int, *, sleep=time.sleep, clo
         job = f"{model}_job"
         while True:
             try:
-                workspace = _section(request(RELOAD, {}), "reloadWorkspace", "Workspace")
+                query, field = (
+                    (WORKSPACE, "workspaceOrError") if updated_after is not None else (RELOAD, "reloadWorkspace")
+                )
+                workspace = _section(request(query, {}), field, "Workspace")
                 entries = workspace.get("locationEntries")
                 if not isinstance(entries, list):
                     raise VerificationError("Dagster thiếu danh sách code location khi chạy thử.")
                 location = next(
                     (entry for entry in entries if isinstance(entry, dict) and entry.get("name") == model), {}
                 )
+                if updated_after is not None:
+                    stamp = location.get("updatedTimestamp")
+                    if type(stamp) not in (int, float) or not isfinite(stamp) or stamp < updated_after:
+                        raise VerificationError(f"Chờ Dagster nạp code location {model} sau khi workspace.yaml đổi.")
+                loaded = location.get("locationOrLoadError")
+                if isinstance(loaded, dict) and loaded.get("__typename") == "PythonError":
+                    raise DagsterRejectedError(f"Dagster nạp code location {model} lỗi (PythonError).")
+                if updated_after is not None and location.get("loadStatus") != "LOADED":
+                    raise VerificationError(f"Chờ Dagster nạp code location {model} (LOADED).")
                 loaded = _section(location, "locationOrLoadError", "RepositoryLocation")
                 repositories = loaded.get("repositories")
                 if not isinstance(repositories, list):
@@ -150,32 +202,38 @@ def verify_pipeline(url: str, model: str, timeout: int, *, sleep=time.sleep, clo
                 if len(matches) != 1:
                     raise VerificationError(f"Dagster không tìm thấy duy nhất job {job} trong code location {model}.")
                 break
+            except DagsterRejectedError:
+                raise
             except VerificationError as exc:
                 pause(exc)
         try:
-            launched = _section(
-                request(
-                    LAUNCH,
-                    {
-                        "executionParams": {
-                            "selector": {
-                                "repositoryLocationName": model,
-                                "repositoryName": matches[0],
-                                "pipelineName": job,
-                            },
-                            "runConfigData": {},
-                            "mode": "default",
-                            "executionMetadata": {"tags": [tag]},
-                        }
-                    },
-                ),
-                "launchPipelineExecution",
-                "LaunchRunSuccess",
+            data = request(
+                LAUNCH,
+                {
+                    "executionParams": {
+                        "selector": {
+                            "repositoryLocationName": model,
+                            "repositoryName": matches[0],
+                            "pipelineName": job,
+                        },
+                        "runConfigData": {},
+                        "mode": "default",
+                        "executionMetadata": {"tags": [tag]},
+                    }
+                },
             )
+            launched = data.get("launchPipelineExecution")
+            if isinstance(launched, dict) and launched.get("__typename") != "LaunchRunSuccess":
+                kind = launched.get("__typename")
+                reason = kind if isinstance(kind, str) and kind in LAUNCH_ERRORS else "phản hồi không hợp lệ"
+                raise DagsterRejectedError(f"Dagster từ chối kích hoạt chạy thử ({reason}).")
+            launched = _section(data, "launchPipelineExecution", "LaunchRunSuccess")
             run = launched.get("run")
             if not isinstance(run, dict) or not isinstance(run.get("runId"), str) or not run["runId"]:
                 raise VerificationError("Dagster không trả run id sau khi kích hoạt chạy thử.")
             run_id = run["runId"]
+        except DagsterRejectedError:
+            raise
         except VerificationError as launch_error:
             # Mất phản hồi có thể đã tạo run: tìm theo tag, không gửi lại mutation gây chạy trùng.
             while run_id is None:

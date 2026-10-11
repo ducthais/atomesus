@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote, quote_plus
@@ -17,7 +18,7 @@ from uuid import uuid4
 
 from src.codegen.sandbox import PASSTHROUGH_ENV, prepare_project
 from src.deployer.manifest import project_dir
-from src.deployer.verify import VerificationError
+from src.deployer.verify import WORKSPACE_UPDATED_AFTER, VerificationError
 
 DBT_PARSE_TIMEOUT_SEC = 120
 DBT_OUTPUT_TAIL = 140
@@ -149,6 +150,7 @@ def install_project(
     try:
         prepare_project(staging, files)
         _compile_manifest(staging)
+        installed_at = time.time()
         if target.exists():
             target.rename(backup)
             old_moved = True
@@ -156,7 +158,11 @@ def install_project(
         new_active = True
         write_workspace(deploy_dir)
         if verify is not None:
-            verify(target)
+            context = WORKSPACE_UPDATED_AFTER.set(installed_at)
+            try:
+                verify(target)
+            finally:
+                WORKSPACE_UPDATED_AFTER.reset(context)
     except Exception as exc:
         rollback_errors = []
         if new_active and target.exists():

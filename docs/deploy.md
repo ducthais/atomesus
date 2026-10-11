@@ -139,13 +139,18 @@ Chưa có SSO, nên chỉ đưa mật khẩu cho người cần dùng; ai đăng
 
 Pipeline chỉ lên Dagster production qua repo pipeline (SPEC §9.5): Reviewer bấm Deploy → backend mở pull request → CI
 kiểm manifest → người có quyền merge → service `deployer` trên VM kéo nhánh mặc định (mặc định mỗi 60 giây), kiểm
-manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, giữ bản trước tới khi xác nhận xong). Deployer nạp lại
-workspace qua GraphQL nội bộ, chờ tới khi workspace có code location và đúng job đã nạp, rồi kích hoạt đúng **một**
-lần chạy `<model>_job`. Nạp workspace, kích hoạt và chờ kết quả dùng chung hạn 120 giây (mức D2), không chờ cố định
-4 giây. Lỗi kết nối tạm thời được thử lại trong hạn đó ở cả RELOAD, LAUNCH và STATUS. Nếu LAUNCH có thể đã được
+manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, giữ bản trước tới khi xác nhận xong). Deployer ghi mốc thời
+gian ngay trước khi thay thư mục pipeline, rồi hỏi GraphQL `workspaceOrError`: chỉ khi location có `loadStatus=LOADED`,
+`updatedTimestamp` từ mốc cài trở đi và đúng job đã nạp mới kích hoạt đúng **một** lần chạy `<model>_job`. Trong lúc
+chờ watcher khởi động lại Dagster, chỉ đọc workspace; không gửi RELOAD/LAUNCH tới tiến trình cũ còn trả lời.
+Chờ workspace, kích hoạt và chờ kết quả dùng chung hạn 120 giây (mức D2), không chờ cố định 4 giây. Lỗi kết nối tạm
+thời được thử lại trong hạn đó ở cả chờ workspace, RELOAD (khi gọi verifier ngoài luồng cài), LAUNCH và STATUS.
+Location mới báo lỗi nạp `PythonError` hoặc launch bị từ chối (`RunConfigValidationInvalid`, `PipelineNotFoundError`,
+`PythonError`, …) thì thất bại ngay, detail chỉ ghi tên lỗi, không chứa thông báo thô của Dagster. Nếu LAUNCH có thể đã được
 Dagster nhận nhưng mất phản hồi, deployer tìm run theo tag riêng thay vì gửi lại mutation gây chạy trùng.
 Chỉ khi lần chạy đó `SUCCESS` mới báo `deployed` kèm run id Dagster trong `detail` và xóa bản sao lưu. `FAILURE`,
-`CANCELED` hoặc hết hạn chờ mới khôi phục đúng thư mục pipeline trước đó; lần cài đầu thì gỡ code location.
+`CANCELED`, lỗi nạp location/từ chối launch hoặc hết hạn chờ thì khôi phục đúng thư mục pipeline trước đó;
+lần cài đầu thì gỡ code location.
 Nếu xóa thư mục mới lỗi, deployer cách ly nó ở tên `.tmp-…`, vẫn khôi phục backup và ghi lại workspace trước khi
 báo lỗi kèm nguyên nhân chạy thử. Deployer ghi lại `workspace.yaml` để Dagster nạp bản khôi phục, rồi báo `failed` với lý
 do ngắn. Callback (`POST /api/v1/deployments/callback`, ký HMAC) chuyển run sang `DEPLOYED` / `DEPLOY_FAILED`.

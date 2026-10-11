@@ -38,8 +38,8 @@ export function deploymentSteps(run: DeployRun): DeployStep[] {
   const ciRunning = !!d && !d.ci_conclusion && d.state !== 'closed';
   const merged = d?.state === 'merged' || !!d?.merged_at;
   const deployed = !!d?.deployed_at || run.status === 'DEPLOYED';
-  // Mở PR lỗi vẫn giữ APPROVED; có PR rồi hoặc đã DEPLOYED thì không hiện lỗi mở PR cũ.
-  const failed = !deployed && (run.status === 'DEPLOY_FAILED' || (run.status === 'APPROVED' && !d && !!run.deployError));
+  // Mở PR lỗi vẫn giữ APPROVED, kể cả còn PR cũ đã đóng; đã DEPLOYED thì ẩn lỗi cũ.
+  const failed = !deployed && (run.status === 'DEPLOY_FAILED' || (run.status === 'APPROVED' && (!d || d.state === 'closed') && !!run.deployError));
   return [
     { id: 'approval', label: approved ? 'Đã duyệt' : 'Chờ duyệt', state: approved ? 'pass' : 'pending',
       detail: approved ? 'Chữ ký duyệt gắn với bộ file của version này.' : 'Cần Reviewer phê duyệt version này.', at: run.approval?.at },

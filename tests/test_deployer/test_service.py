@@ -750,7 +750,7 @@ def test_slow_dagster_restart_succeeds_without_rollback(config, remote, installs
     head = remote.commit("fct_x", signed(files_v(2), 2), "v2")
     dagster.calls.clear()
     dagster.executions.clear()
-    failures = {verify.RELOAD: 5, verify.LAUNCH: 2, verify.STATUS: 3}
+    failures = {verify.WORKSPACE: 5, verify.LAUNCH: 2, verify.STATUS: 3}
 
     def restarting(url, **kwargs):
         query = kwargs["json"]["query"]

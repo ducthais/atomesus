@@ -101,6 +101,27 @@ test('khối Triển khai hiện lỗi mở PR hiện tại khi APPROVED và ẩ
   assert.doesNotMatch(deployed, /Triển khai lỗi|Không mở được pull request/);
 });
 
+test('PR cũ đã đóng: lỗi mở PR lần sau vẫn hiện khi APPROVED, ẩn sau DEPLOYED', () => {
+  const closed = { ...deployment, state: 'closed' as const, closed_at: approval.at };
+  const error_trace = [
+    { stage: 'deploy', error: 'Lỗi deploy cũ.' },
+    { stage: 'deploy', error: 'Không mở được PR mới.' },
+  ];
+  const production = steps({ deployment: closed, error_trace })[4];
+  assert.equal(production.state, 'fail');
+  assert.equal(production.detail, 'Không mở được PR mới.');
+  const failed = panel({ deployment: closed, error_trace });
+  assert.match(failed, /PR đã đóng/);
+  assert.match(failed, /Triển khai lỗi/);
+  assert.match(failed, /Không mở được PR mới/);
+  assert.doesNotMatch(failed, /Lỗi deploy cũ/);
+  for (const changes of [{ status: 'DEPLOYED' }, { deployment: { ...closed, deployed_at: approval.at } }]) {
+    const deployed = panel({ deployment: closed, error_trace, ...changes });
+    assert.match(deployed, /Đã lên production/);
+    assert.doesNotMatch(deployed, /Triển khai lỗi|Không mở được PR mới|Lỗi deploy cũ/);
+  }
+});
+
 test('khối Triển khai chỉ hiện cho run đã duyệt / deploy hoặc có deployment hiện tại', () => {
   for (const status of Object.keys(STATUS_LABEL)) {
     const visible = ['APPROVED', 'DEPLOYED', 'DEPLOY_FAILED'].includes(status);
