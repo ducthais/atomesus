@@ -139,11 +139,20 @@ Chưa có SSO, nên chỉ đưa mật khẩu cho người cần dùng; ai đăng
 
 Pipeline chỉ lên Dagster production qua repo pipeline (SPEC §9.5): Reviewer bấm Deploy → backend mở pull request → CI
 kiểm manifest → người có quyền merge → service `deployer` trên VM kéo nhánh mặc định (mặc định mỗi 60 giây), kiểm
-manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, giữ bản trước tới khi xác nhận xong). Deployer nạp lại
-workspace qua GraphQL nội bộ rồi kích hoạt đúng **một** lần chạy `<model>_job` của code location vừa cài, chờ tối đa
-120 giây (mức D2). Chỉ khi lần chạy đó `SUCCESS` mới báo `deployed` kèm run id Dagster trong `detail` và xóa bản sao
-lưu. `FAILURE`, `CANCELED`, quá hạn, mất kết nối hoặc lỗi GraphQL thì khôi phục đúng thư mục pipeline trước đó; lần
-cài đầu thì gỡ code location. Deployer ghi lại `workspace.yaml` để Dagster nạp bản khôi phục, rồi báo `failed` với lý
+manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, giữ bản trước tới khi xác nhận xong). Deployer ghi mốc thời
+gian ngay trước khi thay thư mục pipeline, rồi hỏi GraphQL `workspaceOrError`: chỉ khi location có `loadStatus=LOADED`,
+`updatedTimestamp` từ mốc cài trở đi và đúng job đã nạp mới kích hoạt đúng **một** lần chạy `<model>_job`. Trong lúc
+chờ watcher khởi động lại Dagster, chỉ đọc workspace; không gửi RELOAD/LAUNCH tới tiến trình cũ còn trả lời.
+Chờ workspace, kích hoạt và chờ kết quả dùng chung hạn 120 giây (mức D2), không chờ cố định 4 giây. Lỗi kết nối tạm
+thời được thử lại trong hạn đó ở cả chờ workspace, RELOAD (khi gọi verifier ngoài luồng cài), LAUNCH và STATUS.
+Location mới báo lỗi nạp `PythonError` hoặc launch bị từ chối (`RunConfigValidationInvalid`, `PipelineNotFoundError`,
+`PythonError`, …) thì thất bại ngay, detail chỉ ghi tên lỗi, không chứa thông báo thô của Dagster. Nếu LAUNCH có thể đã được
+Dagster nhận nhưng mất phản hồi, deployer tìm run theo tag riêng thay vì gửi lại mutation gây chạy trùng.
+Chỉ khi lần chạy đó `SUCCESS` mới báo `deployed` kèm run id Dagster trong `detail` và xóa bản sao lưu. `FAILURE`,
+`CANCELED`, lỗi nạp location/từ chối launch hoặc hết hạn chờ thì khôi phục đúng thư mục pipeline trước đó;
+lần cài đầu thì gỡ code location.
+Nếu xóa thư mục mới lỗi, deployer cách ly nó ở tên `.tmp-…`, vẫn khôi phục backup và ghi lại workspace trước khi
+báo lỗi kèm nguyên nhân chạy thử. Deployer ghi lại `workspace.yaml` để Dagster nạp bản khôi phục, rồi báo `failed` với lý
 do ngắn. Callback (`POST /api/v1/deployments/callback`, ký HMAC) chuyển run sang `DEPLOYED` / `DEPLOY_FAILED`.
 
 CI đỏ đến sau khi PR đã merge chỉ ghi kết quả CI, không đưa run về P4: code đã ở nhánh mặc định, trạng thái production
@@ -200,6 +209,9 @@ Compose đặt `DEPLOYER_SSH_KEY=/run/secrets/deployer/deploy_key`, `DEPLOYER_ST
 Compose có thể cấu hình các biến này; khóa SSH luôn đọc từ file, không truyền nội dung khóa trong dòng lệnh.
 
 Deployer không ghi URL repo, khóa hay secret ra log.
+Khi `dbt parse` lỗi hoặc quá 120 giây, log deployer và `detail` callback có đuôi của cả stdout/stderr, tối đa
+140 ký tự mỗi luồng sau khi che giá trị secret/URL trong môi trường, URL trong output và trường mật khẩu/token/khóa.
+Toàn bộ detail callback giới hạn 500 ký tự. Dùng phần lỗi biên dịch/macro này để xác định file dbt cần sửa.
 
 **3. Chạy và kiểm tra:**
 
@@ -231,7 +243,7 @@ mới đụng pipeline đó (nội dung mới đã duyệt) mới được thử
 
 | Log / trạng thái trong `models` | Nghĩa và cách xử lý |
 |---|---|
-| `Chạy thử <model> lỗi: … Đã quay về bản trước` → `failed` | Job `FAILURE` / `CANCELED` / quá hạn hoặc Dagster không trả lời / lỗi GraphQL. Bản cũ đã khôi phục, lần cài đầu đã gỡ location; run chuyển `DEPLOY_FAILED`. Kiểm tra lần chạy trên Dagster UI và lỗi trong RunReport, sửa pipeline rồi duyệt/merge nội dung mới. |
+| `Chạy thử <model> lỗi: … Đã quay về bản trước` → `failed` | Job `FAILURE` / `CANCELED` hoặc hết hạn chờ (kể cả Dagster vẫn không trả lời / lỗi GraphQL). Bản cũ đã khôi phục, lần cài đầu đã gỡ location; run chuyển `DEPLOY_FAILED`. Nếu kèm lỗi cách ly/khôi phục/ghi workspace, kiểm tra filesystem và backup trước khi cài lại. Kiểm tra lần chạy trên Dagster UI và lỗi trong RunReport, sửa pipeline rồi duyệt/merge nội dung mới. |
 | `Không cài <model> … sha256 không khớp` / `run_report.json không khớp` / `Chỉ cài file thường` → `failed` | Nội dung trên nhánh mặc định khác chữ ký duyệt (bị sửa tay sau khi duyệt). Run chuyển `DEPLOY_FAILED`. Không sửa tay repo pipeline: Deploy lại từ app để mở pull request mới; version mới merge thì deployer tự cài. |
 | `… không báo được backend` → `unreported` | `manifest.json` hỏng tới mức thiếu run_id/version/files_hash; không báo được run nào. Xử lý như dòng trên. |
 | `Cài <model> lỗi, giữ bản đang chạy: dbt parse …` / `Sẽ cài lại … ở chu kỳ sau` → `retry` | Lỗi môi trường khi biên dịch (đĩa, dbt). Deployer tự cài lại ở 2 chu kỳ sau; vẫn lỗi thì báo `failed` (trạng thái `failed`). Sửa môi trường xong thì cài lại: `stop deployer`, `run --rm deployer python scripts/deployer.py --once --reinstall`, `start deployer`. |

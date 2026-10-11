@@ -10,6 +10,7 @@ import pytest
 
 from src.deployer import install
 from src.deployer.manifest import ManifestError
+from src.deployer.verify import VerificationError
 from src.monitor import detectors, runs
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import load_policy
@@ -84,6 +85,94 @@ def test_model_name_cannot_escape_deploy_dir(tmp_path):
         install.install_project("../evil", {"a.sql": "select 1\n"}, str(tmp_path / "deploy"))
 
     assert not (tmp_path / "evil").exists()
+
+
+@pytest.mark.parametrize("first_install", [False, True])
+def test_rollback_restores_workspace_even_when_new_directory_cannot_be_deleted(tmp_path, monkeypatch, first_install):
+    monkeypatch.setattr(install, "prepare_project", fake_project)
+    monkeypatch.setattr(install, "_compile_manifest", lambda _root: None)
+    asset = "infra/dagster/generated/fct_x_asset.py"
+    if not first_install:
+        install.install_project("fct_x", {asset: "# old\n"}, str(tmp_path))
+    before = install.write_workspace(str(tmp_path)).read_bytes()
+    original = VerificationError("Chạy thử Dagster kết thúc FAILURE (run failed-run).")
+    remove = install.shutil.rmtree
+
+    def broken_remove(target, **kwargs):
+        if target == tmp_path / "fct_x" or ".tmp-" in target.name:
+            if kwargs.get("ignore_errors"):
+                return
+            raise PermissionError("secret-path")
+        return remove(target, **kwargs)
+
+    def fail(_target):
+        raise original
+
+    monkeypatch.setattr(install.shutil, "rmtree", broken_remove)
+
+    with pytest.raises(VerificationError, match="FAILURE.*Không xóa được thư mục mới") as error:
+        install.install_project("fct_x", {asset: "# new\n"}, str(tmp_path), verify=fail)
+
+    assert error.value.__cause__ is original and "secret-path" not in str(error.value)
+    assert (tmp_path / "workspace.yaml").read_bytes() == before
+    if first_install:
+        assert not (tmp_path / "fct_x").exists()
+    else:
+        assert (tmp_path / "fct_x" / asset).read_text(encoding="utf-8") == "# old\n"
+    [quarantined] = list(tmp_path.glob("fct_x.tmp-*"))
+    assert (quarantined / asset).read_text(encoding="utf-8") == "# new\n"
+    assert not list(tmp_path.glob("*.old-*"))
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_dbt_parse_errors_include_sanitized_tails_of_both_streams(tmp_path, monkeypatch, timed_out):
+    monkeypatch.setenv("PIPELINE_DEPLOYER_SECRET", "known-secret")
+    stdout = "X" * 3000 + "\nCompilation Error: env=known-secret password='literal password'"
+    stderr = "Y" * 3000 + "\nMissing macro; https://user:pass@example.com/?token=literal token=another-secret"
+
+    def parse(command, **kwargs):
+        if timed_out:
+            raise subprocess.TimeoutExpired(command, 120, stdout.encode(), stderr.encode())
+        return subprocess.CompletedProcess(command, 2, stdout, stderr)
+
+    monkeypatch.setattr(install.subprocess, "run", parse)
+
+    with pytest.raises(subprocess.TimeoutExpired if timed_out else OSError, match="dbt parse") as error:
+        install._compile_manifest(tmp_path)
+
+    detail = str(error.value)
+    assert "stdout:" in detail and "stderr:" in detail
+    assert "Compilation Error" in detail and "Missing macro" in detail
+    assert len(detail) < 400
+    for secret in (
+        "known-secret",
+        "literal password",
+        "user:pass",
+        "another-secret",
+        "example.com",
+        "X" * 200,
+        "Y" * 200,
+    ):
+        assert secret not in detail
+
+
+def test_parse_detail_redacts_before_truncation_and_masks_authorization(monkeypatch):
+    from urllib.parse import quote
+
+    secret = "long secret/" * 30
+    monkeypatch.setenv("PIPELINE_GITHUB_TOKEN", secret)
+    detail = install._parse_detail(
+        "\x1b[31mCompilation Error\x1b[0m " + quote(secret, safe=""),
+        'Authorization: Bearer opaque-value; api_key="literal key" password: "literal password"',
+    )
+
+    assert "Compilation Error" in detail and "\x1b" not in detail
+    for value in ("long", "opaque-value", "literal key", "literal password"):
+        assert value not in detail
+    # Dựng marker PEM giả lúc chạy để bộ quét secret không nhận fixture là khóa thật.
+    marker = "-" * 5 + "BEGIN " + "PRIVATE KEY" + "-" * 5
+    private = install._parse_detail(marker + "\nfixture không phải khóa", None)
+    assert private == "stdout: ***"
 
 
 def test_install_runs_real_dbt_parse_without_dotenv(tmp_path, monkeypatch):

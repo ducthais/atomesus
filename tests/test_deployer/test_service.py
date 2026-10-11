@@ -742,6 +742,63 @@ def test_keeps_backup_and_defers_deployed_callback_until_success(config, remote,
     assert backend.payloads()[0]["status"] == "deployed"
 
 
+def test_slow_dagster_restart_succeeds_without_rollback(config, remote, installs, dagster, monkeypatch):
+    import httpx
+
+    remote.commit("fct_x", signed(files_v(1), 1))
+    run(config, Backend())
+    head = remote.commit("fct_x", signed(files_v(2), 2), "v2")
+    dagster.calls.clear()
+    dagster.executions.clear()
+    failures = {verify.WORKSPACE: 5, verify.LAUNCH: 2, verify.STATUS: 3}
+
+    def restarting(url, **kwargs):
+        query = kwargs["json"]["query"]
+        if failures.get(query, 0):
+            failures[query] -= 1
+            raise httpx.ConnectError("Dagster đang restart")
+        return dagster(url, **kwargs)
+
+    monkeypatch.setattr(verify.httpx, "post", restarting)
+    backend = Backend()
+
+    summary = run(config, backend)
+
+    assert summary["applied"] == head and summary["unresolved"] == {}
+    assert backend.payloads()[0]["status"] == "deployed"
+    assert "SUCCESS" in backend.payloads()[0]["detail"] and len(dagster.launches) == 1
+    assert (Path(config.deploy_dir) / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(
+        encoding="utf-8"
+    ) == "select 2 as n\n"
+    assert live_entries(config) == ["fct_x", "workspace.yaml"]
+    assert not any(body["query"] == verify.TERMINATE for _, body, _ in dagster.calls)
+
+
+def test_dbt_parse_diagnostics_reach_deployer_log_and_callback(config, monkeypatch, caplog):
+    monkeypatch.setenv("PIPELINE_DEPLOYER_SECRET", SECRET)
+    monkeypatch.setattr(service, "read_pipeline", lambda *args: (signed(files_v(1), 1), []))
+    monkeypatch.setattr(
+        install.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command,
+            2,
+            "x" * 3000 + f"\nCompilation Error: {SECRET}",
+            "y" * 3000 + "\nUnknown macro; password=private-password",
+        ),
+    )
+
+    status, payload = service.apply_pipeline(config, "a" * 40, "fct_x")
+
+    assert status == "install_failed" and payload["status"] == "failed"
+    assert len(payload["detail"]) <= service.DETAIL_MAX
+    for output in (caplog.text, payload["detail"]):
+        assert "stdout:" in output and "stderr:" in output
+        assert "Compilation Error" in output and "Unknown macro" in output
+        assert SECRET not in output and "private-password" not in output
+        assert "x" * 200 not in output and "y" * 200 not in output
+
+
 def test_failed_verification_callback_retries_without_reinstall_or_launch(config, remote, installs, dagster):
     remote.commit("fct_x", signed(files_v(1), 1))
     dagster.statuses = ["FAILURE"]

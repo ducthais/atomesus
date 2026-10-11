@@ -50,15 +50,16 @@ test('triển khai: PR mở, CI chạy / xanh / đỏ và PR đóng', () => {
   assert.match(closed[3].detail, /không merge/);
 });
 
-test('triển khai: lỗi deploy cũ không làm lỗi lần đang chờ hoặc đã lên production', () => {
+test('triển khai: lỗi mở PR hiện khi APPROVED chưa có PR, lỗi cũ ẩn khi đã có PR hoặc lên production', () => {
   const error_trace = [{ stage: 'deploy', error: 'Lỗi deploy của lần trước.' }];
   for (const status of ['APPROVED', 'DEPLOYED']) {
     for (const d of [undefined, deployment, { ...deployment, deployed_at: approval.at }]) {
       const run = toStudioRun({ ...report, status, deployment: d, error_trace });
       assert.equal(run.deployError, error_trace[0].error);
       const production = deploymentSteps(run)[4];
-      assert.equal(production.state, status === 'DEPLOYED' || d?.deployed_at ? 'pass' : 'pending');
-      assert.doesNotMatch(production.detail, /Lỗi deploy của lần trước/);
+      assert.equal(production.state, status === 'DEPLOYED' || d?.deployed_at ? 'pass' : d ? 'pending' : 'fail');
+      if (status === 'APPROVED' && !d) assert.equal(production.detail, error_trace[0].error);
+      else assert.doesNotMatch(production.detail, /Lỗi deploy của lần trước/);
     }
   }
   const current = steps({ status: 'DEPLOY_FAILED', deployment, error_trace: [
@@ -87,6 +88,39 @@ const { DeployPanel } = component('../app/_components/deploy-panel.tsx', {
   './ui': { Panel: ({ children }: { children: ReactNode }) => createElement('section', null, children), fmtDate: (at: string) => at },
 }) as { DeployPanel: (props: { run: Run; role: string }) => ReactNode };
 const panel = (changes: Partial<RunReport> = {}, role = 'Reviewer') => renderToStaticMarkup(createElement(DeployPanel, { run: toStudioRun({ ...report, ...changes }), role }));
+
+test('khối Triển khai hiện lỗi mở PR hiện tại khi APPROVED và ẩn sau DEPLOYED', () => {
+  const error_trace = [{ stage: 'deploy', error: 'Không mở được pull request; thử Deploy lại.' }];
+  const failed = panel({ error_trace });
+  assert.match(failed, /Triển khai lỗi/);
+  assert.match(failed, /Không mở được pull request; thử Deploy lại/);
+  assert.match(failed, /lucide-circle-alert/);
+  assert.match(failed, /<button[^>]*>.*Deploy<\/button>/);
+  const deployed = panel({ status: 'DEPLOYED', error_trace });
+  assert.match(deployed, /Đã lên production/);
+  assert.doesNotMatch(deployed, /Triển khai lỗi|Không mở được pull request/);
+});
+
+test('PR cũ đã đóng: lỗi mở PR lần sau vẫn hiện khi APPROVED, ẩn sau DEPLOYED', () => {
+  const closed = { ...deployment, state: 'closed' as const, closed_at: approval.at };
+  const error_trace = [
+    { stage: 'deploy', error: 'Lỗi deploy cũ.' },
+    { stage: 'deploy', error: 'Không mở được PR mới.' },
+  ];
+  const production = steps({ deployment: closed, error_trace })[4];
+  assert.equal(production.state, 'fail');
+  assert.equal(production.detail, 'Không mở được PR mới.');
+  const failed = panel({ deployment: closed, error_trace });
+  assert.match(failed, /PR đã đóng/);
+  assert.match(failed, /Triển khai lỗi/);
+  assert.match(failed, /Không mở được PR mới/);
+  assert.doesNotMatch(failed, /Lỗi deploy cũ/);
+  for (const changes of [{ status: 'DEPLOYED' }, { deployment: { ...closed, deployed_at: approval.at } }]) {
+    const deployed = panel({ deployment: closed, error_trace, ...changes });
+    assert.match(deployed, /Đã lên production/);
+    assert.doesNotMatch(deployed, /Triển khai lỗi|Không mở được PR mới|Lỗi deploy cũ/);
+  }
+});
 
 test('khối Triển khai chỉ hiện cho run đã duyệt / deploy hoặc có deployment hiện tại', () => {
   for (const status of Object.keys(STATUS_LABEL)) {
