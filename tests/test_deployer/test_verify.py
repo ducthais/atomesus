@@ -21,13 +21,19 @@ class Dagster:
     def __init__(self, *statuses):
         self.statuses = list(statuses or ["SUCCESS"])
         self.calls = []
+        self.executions = []
         self.error_query = None
         self.error = None
         self.on_status = lambda: None
 
     @property
     def launches(self):
-        return [body["variables"]["executionParams"] for _, body, _ in self.calls if body["query"] == verify.LAUNCH]
+        return [
+            body["variables"]["executionParams"]
+            for _, body, _ in self.calls
+            if body["query"] == verify.LAUNCH
+            and any(body["variables"]["executionParams"] is execution for execution in self.executions)
+        ]
 
     def __call__(self, url, *, json, timeout):
         self.calls.append((url, json, timeout))
@@ -53,7 +59,17 @@ class Dagster:
                 }
             }
         elif query == verify.LAUNCH:
+            self.executions.append(json["variables"]["executionParams"])
             body = {"launchPipelineExecution": {"__typename": "LaunchRunSuccess", "run": {"runId": "dagster-run-1"}}}
+        elif query == verify.FIND_RUN:
+            tags = json["variables"]["filter"]["tags"]
+            found = any(execution["executionMetadata"]["tags"] == tags for execution in self.executions)
+            body = {
+                "runsOrError": {
+                    "__typename": "Runs",
+                    "results": [{"runId": "dagster-run-1"}] if found else [],
+                }
+            }
         elif query == verify.STATUS:
             self.on_status()
             status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
@@ -85,8 +101,11 @@ def test_success_launches_only_the_installed_job_once_and_waits(monkeypatch):
             },
             "runConfigData": {},
             "mode": "default",
+            "executionMetadata": dagster.launches[0]["executionMetadata"],
         }
     ]
+    [tag] = dagster.launches[0]["executionMetadata"]["tags"]
+    assert tag["key"] == "atomesus/verify" and len(tag["value"]) == 32
     assert [body["query"] for _, body, _ in dagster.calls] == [verify.RELOAD, verify.LAUNCH, *[verify.STATUS] * 3]
     assert all(url == "http://dagster:3070/graphql" and 0 < timeout <= 10 for url, _, timeout in dagster.calls)
     assert all(body["variables"] == {"runId": "dagster-run-1"} for _, body, _ in dagster.calls[2:])
@@ -111,7 +130,7 @@ def test_timeout_uses_total_deadline_and_requests_cancellation(monkeypatch):
 
     assert clock.now == 9 and len(dagster.launches) == 1
     assert dagster.calls[-1][1] == {"query": verify.TERMINATE, "variables": {"runId": "dagster-run-1"}}
-    assert [timeout for _, body, timeout in dagster.calls if body["query"] == verify.STATUS] == [5, 3, 1]
+    assert [timeout for _, body, timeout in dagster.calls if body["query"] == verify.STATUS] == [9, 7, 5, 3, 1]
 
 
 def test_preparation_waits_for_workspace_restart_without_repeating_launch(monkeypatch):
@@ -120,8 +139,7 @@ def test_preparation_waits_for_workspace_restart_without_repeating_launch(monkey
 
     def post(url, **kwargs):
         calls.append(kwargs["json"]["query"])
-        assert clock.now >= verify.WORKSPACE_SETTLE_SEC
-        if len(calls) == 1:
+        if len(calls) <= 4:
             raise httpx.ConnectError("Dagster đang restart")
         return dagster(url, **kwargs)
 
@@ -130,7 +148,77 @@ def test_preparation_waits_for_workspace_restart_without_repeating_launch(monkey
     assert (
         verify.verify_pipeline("http://dagster:3070", "fct_x", 120, sleep=clock.sleep, clock=clock) == "dagster-run-1"
     )
-    assert calls == [verify.RELOAD, verify.RELOAD, verify.LAUNCH, verify.STATUS] and len(dagster.launches) == 1
+    assert calls == [*[verify.RELOAD] * 5, verify.LAUNCH, verify.STATUS] and len(dagster.launches) == 1
+    assert clock.now == 8
+
+
+@pytest.mark.parametrize("query", [verify.RELOAD, verify.LAUNCH, verify.STATUS])
+def test_transient_connection_errors_retry_within_the_same_deadline(monkeypatch, query):
+    dagster, clock = Dagster("STARTED", "SUCCESS"), Clock()
+    failures = 0
+
+    def post(url, **kwargs):
+        nonlocal failures
+        if kwargs["json"]["query"] == query and failures < 3:
+            failures += 1
+            raise httpx.ConnectError("secret-url")
+        return dagster(url, **kwargs)
+
+    monkeypatch.setattr(verify.httpx, "post", post)
+
+    assert verify.verify_pipeline("http://dagster:3070", "fct_x", 12, sleep=clock.sleep, clock=clock) == "dagster-run-1"
+    assert clock.now == 8 and failures == 3 and len(dagster.launches) == 1
+    assert not any(body["query"] == verify.TERMINATE for _, body, _ in dagster.calls)
+
+
+def test_workspace_location_must_be_loaded_before_launch(monkeypatch):
+    dagster, clock = Dagster(), Clock()
+    reloads = 0
+
+    def post(url, **kwargs):
+        nonlocal reloads
+        response = dagster(url, **kwargs)
+        if kwargs["json"]["query"] == verify.RELOAD:
+            reloads += 1
+            body = response.json()
+            if reloads == 1:
+                body["data"]["reloadWorkspace"]["locationEntries"] = []
+            elif reloads == 2:
+                body["data"]["reloadWorkspace"]["locationEntries"][0]["locationOrLoadError"] = {
+                    "__typename": "PythonError",
+                    "message": "secret-url",
+                }
+            response = httpx.Response(200, json=body, request=response.request)
+        if kwargs["json"]["query"] == verify.LAUNCH:
+            assert reloads == 3
+        return response
+
+    monkeypatch.setattr(verify.httpx, "post", post)
+
+    assert verify.verify_pipeline("http://dagster:3070", "fct_x", 12, sleep=clock.sleep, clock=clock) == "dagster-run-1"
+    assert clock.now == 4 and len(dagster.launches) == 1
+
+
+def test_lost_launch_response_recovers_run_by_tag_without_relaunch(monkeypatch):
+    dagster, clock = Dagster(), Clock()
+    searches = 0
+
+    def post(url, **kwargs):
+        nonlocal searches
+        response = dagster(url, **kwargs)
+        if kwargs["json"]["query"] == verify.LAUNCH:
+            raise httpx.ReadTimeout("secret-url")
+        if kwargs["json"]["query"] == verify.FIND_RUN:
+            searches += 1
+            assert kwargs["json"]["variables"]["filter"]["tags"] == dagster.launches[0]["executionMetadata"]["tags"]
+            if searches < 3:
+                raise httpx.ConnectError("restart")
+        return response
+
+    monkeypatch.setattr(verify.httpx, "post", post)
+
+    assert verify.verify_pipeline("http://dagster:3070", "fct_x", 12, sleep=clock.sleep, clock=clock) == "dagster-run-1"
+    assert len(dagster.launches) == 1 and searches == 3 and clock.now == 4
 
 
 @pytest.mark.parametrize("query", [verify.RELOAD, verify.LAUNCH, verify.STATUS])
@@ -145,13 +233,15 @@ def test_preparation_waits_for_workspace_restart_without_repeating_launch(monkey
     ],
 )
 def test_connection_or_graphql_errors_are_bounded_and_sanitized(monkeypatch, query, error):
-    dagster = Dagster()
+    dagster, clock = Dagster(), Clock()
     dagster.error_query, dagster.error = query, error
+    monkeypatch.setattr(verify.httpx, "post", dagster)
 
     with pytest.raises(verify.VerificationError, match="Dagster") as exc:
-        run(monkeypatch, dagster)
+        verify.verify_pipeline("http://dagster:3070", "fct_x", 9, sleep=clock.sleep, clock=clock)
 
     assert "secret-url" not in str(exc.value)
+    assert clock.now == 9 and "quá 9 giây" in str(exc.value)
     assert len(dagster.launches) <= 1
 
 
@@ -194,5 +284,5 @@ def test_queries_validate_against_installed_dagster_schema():
     from graphql import parse, validate
 
     schema = create_schema().graphql_schema
-    for query in (verify.RELOAD, verify.LAUNCH, verify.STATUS, verify.TERMINATE):
+    for query in (verify.RELOAD, verify.LAUNCH, verify.STATUS, verify.FIND_RUN, verify.TERMINATE):
         assert validate(schema, parse(query)) == []

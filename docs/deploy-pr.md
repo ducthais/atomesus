@@ -19,8 +19,8 @@ lần nữa rồi cài vào Dagster production. CI không cần PAT, khóa SSH h
    Script sinh `README.md` (hướng dẫn này), `.github/workflows/ci.yml`, `ci/check_pr.py`, `ci/parse_project.py`,
    `ci/manifest.py`, `_scaffold/dbt_project/`, `CODEOWNERS`, `requirements-ci.txt`. Manifest là bản sao **nguyên byte**
    của `src/deployer/manifest.py`; scaffold lấy từ `dbt_project/` của app, bỏ `target/`, `logs/`, file DuckDB.
-   Requirements giữ đúng ràng buộc dbt của app: hiện là `dbt-core>=1.9,<1.11`, `dbt-duckdb>=1.9,<2`, chưa phải khóa
-   `==` một bản cụ thể. Khi app ghim phiên bản cụ thể, xuất lại sẽ dùng chính các phiên bản đó.
+   Requirements giữ đúng phiên bản dbt đã ghim của app: `dbt-core==1.10.23`, `dbt-duckdb==1.11.0`.
+   Khi nâng phiên bản ở app, xuất lại bộ khung để repo pipeline dùng cùng phiên bản.
 4. Sửa `CODEOWNERS`: bỏ dấu `#` ở các dòng mẫu và thay `@nguoi-duyet` bằng người/team có quyền write chịu trách nhiệm.
    Phải có owner cho `/.github/`, `/ci/` và `/CODEOWNERS` để thay đổi workflow, bộ kiểm và chính danh sách owner
    đều cần người phụ trách review. Giữ dòng `*` để mọi file khác cũng có owner; kiểm GitHub không báo lỗi cú pháp
