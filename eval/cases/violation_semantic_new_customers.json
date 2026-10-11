@@ -1,0 +1,9 @@
+{
+  "id": "violation_semantic_new_customers",
+  "group": "violation",
+  "gate": "semantic",
+  "request": "Số khách hàng mới theo ngày",
+  "sources": null,
+  "expected": { "status": "BLOCKED_SEMANTIC_CONFLICT" },
+  "note": "\"khách hàng\" là thực thể không chuẩn ở cả sales (tài khoản đã ký hợp đồng), marketing (người để lại email) và rental: agent phải chặn, không tự chọn một nghĩa"
+}

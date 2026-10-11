@@ -1,0 +1,10 @@
+{
+  "id": "violation_budget_daily_spend",
+  "group": "violation",
+  "gate": "budget",
+  "request": "Số đơn hàng theo trạng thái",
+  "sources": [{ "source_ref": "sales_pg", "tables": ["orders"] }],
+  "spent_today_usd": 2.0,
+  "expected": { "status": "BLOCKED_BUDGET" },
+  "note": "chi phí trong ngày đã bằng per_day.max_usd (2.00 USD): agent phải dừng trước khi gọi LLM"
+}

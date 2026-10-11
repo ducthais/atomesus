@@ -1,6 +1,6 @@
 # Trần chi phí và số lần thử (SPEC §8.4). Mọi trần trong code đọc từ đây, không hardcode (NFR-04).
 pricing:
-  usd_per_tb: 6.25          # đơn giá BigQuery on-demand; DuckDB quy đổi ước tính theo số này
+  usd_per_tb: 5.0           # đơn giá Azure Synapse serverless SQL (USD / TB dữ liệu xử lý); DuckDB quy đổi theo số này
   llm:                      # USD cho 1 triệu token theo bảng giá OpenAI; model không có ở đây thì không tính được tiền
     gpt-4o-mini: { input_usd_per_mtok: 0.15, output_usd_per_mtok: 0.60 }
     gpt-4o:      { input_usd_per_mtok: 2.50, output_usd_per_mtok: 10.00 }

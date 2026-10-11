@@ -154,6 +154,10 @@ def test_dlt_name_matches_dlt_normalizer():
         ("transform/filters", ["read_csv('/etc/passwd') is not null"]),
         ("transform/filters", ["status <> 'x' -- bỏ phần sau"]),
         ("sources/0/staging/reject_if", ["getenv('HOME') is null"]),
+        # Bỏ qua tham số kiểu của CAST chỉ khi là chữ số đứng sau AS; mọi biến thể khác vẫn bị kiểm như hàm
+        ("transform/filters", ["cast(amount as decimal(read_csv('x'))) > 0"]),
+        ("transform/filters", ["decimal(18, 2) > 0"]),
+        ("transform/filters", ["cast(amount as decimal(18,2)) > getenv('X')"]),
     ],
 )
 def test_guard_blocks_unsafe_expressions(field, value):
@@ -167,6 +171,11 @@ def test_guard_allows_normal_expressions():
         SINGLE, **{"transform/filters": ["extract(year from order_date) = 2026", "status in ('paid', 'select')"]}
     )
     assert expression_violations(spec) == []
+    # Ép kiểu có tham số (eval 2026-10-10: `SUM(CAST(orders.amount_text AS decimal(18,2)))` bị chặn nhầm)
+    casts = load(
+        SINGLE, **{"transform/filters": ["CAST(amount_text AS decimal(18,2)) > 0", "cast(status as varchar(20)) <> ''"]}
+    )
+    assert expression_violations(casts) == []
 
 
 def test_post_run_fails_when_gold_is_empty_but_staging_is_not():

@@ -1,0 +1,370 @@
+{
+  "at": "2026-10-10 09:37 UTC",
+  "summary": {
+    "valid": {
+      "matched": "6/6",
+      "first_try": "6/6",
+      "by_kind": {
+        "filesystem": "1/1",
+        "postgres": "1/1",
+        "rest_api": "1/1",
+        "đa nguồn": "3/3"
+      },
+      "llm_usd": 0.01004
+    },
+    "blocked": "6/6",
+    "blocked_by_gate": {
+      "ast_guard": "2/2",
+      "budget": "2/2",
+      "semantic": "2/2"
+    },
+    "asked": "3/3",
+    "avg_spec_repairs": 0.0,
+    "total": "15/15",
+    "llm_usd": 0.015511,
+    "seconds": 236.1
+  },
+  "results": [
+    {
+      "id": "valid_filesystem_refunds_by_order",
+      "group": "valid",
+      "gate": null,
+      "source_kinds": [
+        "filesystem"
+      ],
+      "run_id": "69a76838-94bd-42c9-b841-ecddafc6c0f4",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "order_id",
+          "gold": "order_id"
+        },
+        "measures": {
+          "refunded": "total_refund_amount",
+          "refund_count": "refund_count"
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00110445,
+      "seconds": 24.8,
+      "expected": "khớp golden"
+    },
+    {
+      "id": "valid_postgres_daily_revenue",
+      "group": "valid",
+      "gate": null,
+      "source_kinds": [
+        "postgres"
+      ],
+      "run_id": "5dccd548-978c-48f2-a1c1-d1656d8713c2",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "day",
+          "gold": "order_date"
+        },
+        "measures": {
+          "revenue": "total_revenue"
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00103965,
+      "seconds": 23.3,
+      "expected": "khớp golden"
+    },
+    {
+      "id": "valid_postgres_filesystem_by_customer",
+      "group": "valid",
+      "gate": null,
+      "source_kinds": [
+        "postgres",
+        "filesystem"
+      ],
+      "run_id": "36dce22e-447d-44b9-a1cf-09ccb70969db",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "customer_id",
+          "gold": "customer_id"
+        },
+        "measures": {
+          "order_total": "total_order_amount",
+          "refunded": "total_refund_amount"
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.0016015499999999998,
+      "seconds": 33.1,
+      "expected": "khớp golden"
+    },
+    {
+      "id": "valid_postgres_rest_api_by_customer",
+      "group": "valid",
+      "gate": null,
+      "source_kinds": [
+        "postgres",
+        "rest_api"
+      ],
+      "run_id": "8f8fe2a4-eba8-4368-894d-4466dc457c35",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "customer_id",
+          "gold": "customer_id"
+        },
+        "measures": {
+          "order_count": "order_count",
+          "order_total": "total_order_amount",
+          "paid": "total_payment_amount"
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.0016160999999999999,
+      "seconds": 34.1,
+      "expected": "khớp golden"
+    },
+    {
+      "id": "valid_rest_api_paid_by_order",
+      "group": "valid",
+      "gate": null,
+      "source_kinds": [
+        "rest_api"
+      ],
+      "run_id": "ed5ef85c-0ded-4b9d-b5ec-f7a76e56f424",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "order_id",
+          "gold": "order_id"
+        },
+        "measures": {
+          "paid": "total_amount",
+          "payment_count": "payment_count"
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00107655,
+      "seconds": 23.5,
+      "expected": "khớp golden"
+    },
+    {
+      "id": "valid_three_sources_by_customer",
+      "group": "valid",
+      "gate": null,
+      "source_kinds": [
+        "postgres",
+        "rest_api",
+        "filesystem"
+      ],
+      "run_id": "f1a55ade-f81a-49a1-8074-8598b624305d",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "key": {
+          "golden": "customer_id",
+          "gold": "customer_id"
+        },
+        "measures": {
+          "order_total": "total_order_amount",
+          "paid": "total_paid_amount",
+          "refunded": "total_refunded_amount"
+        }
+      },
+      "problems": [],
+      "evidence": "[P11 dbt_run] model.p045.fct_customer_sales: Runtime Error in model fct_customer_sales (models\\gold\\fct_customer_sales.sql)\n  Binder Error: No function matches the given name and argument types 'sum(VARCHAR)'. You might need to add explicit type casts.\n  \tCandidate functions:\n  \tsum(DECIMAL) -> DECI",
+      "spec_attempts": 0,
+      "llm_calls": 3,
+      "llm_usd": 0.0036021,
+      "seconds": 61.6,
+      "expected": "khớp golden"
+    },
+    {
+      "id": "violation_ast_forbidden_function",
+      "group": "violation",
+      "gate": "ast_guard",
+      "source_kinds": [],
+      "run_id": "5dcb05dd-5e60-449e-a027-8b79e6d52310",
+      "status": "BLOCKED_AST",
+      "stage": "static",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "transform.filters[0]: hàm 'regexp_matches' không nằm trong danh sách cho phép",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00106455,
+      "seconds": 7.6,
+      "expected": "BLOCKED_AST"
+    },
+    {
+      "id": "violation_ast_jinja_injection",
+      "group": "violation",
+      "gate": "ast_guard",
+      "source_kinds": [],
+      "run_id": "324202d0-98d1-471c-a728-f72a0f3e5fde",
+      "status": "BLOCKED_AST",
+      "stage": "static",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Spec có ký tự '{' hoặc '}' (cú pháp Jinja của dbt), không được phép; transform.metrics[revenue].expr: hàm 'env_var' không nằm trong danh sách cho phép",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.001056,
+      "seconds": 7.3,
+      "expected": "BLOCKED_AST"
+    },
+    {
+      "id": "violation_budget_daily_spend",
+      "group": "violation",
+      "gate": "budget",
+      "source_kinds": [],
+      "run_id": "b20e871d-b809-4cf9-a731-0b1e63572b47",
+      "status": "BLOCKED_BUDGET",
+      "stage": "plan",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Hôm nay đã tiêu 2.0000 USD, chạm trần 2.0 USD/ngày (budgets.yml per_day.max_usd); không gọi LLM nữa tới ngày mai (UTC).",
+      "spec_attempts": 0,
+      "llm_calls": 0,
+      "llm_usd": 0.0,
+      "seconds": 0.2,
+      "expected": "BLOCKED_BUDGET"
+    },
+    {
+      "id": "violation_budget_scan_limit",
+      "group": "violation",
+      "gate": "budget",
+      "source_kinds": [],
+      "run_id": "ee9c4e73-779a-49a8-8f1c-bd2a3d02bbc0",
+      "status": "BLOCKED_BUDGET",
+      "stage": "budget",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Ước tính quét 16,384 byte (orders 8,192 byte, cộng model) vượt budgets.yml per_run.max_bytes_scanned = 1,000",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.0010412999999999998,
+      "seconds": 7.3,
+      "expected": "BLOCKED_BUDGET"
+    },
+    {
+      "id": "violation_semantic_new_customers",
+      "group": "violation",
+      "gate": "semantic",
+      "source_kinds": [],
+      "run_id": "c19f5a5c-dc8e-43e6-a313-29c06ea954bc",
+      "status": "BLOCKED_SEMANTIC_CONFLICT",
+      "stage": "resolve",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Phát hiện thực thể `customer` ở 3 domain. Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng Postgres). Marketing định nghĩa là người để lại email (2 endpoint REST). Rental định nghĩa là khách có tài khoản thuê DVD tại một cửa hàng (1 bảng Postgres). Chưa có định nghĩa chuẩn (conformed_dimensions)",
+      "spec_attempts": 0,
+      "llm_calls": 1,
+      "llm_usd": 0.00051075,
+      "seconds": 2.6,
+      "expected": "BLOCKED_SEMANTIC_CONFLICT"
+    },
+    {
+      "id": "violation_semantic_revenue_per_customer",
+      "group": "violation",
+      "gate": "semantic",
+      "source_kinds": [],
+      "run_id": "ad51fc18-088b-4d5b-be71-ac1f8c73bee2",
+      "status": "BLOCKED_SEMANTIC_CONFLICT",
+      "stage": "resolve",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Phát hiện thực thể `customer` ở 3 domain. Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng Postgres). Marketing định nghĩa là người để lại email (2 endpoint REST). Rental định nghĩa là khách có tài khoản thuê DVD tại một cửa hàng (1 bảng Postgres). Chưa có định nghĩa chuẩn (conformed_dimensions)",
+      "spec_attempts": 0,
+      "llm_calls": 1,
+      "llm_usd": 0.00051645,
+      "seconds": 2.5,
+      "expected": "BLOCKED_SEMANTIC_CONFLICT"
+    },
+    {
+      "id": "ambiguous_profit_margin",
+      "group": "ambiguous",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "ffa4eb71-4a8c-4e83-98ad-1bdcb52fab49",
+      "status": "NEEDS_HUMAN",
+      "stage": "plan",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Các bảng đã chọn không có cột nào thể hiện: biên lợi nhuận. Cần thêm bảng nào (hoặc nói rõ dùng cột nào)?",
+      "spec_attempts": 0,
+      "llm_calls": 1,
+      "llm_usd": 0.00030945,
+      "seconds": 1.9,
+      "expected": "NEEDS_HUMAN"
+    },
+    {
+      "id": "ambiguous_revenue_target",
+      "group": "ambiguous",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "20b0e27c-83e7-4f7c-8c40-72e2dc9b5352",
+      "status": "NEEDS_HUMAN",
+      "stage": "plan",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Các bảng đã chọn không có cột nào thể hiện: chỉ tiêu. Cần thêm bảng nào (hoặc nói rõ dùng cột nào)?",
+      "spec_attempts": 0,
+      "llm_calls": 1,
+      "llm_usd": 0.0003165,
+      "seconds": 2.0,
+      "expected": "NEEDS_HUMAN"
+    },
+    {
+      "id": "ambiguous_sales_report",
+      "group": "ambiguous",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "95a8d5d7-a366-429e-b651-023857efdacd",
+      "status": "NEEDS_HUMAN",
+      "stage": "plan",
+      "matched": true,
+      "mapping": null,
+      "problems": [],
+      "evidence": "Yêu cầu chưa nêu cần đo chỉ số nào. Bạn muốn đo gì (ví dụ doanh thu, số đơn, số tiền hoàn) và theo độ hạt nào (ngày, tháng, khách hàng, đơn hàng)?",
+      "spec_attempts": 0,
+      "llm_calls": 1,
+      "llm_usd": 0.0006558,
+      "seconds": 4.3,
+      "expected": "NEEDS_HUMAN"
+    }
+  ]
+}

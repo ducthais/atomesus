@@ -123,6 +123,30 @@ async def test_3_and_6_only_the_signed_files_are_deployed(client, tmp_path, monk
         assert pushed[f"{folder}/{path}"] == content, f"{path} khác bộ file đã ký"
 
 
+@pytest.mark.asyncio
+async def test_3_nobody_approves_their_own_run(client, tmp_path, monkeypatch):
+    """Chữ ký phê duyệt phải của người khác người tạo run (SPEC §2): API chặn, hợp đồng RunReport cũng chặn."""
+    from src.main import app
+    from src.run_report import RunReport
+
+    store = str(tmp_path / "runs.sqlite3")
+    own = run_agent("Doanh thu theo ngày", "an", deps(FakeLLM(PLAN, SPEC)), store)  # run do chính Reviewer "an" tạo
+    assert own.status == "READY_FOR_REVIEW"
+    config = PipelineSettings(_env_file=None, store_path=store, deploy_dir=str(tmp_path / "deploy"))
+    app.dependency_overrides[auth.settings] = lambda: config
+    monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
+    try:
+        await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
+        response = await client.post(f"/api/v1/runs/{own.run_id}/approve", json={"files_hash": own.files_hash})
+    finally:
+        app.dependency_overrides.pop(auth.settings, None)
+    assert response.status_code == 403 and "tự duyệt" in response.json()["detail"]
+    assert get_run_report(store, own.run_id).status == "READY_FOR_REVIEW" and not (tmp_path / "deploy").exists()
+    signature = {"decision": "approved", "reviewer": "an", "files_hash": own.files_hash, "version": own.version}
+    with pytest.raises(ValueError, match="tự duyệt"):
+        RunReport.model_validate({**own.model_dump(), "approval": {**signature, "at": own.created_at}})
+
+
 # 4. Không node LLM nào chạy lệnh shell ---------------------------------------------------------------------------
 
 

@@ -20,6 +20,41 @@ EXAMPLE_SPEC = SPEC_FIXTURES_DIR / "spec_02_sales_multi_source.json"
 TEMPORAL = {"date", "timestamp"}
 DATE_FORMATS = ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S")
 
+
+def _parses(value: str, date_format: str) -> bool:
+    try:
+        datetime.strptime(value.strip(), date_format)
+    except ValueError:
+        return False
+    return True
+
+
+def covering_formats(values: list[str]) -> list[str]:
+    """Ít định dạng nhất trong DATE_FORMATS để parse được mọi giá trị (nguồn bẩn hay trộn `2026-01-05` với `21/01/2026`).
+
+    Tham lam: mỗi lượt chọn định dạng parse được nhiều giá trị còn lại nhất; hòa thì theo thứ tự DATE_FORMATS (ngày
+    trước tháng, như cách viết ở Việt Nam). Giá trị không định dạng nào parse được thì bỏ qua (staging sẽ tách dòng đó).
+    """
+    remaining, chosen = [v for v in values if any(_parses(v, f) for f in DATE_FORMATS)], []
+    while remaining:
+        best = max(DATE_FORMATS, key=lambda f: (sum(_parses(v, f) for v in remaining), -DATE_FORMATS.index(f)))
+        chosen.append(best)
+        remaining = [v for v in remaining if not _parses(v, best)]
+    return chosen
+
+
+def _fix_date_formats(column: dict, values: list[str]) -> None:
+    """Cột chuỗi ép sang ngày: giữ định dạng LLM chọn, thêm định dạng còn thiếu để mọi giá trị mẫu parse được.
+
+    LLM hay chép `date_formats: []` hoặc chỉ chọn một định dạng khi cột trộn hai kiểu viết ngày, rồi lặp lại cả khi
+    được báo (eval 2026-10-10: 3/6 ca hợp lệ hỏng vì cột `refunded_at`).
+    """
+    current = [f for f in column.get("date_formats") or [] if isinstance(f, str) and "%" in f]
+    missing = [v for v in values if not any(_parses(v, f) for f in current)]
+    formats = current + [f for f in covering_formats(missing) if f not in current]
+    column["date_formats"] = formats or None
+
+
 # Kiểu Postgres (information_schema.data_type) → kiểu staging cho phép (src/spec/models.py COLUMN_TYPE).
 PG_TYPES = {
     "smallint": "integer",
@@ -78,6 +113,8 @@ def _add_key_columns(raw: object, snapshot: dict, policy=None) -> object:
     - `time_grain.column` viết thiếu / thừa tiền tố `<id>.` so với phần tử tương ứng của grain thì lấy đúng phần tử đó.
     - `date_formats` trên cột thô đã là ngày/giờ (không phải chuỗi) thì bỏ: staging ép thẳng kiểu. LLM hay thêm vì dòng
       mẫu hiện giá trị dạng chuỗi ISO, nhưng ở bronze cột đã là timestamp nên mọi dòng sẽ trượt định dạng và bị tách.
+    - Cột chuỗi ép sang ngày/giờ: `date_formats` phải parse được mọi giá trị mẫu; thiếu định dạng thì thêm, `[]` → đủ
+      định dạng (`_fix_date_formats`).
     - Khóa ghép của nguồn file / API để varchar trong khi phía kia là số → ép theo kiểu phía kia (`_align_join_types`).
     - `unique_key` / `partition_by` / `tests[].column` có tiền tố `<id>.` → bỏ tiền tố (`_bare_gold_columns`).
     - `unique_key` khác các cột của grain → thay bằng các cột của grain (`_bare_gold_columns`).
@@ -116,13 +153,19 @@ def _add_key_columns(raw: object, snapshot: dict, policy=None) -> object:
     for sid, source in sources.items():  # LLM hay chép nguyên kiểu Postgres (smallint, text, numeric) vào staging
         staging = source.get("staging")
         raw_columns = (snapshot.get(sid) or {}).get("columns") or {}
+        rows = [r for r in (snapshot.get(sid) or {}).get("sample_rows") or [] if isinstance(r, dict)]
         for column in staging.get("columns") or [] if isinstance(staging, dict) else []:
             if not isinstance(column, dict):
                 continue
             if str(column.get("type", "")).lower() in PG_TYPES:
                 column["type"] = PG_TYPES[str(column["type"]).lower()]
-            if column.get("date_formats") and PG_TYPES.get(raw_columns.get(column.get("from"), "")) in TEMPORAL:
-                column["date_formats"] = None
+            if PG_TYPES.get(raw_columns.get(column.get("from"), "")) in TEMPORAL:
+                if column.get("date_formats") is not None:  # cột thô đã là ngày: staging ép thẳng, không parse chuỗi
+                    column["date_formats"] = None
+            elif column.get("type") in TEMPORAL:
+                values = [str(r[column.get("from")]) for r in rows if r.get(column.get("from")) not in (None, "")]
+                if values or column.get("date_formats") == []:
+                    _fix_date_formats(column, values)
     if policy is not None:
         _fix_currency(sources, snapshot, policy, raw.get("domain"))
     for ref in refs:
@@ -206,14 +249,7 @@ def _value_profiles(source: dict) -> dict:
         values = [str(row[column]) for row in rows if isinstance(row, dict) and row.get(column) not in (None, "")]
         if not values:
             continue
-        formats = []
-        for date_format in DATE_FORMATS:
-            try:
-                for value in values:
-                    datetime.strptime(value, date_format)
-            except ValueError:
-                continue
-            formats.append(date_format)
+        formats = covering_formats(values)  # cột trộn nhiều kiểu viết ngày cần đủ mọi định dạng, không phải []
         numeric_text = True
         try:
             for value in values:

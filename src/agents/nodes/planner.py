@@ -4,6 +4,8 @@ Kế hoạch chỉ được trỏ tới nguồn, bảng và cột có thật tro
 kèm lỗi cụ thể, tối đa `PLAN_ATTEMPTS` lần; vẫn sai → NEEDS_HUMAN. Cần bảng có thật nhưng nằm ngoài phạm vi người
 dùng đã chọn thì dừng ngay và nói rõ cần chọn thêm bảng nào (LLM không tự mở rộng phạm vi).
 Câu hỏi làm rõ (`question`) dừng run chờ người; luồng trả lời trong chat thuộc Sprint 2.
+Ngoài câu hỏi LLM đặt, hệ thống tự hỏi khi: khái niệm không có cột thể hiện (`concepts[].column = null`), hoặc không
+khái niệm nào của kế hoạch có trong câu yêu cầu (LLM tự nghĩ ra chỉ số). Xung đột thực thể giữa domain thắng câu hỏi.
 """
 
 import json
@@ -14,11 +16,22 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from src.agents.llm import LLMOutputError, parse_json
 from src.agents.nodes.common import AgentDeps, StopError, call_llm, llm_usage, prompt
+from src.agents.semantic import entity_scan
 from src.agents.state import AgentState
 from src.pipeline.postgres import SourceUnavailableError
 
 IDENTIFIER = r"^[a-z][a-z0-9_]{0,62}$"
 PLAN_ATTEMPTS = 2  # lần đầu + 1 lần sửa khi kế hoạch trỏ sai bảng/cột
+VAGUE_QUESTION = (
+    "Yêu cầu chưa nêu cần đo chỉ số nào. Bạn muốn đo gì (ví dụ doanh thu, số đơn, số tiền hoàn) "
+    "và theo độ hạt nào (ngày, tháng, khách hàng, đơn hàng)?"
+)
+
+
+def grounded(term: str, request: str) -> bool:
+    """Khái niệm có trong yêu cầu: cả cụm, hoặc mọi từ của nó, xuất hiện trong câu người dùng viết (không phân biệt hoa)."""
+    words, text = re.findall(r"\w+", term.lower()), request.lower()
+    return bool(words) and (term.lower().strip() in text or all(re.search(rf"\b{re.escape(w)}\b", text) for w in words))
 
 
 class _Plan(BaseModel):
@@ -309,6 +322,14 @@ def planner(deps: AgentDeps):
             return StopError("INFRA_ERROR", "plan", str(exc)).update(state, llm_calls=calls, llm_usage=usage)
         except StopError as stop:
             return stop.update(state, llm_calls=calls, llm_usage=usage)
+        if (
+            plan.concepts
+            and not plan.question
+            and not any(grounded(c.term, state["user_request"]) for c in plan.concepts)
+        ):
+            # Không khái niệm nào có trong yêu cầu: người dùng chưa nói đo gì, LLM tự nghĩ ra chỉ số (eval 2026-10-10:
+            # "báo cáo về bán hàng" → tự chọn tổng thanh toán, số đơn, tiền hoàn).
+            plan = plan.model_copy(update={"question": VAGUE_QUESTION})
         unmapped = [c.term for c in plan.concepts if not c.column]
         if unmapped and not plan.question:  # LLM không được lặng lẽ thay khái niệm thiếu cột bằng phép tính khác
             plan = plan.model_copy(
@@ -325,6 +346,12 @@ def planner(deps: AgentDeps):
             "catalog": catalog,
         }
         if plan.question:
+            # Xung đột định nghĩa giữa các domain do steward giải quyết, câu trả lời của người dùng không gỡ được: quét
+            # trước khi hỏi, để yêu cầu vừa mơ hồ vừa xung đột vẫn bị chặn đúng (eval 2026-10-10).
+            gate, conflict = entity_scan(state["user_request"], state.get("source_scope"), deps.policy)
+            if conflict:
+                gates = [*state.get("gates", []), gate.model_dump()]
+                return StopError("BLOCKED_SEMANTIC_CONFLICT", "resolve", conflict).update(state, **update, gates=gates)
             return StopError("NEEDS_HUMAN", "plan", "Cần làm rõ yêu cầu", question=plan.question).update(
                 state, **update
             )

@@ -1,0 +1,9 @@
+{
+  "id": "violation_semantic_revenue_per_customer",
+  "group": "violation",
+  "gate": "semantic",
+  "request": "Tổng tiền mỗi khách đã chi trong tháng",
+  "sources": null,
+  "expected": { "status": "BLOCKED_SEMANTIC_CONFLICT" },
+  "note": "bí danh \"khách\" trỏ tới customer ở ba domain với ba định nghĩa khác nhau"
+}

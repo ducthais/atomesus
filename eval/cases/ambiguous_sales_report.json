@@ -1,0 +1,8 @@
+{
+  "id": "ambiguous_sales_report",
+  "group": "ambiguous",
+  "request": "Làm cho tôi một báo cáo về bán hàng",
+  "sources": null,
+  "expected": { "status": "NEEDS_HUMAN", "stage": "plan" },
+  "note": "không nêu chỉ số, độ hạt hay khoảng thời gian: agent phải hỏi lại thay vì đoán"
+}

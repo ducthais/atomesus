@@ -32,9 +32,9 @@ class PipelineSettings(BaseSettings):
     warehouse_timezone: str = "UTC"
     # Nguồn rest_api có connection_ref mock_api (infra/mock_api, `make mock-api`).
     mock_api_url: str = "http://127.0.0.1:8100"
-    # Cổng budget dùng `dry_run` thật của BigQuery (SPEC §12) khi đặt project; để trống thì ước tính kiểu DuckDB.
-    # Dataset chứa bản sao các bảng nguồn Postgres; xác thực bằng Application Default Credentials của Google.
-    bigquery_project: str = ""
-    bigquery_dataset: str = ""
+    # Cổng budget lấy byte thật từ metadata Parquet trên Azure Blob Storage khi đặt cả hai (src/agents/azure_storage.py);
+    # để trống thì ước tính kiểu DuckDB. Container chứa bản sao bảng nguồn Postgres (scripts/azure_mirror.py).
+    azure_storage_connection_string: SecretStr = SecretStr("")
+    azure_storage_container: str = ""
     max_rows: int = Field(default=1000, ge=1, le=10000)
     max_bytes: int = Field(default=2_000_000, ge=1024, le=10_000_000)

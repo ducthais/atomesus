@@ -1,7 +1,8 @@
 """Cổng `budget` (P8, SPEC §10, §12): ước tính byte quét trước khi chạy, quy ra USD, chặn khi vượt trần.
 
-Đặt `PIPELINE_BIGQUERY_PROJECT` / `_DATASET` thì nguồn postgres dùng `dry_run` thật của BigQuery (src/agents/bigquery.py).
-Mặc định sandbox chạy DuckDB local nên không có `dry_run` thật. Ước tính theo SPEC §12 (DuckDB):
+Đặt `PIPELINE_AZURE_STORAGE_CONNECTION_STRING` / `_CONTAINER` thì nguồn postgres lấy byte thật từ metadata Parquet của
+bản sao trên Azure Blob Storage (src/agents/azure_storage.py), không đọc dữ liệu.
+Mặc định sandbox chạy DuckDB local nên ước tính theo SPEC §12 (DuckDB):
 - nguồn `postgres`: kích thước bảng trên đĩa (`pg_relation_size`, cộng mọi partition con),
 - nguồn `rest_api`: số byte JSON của mọi bản ghi, đọc lần lượt các trang như dlt sẽ đọc,
 - nguồn `filesystem`: tổng dung lượng các file khớp `path_pattern`,
@@ -15,7 +16,7 @@ Trần một run (`per_run.max_usd`) chỉ áp cho chi phí quét dữ liệu, n
 
 import json
 
-from src.agents import bigquery
+from src.agents import azure_storage
 from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
@@ -42,7 +43,7 @@ def _source_bytes(
     declared = policy.domains.domains[spec.domain].sources
     sizes = {}
     for source in spec.sources:
-        if source.id in skip:  # đã có byte dry_run thật của BigQuery
+        if source.id in skip:  # đã có byte thật từ metadata Parquet trên Azure
             continue
         decl = declared[source.source_ref]
         if source.kind == "filesystem":
@@ -63,13 +64,15 @@ def _source_bytes(
     return sizes
 
 
-def estimate(spec: Spec, policy: Policy, settings: PipelineSettings, dry_run: bigquery.DryRun | None = None) -> dict:
+def estimate(
+    spec: Spec, policy: Policy, settings: PipelineSettings, reader: azure_storage.FooterReader | None = None
+) -> dict:
     """Byte và USD của một lần chạy: E-L đọc mọi nguồn, model đọc lại staging (≈ cùng cỡ).
 
-    Đặt `PIPELINE_BIGQUERY_PROJECT` / `_DATASET` thì nguồn postgres lấy byte từ `dry_run` thật của BigQuery
-    (src/agents/bigquery.py); `estimated` chỉ False khi mọi nguồn đều có số thật.
+    Bật Azure thì nguồn postgres lấy byte thật từ metadata Parquet (src/agents/azure_storage.py); `estimated` chỉ
+    False khi mọi nguồn đều có số thật.
     """
-    real = bigquery.source_bytes(spec, settings, dry_run) if bigquery.enabled(settings) else {}
+    real = azure_storage.source_bytes(spec, settings, reader) if azure_storage.enabled(settings) else {}
     found = _source_bytes(spec, policy, settings, frozenset(real))
     sources = {s.id: real[s.id]["bytes"] if s.id in real else found[s.id] for s in spec.sources}
     extract = sum(sources.values())
@@ -83,7 +86,7 @@ def estimate(spec: Spec, policy: Policy, settings: PipelineSettings, dry_run: bi
         "estimated": len(real) < len(sources),
     }
     if real:
-        result["dry_run"] = {"warehouse": "bigquery", "sql": {sid: item["sql"] for sid, item in real.items()}}
+        result["measured"] = {"warehouse": "azure_blob_parquet", "sources": real}
     return result
 
 
@@ -107,7 +110,7 @@ def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, lis
     per_run, per_day = policy.budgets.per_run, policy.budgets.per_day
     size, usd = estimated["bytes"], estimated["usd"]
     by_source = ", ".join(f"{sid} {count:,} byte" for sid, count in estimated["sources"].items())
-    word = "BigQuery dry_run" if "dry_run" in estimated else "Ước tính"
+    word = "Metadata Parquet trên Azure" if "measured" in estimated else "Ước tính"
     errors = []
     if size > per_run.max_bytes_scanned:
         errors.append(
