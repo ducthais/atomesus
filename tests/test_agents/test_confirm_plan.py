@@ -70,6 +70,18 @@ def test_engineer_can_edit_plan_before_confirmation(tmp_path):
     assert [event.event for event in done.timeline][1:4] == ["plan_ready", "plan_edited", "plan_confirmed"]
 
 
+@pytest.mark.parametrize("question", ["null", " None ", "N/A", ""])
+def test_edited_plan_normalizes_null_question_before_confirmation(tmp_path, question):
+    store = str(tmp_path / "runs.sqlite3")
+    agent = deps(FakeLLM(PLAN, SPEC))
+    planned = plan_agent("Doanh thu theo ngày", "minh", agent, store)
+    edited = {**planned.plan, "question": question}
+
+    done = confirm_plan(planned, "minh", agent, store, edited_plan=edited)
+
+    assert done.status == "READY_FOR_REVIEW" and done.plan["question"] is None
+
+
 def test_request_changes_creates_new_version_and_feeds_comment_to_codegen(tmp_path):
     store = str(tmp_path / "runs.sqlite3")
     first_agent = deps(FakeLLM(PLAN, SPEC))

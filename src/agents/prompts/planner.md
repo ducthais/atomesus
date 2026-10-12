@@ -10,6 +10,8 @@ Quy tắc:
 - Nếu yêu cầu cần bảng không có trong danh mục (người dùng chưa chọn), đừng tự thêm hay đoán: đặt `question` nêu rõ cần thêm bảng nào.
 - Liệt kê trong `concepts` **mỗi khái niệm nghiệp vụ** của yêu cầu dùng để gộp, đo hoặc lọc (ví dụ "khu vực", "khách hàng", "số tiền mua", "theo ngày") kèm cột `<id>.<cột>` thể hiện nó; **`column: null` nếu không cột nào trong danh mục thể hiện được** (hệ thống sẽ hỏi người dùng). Không đưa thứ tự hay giới hạn ("top 10", "nhiều nhất") vào `concepts`. Chỉ số **đếm** ("số đơn hàng", "số lần thanh toán", "số khách") thể hiện bằng khóa của bảng được đếm (ví dụ `orders.order_id`, `payments.payment_id`), không để `null`. Thứ đem ra **so sánh** ("chỉ tiêu", "kế hoạch", "dự báo", "ngân sách", "cùng kỳ năm trước") cũng là một khái niệm: liệt kê vào `concepts`, `column: null` nếu danh mục không có cột chứa nó.
 - **Không bao giờ thay yêu cầu bằng một phép tính khác.** Nếu khái niệm chính của yêu cầu (độ hạt như khu vực, khách hàng, sản phẩm; hay chỉ số) không có cột nào trong danh mục thể hiện được, đặt `question` thay vì gộp theo một cột khác (ví dụ: yêu cầu "theo khu vực" mà danh mục chỉ có `payment` thì hỏi, không gộp theo ngày).
+- Ánh xạ khái niệm theo ý nghĩa của các bảng đã chọn trong `sources`. Ví dụ trên pagila, với `payment`, `rental`, `inventory`: "doanh thu" → `payment.amount`, "số lượt thuê" → `rental.rental_id`, "theo tháng" → `rental.rental_date` (gộp theo tháng thuê), "cửa hàng sở hữu bản DVD được thuê" → `inventory.store_id` khi `inventory` nằm trong `sources`. Dùng `id` thực tế của bảng trong kế hoạch; không để `column` là null khi đã có cột phù hợp.
+- `concepts[].column` là chuỗi `<id>.<cột>` hoặc giá trị **JSON null**; `question` là câu hỏi hoặc **JSON null**. Không được trả chuỗi `"null"`, `"None"`, `"n/a"` hay chuỗi rỗng để biểu thị không có giá trị.
 - Có `lỗi_lần_trước` thì trả kế hoạch đầy đủ đã sửa **mọi** lỗi đó, dựa trên `kế_hoạch_lần_trước`.
 - Nếu yêu cầu thiếu thông tin quyết định, đặt `question` là **một** câu hỏi làm rõ ngắn; ngược lại để `null`. Thiếu thông tin quyết định là:
   - yêu cầu **không nêu đo cái gì** (chỉ số), chỉ nói chung chung như "báo cáo về bán hàng", "phân tích khách hàng", "tổng quan doanh nghiệp": hỏi cần đo chỉ số nào, theo độ hạt nào. Không tự chọn doanh thu, số đơn hay bất kỳ chỉ số nào thay người dùng;
@@ -33,6 +35,6 @@ Quy tắc:
   "metrics": [{"name": "<snake_case>", "definition": "<cách tính bằng lời>"}],
   "filters": ["<điều kiện lọc bằng lời, nếu có>"],
   "schedule": "0 2 * * *",
-  "concepts": [{"term": "<cụm từ trong yêu cầu>", "column": "<id>.<cột> hoặc null"}],
+  "concepts": [{"term": "<cụm từ trong yêu cầu chưa có cột thể hiện>", "column": null}],
   "question": null
 }
