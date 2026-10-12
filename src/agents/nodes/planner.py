@@ -37,6 +37,13 @@ def grounded(term: str, request: str) -> bool:
 class _Plan(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    @field_validator("column", "question", mode="before", check_fields=False)
+    @classmethod
+    def _null_is_none(cls, value):
+        if isinstance(value, str) and value.strip().lower() in {"", "null", "none", "n/a"}:
+            return None
+        return value
+
 
 class PlanSource(_Plan):
     id: str = Field(pattern=IDENTIFIER)
@@ -172,17 +179,21 @@ def _check_joins(plan: Plan, catalog: dict, full: dict) -> tuple[list[str], list
 def _check_concepts(plan: Plan, catalog: dict) -> list[str]:
     """Cột LLM nói là thể hiện một khái niệm phải có thật trong một nguồn của kế hoạch."""
     by_alias = {s.id: s for s in plan.sources} | {s.object: s for s in plan.sources}
+    valid_columns = sorted(
+        {f"{s.id}.{c}" for s in plan.sources for c in (_columns(catalog, plan.domain, s.source_ref, s.object) or [])}
+    )
     errors = []
     for concept in plan.concepts:
         if not concept.column:
             continue
-        alias, _, column = concept.column.partition(".")
+        alias, dot, column = concept.column.partition(".")
         source = by_alias.get(alias)
         columns = _columns(catalog, plan.domain, source.source_ref, source.object) if source else None
-        if source is None or (columns is not None and column not in columns):
+        if not dot or not column or source is None or (columns is not None and column not in columns):
             errors.append(
                 f"concepts '{concept.term}': '{concept.column}' không phải <id>.<cột> có thật trong sources; "
-                "để null nếu danh mục không có cột thể hiện khái niệm này"
+                'dùng JSON null (không phải chuỗi "null") nếu danh mục không có cột thể hiện khái niệm này; '
+                "các cột hợp lệ của nguồn đã chọn: " + (", ".join(valid_columns) or "không có cột trong danh mục")
             )
     return errors
 
