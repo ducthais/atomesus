@@ -150,6 +150,17 @@ def test_happy_path_runs_four_steps():
     ]
 
 
+@pytest.mark.parametrize("scope", [None, [{"source_ref": "sales_pg", "tables": ["orders"]}]])
+def test_source_name_as_domain_continues_through_graph_without_plan_retry(scope):
+    llm = FakeLLM({**PLAN, "domain": "sales_pg"}, SPEC)
+    state = run(llm, scope=scope)
+
+    assert (state["status"], state["stage_reached"], state["llm_calls"]) == ("READY_FOR_REVIEW", "t_validate", 2)
+    assert state["domain"] == state["plan"]["domain"] == "sales"
+    assert [call["tier"] for call in llm.calls] == ["cheap", "strong"]
+    assert llm.calls[1]["user"]["kế_hoạch"]["domain"] == "sales"
+
+
 def test_invalid_spec_goes_back_to_codegen_with_specific_error():
     wrong = with_column(SPEC, 2, **{"from": "amount"})  # cột không có ở nguồn
     llm = FakeLLM(PLAN, wrong, SPEC)

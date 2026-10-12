@@ -110,7 +110,11 @@ def test_pagila_store_concept_reaches_confirmation(tmp_path):
     assert report.spec is None
     system = llm.calls[0]["system"]
     example = json.loads(system.split("Định dạng trả về:", 1)[1])
-    assert example["concepts"][0]["column"] is None and example["question"] is None
+    assert example["concepts"] == [
+        {"term": "<cụm từ trong yêu cầu có cột thể hiện>", "column": "<id>.<cột>"},
+        {"term": "<cụm từ trong yêu cầu chưa có cột thể hiện>", "column": None},
+    ]
+    assert example["question"] is None
     assert "Không được trả chuỗi" in system
     assert '"cửa hàng sở hữu bản DVD được thuê" → `inventory.store_id`' in system
 

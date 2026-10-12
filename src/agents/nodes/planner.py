@@ -94,17 +94,42 @@ class Plan(_Plan):
         return value or "0 2 * * *"
 
 
-def _check_against_catalog(plan: Plan, catalog: dict) -> list[str]:
+def _source_domains(catalog: dict, refs: list[str]) -> dict[str, list[str]]:
+    return {ref: sorted(name for name, domain in catalog.items() if ref in domain["sources"]) for ref in refs}
+
+
+def _infer_domain(plan: Plan, catalog: dict, scope: list[dict] | None) -> Plan:
+    """Ưu tiên domain duy nhất của phạm vi đã chọn, rồi của mọi nguồn trong kế hoạch; không đoán khi thiếu nguồn."""
+    for refs in ([choice["source_ref"] for choice in scope or []], [s.source_ref for s in plan.sources]):
+        owners = _source_domains(catalog, refs)
+        domains = {name for names in owners.values() for name in names}
+        if owners and all(len(names) == 1 for names in owners.values()) and len(domains) == 1:
+            return plan.model_copy(update={"domain": next(iter(domains))})
+    return plan
+
+
+def _check_against_catalog(plan: Plan, catalog: dict, scope: list[dict] | None = None) -> list[str]:
+    owners = _source_domains(
+        catalog, [choice["source_ref"] for choice in scope or []] + [s.source_ref for s in plan.sources]
+    )
+    hint = (
+        "; các domain hợp lệ trong danh mục: "
+        + (", ".join(sorted(catalog)) or "không có")
+        + "; domain sở hữu từng nguồn: "
+        + "; ".join(
+            f"'{ref}' → {', '.join(names) or 'không có trong danh mục'}" for ref, names in sorted(owners.items())
+        )
+    )
     domain = catalog.get(plan.domain)
     if domain is None:
-        return [f"domain '{plan.domain}' không có trong danh mục"]
+        return [f"domain '{plan.domain}' không có trong danh mục{hint}"]
     errors = []
     if len({s.id for s in plan.sources}) != len(plan.sources):
         errors.append("sources[].id phải duy nhất")
     for source in plan.sources:
         entry = domain["sources"].get(source.source_ref)
         if entry is None:
-            errors.append(f"nguồn '{source.source_ref}' không thuộc domain '{plan.domain}'")
+            errors.append(f"nguồn '{source.source_ref}' không thuộc domain '{plan.domain}'{hint}")
         elif not entry["available"]:
             errors.append(f"nguồn '{source.source_ref}' ({entry['kind']}) {entry['reason']}")
         elif source.object not in entry["objects"]:
@@ -275,7 +300,7 @@ def validate_plan_edit(raw: dict, deps: AgentDeps, scope: list[dict] | None) -> 
         return None, ["Nguồn hoặc bảng đã chọn không có: " + ", ".join(missing)]
     plan = _complete_sources(plan, catalog)
     join_errors, outside = _check_joins(plan, catalog, full)
-    errors = _check_against_catalog(plan, catalog) + join_errors + _check_concepts(plan, catalog)
+    errors = _check_against_catalog(plan, catalog, scope) + join_errors + _check_concepts(plan, catalog)
     if outside:
         errors.append("Kế hoạch dùng bảng ngoài phạm vi đã chọn: " + ", ".join(outside))
     if plan.question:
@@ -310,9 +335,14 @@ def planner(deps: AgentDeps):
                         raise StopError("NEEDS_HUMAN", "plan", f"Kế hoạch LLM trả về không hợp lệ: {exc}") from exc
                     message = {**message, "kế_hoạch_lần_trước": text[:4000], "lỗi_lần_trước": [str(exc)]}
                     continue
+                plan = _infer_domain(plan, catalog, state.get("source_scope"))
                 plan = _complete_sources(plan, catalog)
                 join_errors, outside = _check_joins(plan, catalog, full)
-                errors = _check_against_catalog(plan, catalog) + join_errors + _check_concepts(plan, catalog)
+                errors = (
+                    _check_against_catalog(plan, catalog, state.get("source_scope"))
+                    + join_errors
+                    + _check_concepts(plan, catalog)
+                )
                 if outside:
                     raise StopError(
                         "NEEDS_HUMAN",
