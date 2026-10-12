@@ -210,7 +210,7 @@ def reference_sql(
         if source.id in inline:
             data = inline[source.id]
             cte = _staging_cte(source, _inline_relation(data), "_ord", data.types, domain.currency.rates)
-            ctes.append(f"{_ident('stg_' + source.id)} AS ({cte})")
+            ctes.append(f"{_ident('stg_' + source.id)} AS MATERIALIZED ({cte})")
             continue
         if source.kind != "postgres":
             raise UnsupportedError(f"nguồn loại {source.kind}")
@@ -220,7 +220,7 @@ def reference_sql(
             raise UnsupportedError(f"bảng {schema}.{source.table} không còn ở nguồn")
         relation = f"{_ident(schema)}.{_ident(source.table)} AS src"
         cte = _staging_cte(source, relation, "ctid", tables[source.table], domain.currency.rates)
-        ctes.append(f"{_ident('stg_' + source.id)} AS ({cte})")
+        ctes.append(f"{_ident('stg_' + source.id)} AS MATERIALIZED ({cte})")
     period = t.time_grain
     grains = [
         (f"CAST(date_trunc({_literal(period.unit)}, {g}) AS date)" if period and period.column == g else g)
