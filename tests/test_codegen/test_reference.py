@@ -10,9 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.codegen.reference import UnsupportedError, compare, is_match, reference_sql
+from src.codegen.reference import Inline, UnsupportedError, compare, is_match, reference_sql
 from src.policy.loader import load_policy
 from src.spec.models import Spec
+from tests.test_codegen.test_preaggregate import spec as joined_spec
 from tests.test_codegen.test_time_grain import spec as pagila_spec
 
 PAGILA_COLUMNS = {
@@ -74,6 +75,20 @@ def sales_spec(**transform) -> Spec:
 
 
 SALES_COLUMNS = {"orders": {"order_id": "integer", "amount_text": "text", "ordered_at_text": "text", "status": "text"}}
+
+
+@pytest.mark.parametrize("inline_ids", [(), ("orders", "payments"), ("payments",)], ids=["postgres", "inline", "mixed"])
+def test_all_staging_ctes_are_materialized(policy, inline_ids):
+    spec = joined_spec([("total_paid", "SUM(payments.amount)")])
+    columns = {
+        "orders": {"order_id": "integer", "customer_id": "integer", "amount": "numeric"},
+        "payments": {"payment_id": "integer", "order_id": "integer", "amount": "numeric", "method": "text"},
+    }
+    inline = {sid: Inline(columns[sid], [{name: 1 for name in columns[sid]}]) for sid in inline_ids}
+    query = reference_sql(spec, policy, lambda schema: columns, inline)
+    for source in spec.sources:
+        assert f'"stg_{source.id}" AS MATERIALIZED (' in query
+    assert query.count("AS MATERIALIZED (") == len(spec.sources)
 
 
 def test_timestamptz_is_read_in_utc_and_bucketed(policy):
