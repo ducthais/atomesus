@@ -10,7 +10,7 @@ from src.codegen.render import file_hashes
 from src.deployer.manifest import ManifestError
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
-from src.policy.loader import PolicyError, load_policy
+from src.policy import PolicyError, effective_policy
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, Deployment, RunReport, RunStatus
 from src.run_report.store import _database as run_report_database
@@ -86,7 +86,7 @@ def request_change_deps(config: PipelineSettings = Depends(settings)):
     from src.run_report.store import is_run_cancelled
 
     try:
-        policy = load_policy()
+        policy = effective_policy(config)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
 

@@ -1,5 +1,20 @@
 # Hàm mục tiêu và ngưỡng theo domain (SPEC §8.4).
 # Mọi domain trong domains.yml bắt buộc có khối `quality` và `regression`.
+_user_default:                      # mẫu cho lựa chọn nguồn của người dùng
+  hard:
+    freshness_minutes: 1440
+  soft:
+    cost_usd_per_day: 1.0
+  prefer: cheapest_feasible
+  degrade_order: [freshness, completeness]
+  quality:
+    max_reject_pct: 2.0
+  regression:
+    window_runs: 7
+    runtime_increase_pct: 50
+    cost_increase_pct: 40
+    test_fail_rate_pct: 5
+    cooldown_hours: 24
 sales:
   hard:
     freshness_minutes: 60

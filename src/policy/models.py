@@ -36,6 +36,7 @@ class SourceDecl(_Policy):
     schema_: str | None = Field(default=None, alias="schema")
     openapi: str | None = None
     root: str | None = None
+    tables: list[str] | None = None
 
     @model_validator(mode="after")
     def _kind_fields(self) -> "SourceDecl":
@@ -54,6 +55,8 @@ class Entity(_Policy):
 
 
 class Domain(_Policy):
+    label: str | None = None
+    owner_id: str | None = None
     datasets: list[str] = Field(min_length=1)
     steward: str = Field(pattern=r"^[^@\s]+@[^@\s]+$")
     currency: Currency
@@ -70,8 +73,13 @@ class Domain(_Policy):
         return self
 
 
+class UserDefaults(_Policy):
+    currency: Currency = Field(default_factory=lambda: Currency(base="VND", rates={"VND": 1, "USD": 25400}))
+
+
 class Domains(_Policy):
     domains: dict[str, Domain] = Field(min_length=1)
+    user_defaults: UserDefaults = Field(default_factory=UserDefaults)
     conformed_dimensions: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -196,7 +204,8 @@ class Policy(_Policy):
 
     @model_validator(mode="after")
     def _cross_file(self) -> "Policy":
-        declared, covered = set(self.domains.domains), set(self.objectives)
+        declared = set(self.domains.domains)
+        covered = {name for name in self.objectives if not name.startswith("_")}
         if declared - covered:
             raise ValueError(f"objectives.yml thiếu domain: {sorted(declared - covered)}")
         if covered - declared:

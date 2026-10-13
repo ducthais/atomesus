@@ -17,7 +17,7 @@ from src.codegen.sandbox import SUPPORTED_KINDS
 from src.pipeline.auth import current_user, settings
 from src.pipeline.postgres import SourceUnavailableError
 from src.pipeline.settings import PipelineSettings
-from src.policy.loader import PolicyError, load_policy
+from src.policy import PolicyError, effective_policy
 from src.run_report import RunReport
 from src.run_report.store import get_run_report, is_run_cancelled
 
@@ -41,12 +41,12 @@ class AgentRunRequest(BaseModel):
     )
 
 
-def agent_deps(config: PipelineSettings = Depends(settings)) -> AgentDeps:
+def agent_deps(config: PipelineSettings = Depends(settings), user: dict = Depends(current_user)) -> AgentDeps:
     """Nạp lại chính sách mỗi run (sửa YAML có hiệu lực ngay, NFR-04)."""
     from src.agents import budget
 
     try:
-        policy = load_policy()
+        policy = effective_policy(config, owner_id=user["id"] if user["role"] == "Engineer" else None)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
     return AgentDeps(

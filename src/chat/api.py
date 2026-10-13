@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src.agents.nodes.common import AgentDeps
 from src.agents.service import RevisionNotAllowedError, RunChangedError, plan_agent, start_revision
-from src.api.routes import agent_deps
+from src.api.routes import AgentRunRequest, _checked_sources, agent_deps
 from src.chat import answers, store
 from src.chat.models import ChatMessage, ChatRequest, ChatResponse
 from src.pipeline.auth import current_user, settings
@@ -40,11 +40,17 @@ def post_chat(
     message = body.message.strip()
     if not message:
         raise HTTPException(422, "Tin nhắn không được để trống.")
+    if body.run_id is not None and body.sources is not None:
+        raise HTTPException(422, "Chỉ chọn nguồn khi tạo pipeline mới từ chat.")
 
     if body.run_id is None:
         if user["role"] != "Engineer":
             raise HTTPException(403, "Chỉ Engineer được tạo pipeline từ chat.")
-        report = plan_agent(message, user["id"], deps, config.store_path)
+        sources = _checked_sources(AgentRunRequest(request=message, sources=body.sources), user, deps)
+        if sources is None:
+            report = plan_agent(message, user["id"], deps, config.store_path)
+        else:
+            report = plan_agent(message, user["id"], deps, config.store_path, sources=sources)
         intent, reply = "new_request", answers.created_reply(report)
     elif answers.intent(message) == "revise":
         report = _existing_run(config.store_path, body.run_id)
