@@ -3,6 +3,7 @@
 RunReport nằm cùng file SQLite nhưng do `src.run_report.store` quản lý.
 """
 
+import json
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ def database(path: str):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=10)
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
         with conn:
             conn.execute("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT, expires REAL)")
             conn.execute(
@@ -46,6 +48,11 @@ def database(path: str):
                 " password_encrypted TEXT NOT NULL, sslmode TEXT NOT NULL, created_at REAL NOT NULL)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS connections_owner ON connections(owner_id)")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS connection_selections ("
+                " connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,"
+                " schema_name TEXT NOT NULL, tables_json TEXT NOT NULL)"
+            )
             yield conn
     finally:
         conn.close()
@@ -194,6 +201,41 @@ def list_connections(path: str, owner_id: str) -> list[dict[str, Any]]:
         ).fetchall()
     fields = ("id", "owner_id", "name", "host", "port", "database", "user", "sslmode", "created_at")
     return [dict(zip(fields, row, strict=True)) for row in rows]
+
+
+def get_connection(path: str, connection_id: str, owner_id: str) -> tuple[dict[str, Any], str] | None:
+    """Credential mã hóa chỉ đi tới hàm mở kết nối, không đi vào metadata công khai."""
+    with database(path) as conn:
+        row = conn.execute(
+            "SELECT id, owner_id, name, host, port, database_name, database_user, sslmode, created_at, password_encrypted"
+            " FROM connections WHERE id = ? AND owner_id = ?",
+            (connection_id, owner_id),
+        ).fetchone()
+    fields = ("id", "owner_id", "name", "host", "port", "database", "user", "sslmode", "created_at")
+    return (dict(zip(fields, row[:-1], strict=True)), row[-1]) if row else None
+
+
+def save_connection_selection(path: str, connection_id: str, owner_id: str, schema: str, tables: list[str]) -> bool:
+    with database(path) as conn:
+        return bool(
+            conn.execute(
+                "INSERT INTO connection_selections (connection_id, schema_name, tables_json)"
+                " SELECT id, ?, ? FROM connections WHERE id = ? AND owner_id = ?"
+                " ON CONFLICT(connection_id) DO UPDATE SET schema_name=excluded.schema_name,"
+                " tables_json=excluded.tables_json",
+                (schema, json.dumps(tables, ensure_ascii=False), connection_id, owner_id),
+            ).rowcount
+        )
+
+
+def get_connection_selection(path: str, connection_id: str, owner_id: str) -> dict[str, Any] | None:
+    with database(path) as conn:
+        row = conn.execute(
+            "SELECT s.schema_name, s.tables_json FROM connection_selections s"
+            " JOIN connections c ON c.id = s.connection_id WHERE c.id = ? AND c.owner_id = ?",
+            (connection_id, owner_id),
+        ).fetchone()
+    return {"schema": row[0], "tables": json.loads(row[1])} if row else None
 
 
 def delete_connection(path: str, connection_id: str, owner_id: str) -> bool:

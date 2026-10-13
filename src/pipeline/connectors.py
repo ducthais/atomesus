@@ -8,6 +8,8 @@ trả về `objects` (mỗi collection một object, `kind: "collection"`), đă
 
 from collections.abc import Callable
 
+import psycopg
+
 from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import SourceDecl
@@ -33,7 +35,11 @@ ORDER BY c.relname, a.attnum
 def postgres_columns(config: PipelineSettings, schema: str) -> dict[str, list[dict]]:
     """Bảng và cột (tên, kiểu) mà tài khoản reader đọc được trong một schema."""
     with postgres.connection(config) as conn:
-        rows = conn.execute(COLUMNS_SQL, (schema,)).fetchall()
+        return postgres_columns_from_connection(conn, schema)
+
+
+def postgres_columns_from_connection(conn: psycopg.Connection, schema: str) -> dict[str, list[dict]]:
+    rows = conn.execute(COLUMNS_SQL, (schema,)).fetchall()
     tables: dict[str, list[dict]] = {}
     for table, column, kind in rows:
         tables.setdefault(table, []).append({"name": column, "type": kind})
@@ -65,7 +71,11 @@ ORDER BY src.relname, c.conname
 def postgres_keys(config: PipelineSettings, schema: str) -> tuple[dict[str, list[str]], list[dict]]:
     """Khóa chính theo bảng và khóa ngoại (bảng, cột → bảng đích, cột đích) của một schema."""
     with postgres.connection(config) as conn:
-        rows = conn.execute(KEYS_SQL, (schema,)).fetchall()
+        return postgres_keys_from_connection(conn, schema)
+
+
+def postgres_keys_from_connection(conn: psycopg.Connection, schema: str) -> tuple[dict[str, list[str]], list[dict]]:
+    rows = conn.execute(KEYS_SQL, (schema,)).fetchall()
     primary: dict[str, list[str]] = {}
     foreign: list[dict] = []
     seen = set()
@@ -99,34 +109,45 @@ def postgres_row_estimates(config: PipelineSettings, schema: str) -> dict[str, i
     Dùng thống kê của Postgres (pg_class.reltuples). Bảng chưa từng ANALYZE (reltuples = -1) thì đếm
     nhưng dừng ở ROW_COUNT_CAP + 1 dòng; giá trị đó nghĩa là "hơn ROW_COUNT_CAP".
     """
+    with postgres.connection(config) as conn:
+        return postgres_row_estimates_from_connection(conn, schema)
+
+
+def postgres_row_estimates_from_connection(
+    conn: psycopg.Connection, schema: str, tables: set[str] | None = None
+) -> dict[str, int]:
+    """Giữ cách ước tính của catalog; khi duyệt chỉ đếm những bảng đã kiểm quyền đọc."""
     from psycopg import sql
 
-    with postgres.connection(config) as conn:
-        rows = conn.execute(
-            "SELECT c.relname, c.reltuples::bigint FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "WHERE n.nspname = %s AND c.relkind IN ('r', 'p') AND NOT c.relispartition",
-            (schema,),
-        ).fetchall()
-        counts = {}
-        for table, estimate in rows:
-            if estimate >= 0:
-                counts[table] = estimate
-                continue
-            query = sql.SQL("SELECT count(*) FROM (SELECT 1 FROM {} LIMIT %s) capped").format(
-                sql.Identifier(schema, table)
-            )
-            counts[table] = conn.execute(query, (ROW_COUNT_CAP + 1,)).fetchone()[0]
+    rows = conn.execute(
+        "SELECT c.relname, c.reltuples::bigint FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relkind IN ('r', 'p') AND NOT c.relispartition",
+        (schema,),
+    ).fetchall()
+    counts = {}
+    for table, estimate in rows:
+        if tables is not None and table not in tables:
+            continue
+        if estimate >= 0:
+            counts[table] = estimate
+            continue
+        query = sql.SQL("SELECT count(*) FROM (SELECT 1 FROM {} LIMIT %s) capped").format(sql.Identifier(schema, table))
+        counts[table] = conn.execute(query, (ROW_COUNT_CAP + 1,)).fetchone()[0]
     return counts
 
 
 def schema_visibility(config: PipelineSettings, schema: str) -> tuple[bool, bool]:
     """(schema có trong database, tài khoản đang dùng có quyền USAGE trên schema đó)."""
     with postgres.connection(config) as conn:
-        row = conn.execute(
-            "SELECT n.oid IS NOT NULL, COALESCE(has_schema_privilege(n.oid, 'USAGE'), false) "
-            "FROM (SELECT %s::text AS name) s LEFT JOIN pg_namespace n ON n.nspname = s.name",
-            (schema,),
-        ).fetchone()
+        return schema_visibility_from_connection(conn, schema)
+
+
+def schema_visibility_from_connection(conn: psycopg.Connection, schema: str) -> tuple[bool, bool]:
+    row = conn.execute(
+        "SELECT n.oid IS NOT NULL, COALESCE(has_schema_privilege(n.oid, 'USAGE'), false) "
+        "FROM (SELECT %s::text AS name) s LEFT JOIN pg_namespace n ON n.nspname = s.name",
+        (schema,),
+    ).fetchone()
     return bool(row[0]), bool(row[1])
 
 
