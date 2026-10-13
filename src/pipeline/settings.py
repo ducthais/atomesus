@@ -42,6 +42,9 @@ class PipelineSettings(BaseSettings):
     azure_storage_container: str = ""
     max_rows: int = Field(default=1000, ge=1, le=10000)
     max_bytes: int = Field(default=2_000_000, ge=1024, le=10_000_000)
+    # VM 4 GB: dlt + dbt + DuckDB dùng chung hàng đợi, lập kế hoạch chỉ mở vài luồng.
+    max_parallel_sandbox: int = Field(default=1, ge=1)
+    max_parallel_planning: int = Field(default=3, ge=1)
 
     def validate_connection_key(self, app_env: str) -> None:
         key = self.connection_key.get_secret_value()

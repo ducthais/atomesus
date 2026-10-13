@@ -119,6 +119,19 @@ Hai lớp, nên bật cả hai:
 
 ## 5. Vận hành
 
+VM Azure B2s có 4 GB RAM: giữ backend ở **một tiến trình uvicorn** và đặt hai biến trong môi trường backend
+(Compose đọc từ `~/atomesus/.env`):
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `PIPELINE_MAX_PARALLEL_SANDBOX` | `1` | Số sandbox dlt + dbt + DuckDB chạy đồng thời, dùng chung cho run thường, batch, optimizer, tối ưu thủ công và regression. |
+| `PIPELINE_MAX_PARALLEL_PLANNING` | `3` | Số luồng lập kế hoạch đồng thời trong mỗi batch, tránh mở tới 20 luồng trên VM 4 GB. |
+
+Cả hai phải là số nguyên từ 1. Run vượt số chỗ sandbox chờ theo FIFO, timeline ghi
+`Đang xếp hàng chạy thử (vị trí k)`; thời gian chờ không tính vào `phase_timeout_sec` và vẫn hủy được.
+Không tăng số sandbox trên VM 4 GB khi chưa đo RAM thực tế. Bộ giới hạn dùng chung trong một tiến trình;
+nhiều worker uvicorn sẽ có các bộ giới hạn riêng.
+
 ```bash
 ssh -i <khoa-ssh> <user>@<IP>
 cd atomesus

@@ -2,12 +2,15 @@
 
 from src.agents.nodes.common import AgentDeps
 from src.agents.state import AgentState
+from src.codegen.sandbox import call_sandbox
 from src.spec.models import Spec
 
 
 def sandbox_run_node(deps: AgentDeps):
     def node(state: AgentState) -> dict:
-        result = deps.sandbox(Spec.model_validate(state["spec"]), state["generated_files"], deps.policy, deps.settings)
+        result = call_sandbox(
+            deps.sandbox, Spec.model_validate(state["spec"]), state["generated_files"], deps.policy, deps.settings
+        )
         return {
             "status": result.status,
             "stage_reached": result.stage_reached,

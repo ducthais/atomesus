@@ -16,11 +16,12 @@ from uuid import uuid4
 
 from src.agents import optimizer
 from src.agents.nodes.common import AgentDeps
-from src.agents.service import Job, _event, _guarded, _save
+from src.agents.service import Job, _deps_for_store, _event, _guarded, _save
 from src.agents.state import AgentState
 from src.agents.timeout import timed
 from src.agents.validate import validate_spec
 from src.codegen.render import RenderError, file_hashes, render
+from src.codegen.sandbox import call_sandbox
 from src.pipeline.postgres import SourceUnavailableError
 from src.run_report import RunReport
 from src.spec.models import Spec
@@ -98,7 +99,7 @@ def run(state: AgentState, deps: AgentDeps) -> AgentState:
     measure = timed(
         deps,
         "test_run",
-        lambda _s: {"result": deps.sandbox(spec, files, deps.policy, deps.settings, rerun_model=samples)},
+        lambda _s: {"result": call_sandbox(deps.sandbox, spec, files, deps.policy, deps.settings, rerun_model=samples)},
     )
     measured = measure(state)
     baseline = measured.get("result")
@@ -142,6 +143,7 @@ def run(state: AgentState, deps: AgentDeps) -> AgentState:
 def start_manual_optimize(parent: RunReport, actor: str, deps: AgentDeps, store_path: str) -> tuple[RunReport, Job]:
     """Ghi run tối ưu (VALIDATING) ngay; việc chạy nền chạy lại pipeline và optimizer, không gọi LLM."""
     initial, created_at = initial_state(parent, actor), datetime.now(UTC)
+    deps = _deps_for_store(deps, store_path)
     started = _save(initial, created_at, store_path)
 
     def job() -> RunReport:

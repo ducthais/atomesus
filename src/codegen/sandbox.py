@@ -14,7 +14,11 @@ import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -41,6 +45,104 @@ CONNECTION_ERRORS = (
     "Max retries exceeded",
 )
 PASSTHROUGH_ENV = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA")
+
+
+class SandboxWaitClock:
+    """Đồng hồ phase chỉ tính công việc, không tính thời gian chờ chỗ chạy thử."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._started = time.monotonic()
+        self._waiting: float | None = None
+        self._waited = 0.0
+
+    def wait(self, waiting: bool) -> None:
+        with self._lock:
+            now = time.monotonic()
+            if waiting:
+                self._waiting = now
+            elif self._waiting is not None:
+                self._waited += now - self._waiting
+                self._waiting = None
+
+    def remaining(self, seconds: float) -> float:
+        with self._lock:
+            now = self._waiting if self._waiting is not None else time.monotonic()
+            return seconds - (now - self._started - self._waited)
+
+
+_sandbox_local = threading.local()
+_sandbox_condition = threading.Condition()
+_sandbox_waiters: deque[object] = deque()
+_sandbox_active = 0
+
+
+@contextmanager
+def sandbox_wait_context(clock: SandboxWaitClock, check_cancelled: Callable, progress: Callable):
+    _sandbox_local.wait_context = (clock, check_cancelled, progress)
+    try:
+        yield
+    finally:
+        del _sandbox_local.wait_context
+
+
+@contextmanager
+def sandbox_slot(settings: PipelineSettings):
+    """Một hàng FIFO toàn tiến trình; chỗ chỉ được trả khi công việc đã thoát, kể cả timeout."""
+    global _sandbox_active
+    if getattr(_sandbox_local, "has_slot", False):
+        raise_if_phase_cancelled()
+        yield
+        return
+    context = getattr(_sandbox_local, "wait_context", None)
+    clock, check_cancelled, progress = context or (None, raise_if_phase_cancelled, lambda _position: None)
+    ticket, acquired, position = object(), False, None
+    if clock:
+        clock.wait(True)
+    try:
+        with _sandbox_condition:
+            _sandbox_waiters.append(ticket)
+        while True:
+            raise_if_phase_cancelled()
+            check_cancelled()
+            with _sandbox_condition:
+                if _sandbox_waiters[0] is ticket and _sandbox_active < getattr(settings, "max_parallel_sandbox", 1):
+                    _sandbox_waiters.popleft()
+                    _sandbox_active += 1
+                    acquired = True
+                    _sandbox_condition.notify_all()
+                    break
+                current = _sandbox_waiters.index(ticket) + 1
+            # Ghi SQLite ngoài khóa hàng đợi để không chặn các run khác trả chỗ.
+            if current != position:
+                progress(current)
+                position = current
+            with _sandbox_condition:
+                _sandbox_condition.wait(timeout=0.05)
+        if clock:
+            clock.wait(False)
+        _sandbox_local.has_slot = True
+        raise_if_phase_cancelled()
+        check_cancelled()
+        if position is not None:
+            progress(0)
+        yield
+    finally:
+        if clock:
+            clock.wait(False)
+        _sandbox_local.has_slot = False
+        with _sandbox_condition:
+            if acquired:
+                _sandbox_active -= 1
+            elif ticket in _sandbox_waiters:
+                _sandbox_waiters.remove(ticket)
+            _sandbox_condition.notify_all()
+
+
+def call_sandbox(sandbox: Callable, spec, files, policy, settings: PipelineSettings, **kwargs):
+    """Adapter sandbox (kể cả sandbox giả) dùng cùng chỗ với run_in_sandbox."""
+    with sandbox_slot(settings):
+        return sandbox(spec, files, policy, settings, **kwargs)
 
 
 @dataclass
@@ -431,6 +533,14 @@ def _post_run(checks: list[Check], preview: dict) -> tuple[GateResult, list[str]
 
 
 def run_in_sandbox(
+    spec: Spec, files: dict[str, str], policy: Policy, settings: PipelineSettings, rerun_model: int = 0
+) -> SandboxResult:
+    """Chạy P9–P12 dưới bộ giới hạn dùng chung toàn tiến trình; xem _run_in_sandbox."""
+    with sandbox_slot(settings):
+        return _run_in_sandbox(spec, files, policy, settings, rerun_model)
+
+
+def _run_in_sandbox(
     spec: Spec, files: dict[str, str], policy: Policy, settings: PipelineSettings, rerun_model: int = 0
 ) -> SandboxResult:
     """Chạy P9–P12 cho bộ file đã render. Không ném lỗi: mọi kết cục đều thành SandboxResult.

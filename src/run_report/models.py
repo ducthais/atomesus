@@ -152,6 +152,8 @@ TimelineEventName = Literal[
     "revised",
     "cancelled",
     "finished",
+    "sandbox_queued",
+    "sandbox_started",
 ]
 
 
@@ -167,6 +169,14 @@ class TimelineEvent(_Contract):
     event: TimelineEventName
     at: datetime
     actor: str | None = None
+    detail: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_detail(self, handler):
+        data = handler(self)
+        if self.detail is None:
+            data.pop("detail", None)
+        return data
 
 
 class Timing(_Contract):

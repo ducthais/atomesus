@@ -7,12 +7,12 @@ phase bị treo vào error_trace. Dùng cho graph (src/agents/graph.py), luồng
 
 import queue
 import threading
-import time
 from collections.abc import Callable
 
 from src.agents.cancellation import bind_phase_cancel, raise_if_phase_cancelled
 from src.agents.nodes.common import AgentDeps, CancellationRequestedError, Node, StopError
 from src.agents.state import AgentState
+from src.codegen.sandbox import SandboxWaitClock, sandbox_slot, sandbox_wait_context
 
 CANCEL_POLL_SEC = 1.0  # chu kỳ đọc cờ hủy trong lúc một phase đang chạy
 
@@ -38,6 +38,7 @@ def with_timeout(
     seconds: float,
     label: str | None = None,
     cancelled: Callable[[AgentState], bool] | None = None,
+    queue_progress: Callable[[AgentState, int], None] | None = None,
 ) -> Node:
     """Chạy node trong luồng riêng; quá `seconds` thì dừng run với INFRA_ERROR ghi phase bị treo.
 
@@ -49,18 +50,30 @@ def with_timeout(
     def run(state: AgentState) -> dict:
         box: queue.Queue = queue.Queue(maxsize=1)
         stop = threading.Event()
+        clock = SandboxWaitClock()
+
+        def check_cancelled() -> None:
+            if cancelled is not None and cancelled(state):
+                raise CancellationRequestedError
+
+        def progress(position: int) -> None:
+            if queue_progress:
+                queue_progress(state, position)
 
         def target() -> None:
             bind_phase_cancel(stop)
             try:
-                box.put((True, node(state)))
+                with sandbox_wait_context(clock, check_cancelled, progress):
+                    check_cancelled()
+                    value = node(state)
+                    check_cancelled()
+                    box.put((True, value))
             except BaseException as exc:  # chuyển lỗi về luồng của graph
                 box.put((False, exc))
 
         threading.Thread(target=target, name=f"phase-{stage}", daemon=True).start()
-        deadline = time.monotonic() + seconds
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = clock.remaining(seconds)
             try:
                 ok, value = box.get(timeout=max(0.0, min(remaining, CANCEL_POLL_SEC)))
                 break
@@ -69,7 +82,7 @@ def with_timeout(
             if cancelled is not None and cancelled(state):
                 stop.set()
                 raise CancellationRequestedError
-            if remaining <= CANCEL_POLL_SEC:
+            if clock.remaining(seconds) <= 0:
                 stop.set()
                 message = f"Phase {label or stage} chạy quá {seconds:g} giây (budgets.yml phase_timeout_sec), đã dừng."
                 return StopError("INFRA_ERROR", stage, message).update(state)
@@ -91,4 +104,18 @@ def timed(deps: AgentDeps, name: str, node: Node) -> Node:
     def cancelled(state: AgentState) -> bool:
         return bool(deps.cancelled and state.get("run_id") and deps.cancelled(state["run_id"]))
 
-    return with_timeout(node, stage, deps.policy.budgets.per_run.phase_timeout_sec * phases, label, cancelled)
+    def queue_progress(state: AgentState, position: int) -> None:
+        from src.agents.service import _record_sandbox_queue
+
+        if store_path := getattr(deps.settings, "store_path", None):
+            _record_sandbox_queue(state, store_path, position)
+
+    def run(state: AgentState) -> dict:
+        if name == "test_run":  # bao gồm adapter chạy lại bản đang deploy của regression
+            with sandbox_slot(deps.settings):
+                return node(state)
+        return node(state)
+
+    return with_timeout(
+        run, stage, deps.policy.budgets.per_run.phase_timeout_sec * phases, label, cancelled, queue_progress
+    )

@@ -14,6 +14,8 @@ bằng chứng ngay và trả về, phần còn lại chạy nền và ghi lại
 
 import logging
 from collections.abc import Callable
+from copy import copy
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -52,6 +54,12 @@ from src.run_report.store import (
 log = logging.getLogger(__name__)
 Job = Callable[[], RunReport]
 DEFAULT_CHECKPOINTER = MemorySaver()
+
+
+def _deps_for_store(deps: AgentDeps, store_path: str) -> AgentDeps:
+    settings = copy(deps.settings)
+    settings.store_path = store_path
+    return replace(deps, settings=settings)
 
 
 class PlanNotAwaitingError(Exception):
@@ -191,6 +199,7 @@ def _invoke(
 
 
 def _save(state: AgentState, created_at: datetime, store_path: str) -> RunReport:
+    state = _with_queue_timeline(state, store_path)
     report = _report(state, created_at)
     save_run_report(store_path, report)
     persisted = get_run_report(store_path, report.run_id)
@@ -199,6 +208,36 @@ def _save(state: AgentState, created_at: datetime, store_path: str) -> RunReport
     if state.get("generated_files"):
         save_run_files(store_path, report.run_id, report.version, state["generated_files"])
     return report
+
+
+def _record_sandbox_queue(state: AgentState, store_path: str, position: int) -> None:
+    run_id = state.get("run_id")
+    if not run_id:
+        return
+    report = get_run_report(store_path, run_id)
+    if report is None or report.status == "CANCELLED" or report.version != state.get("version", 1):
+        return
+    event = {
+        **_event("sandbox_queued" if position else "sandbox_started"),
+        "detail": f"Đang xếp hàng chạy thử (vị trí {position})" if position else "Bắt đầu chạy thử",
+    }
+    updated = RunReport.model_validate({**report.model_dump(), "timeline": [*report.timeline, event]})
+    save_run_report(store_path, updated)
+
+
+def _with_queue_timeline(state: AgentState, store_path: str) -> AgentState:
+    """Mốc hàng đợi được ghi giữa phase; giữ lại khi graph trả state và khi lưu kết quả cuối."""
+    current = get_run_report(store_path, state["run_id"])
+    if current is None or current.version != state["version"]:
+        return state
+    timeline = list(state.get("timeline", []))
+    known = {datetime.fromisoformat(event["at"]) for event in timeline}
+    timeline.extend(
+        event.model_dump(mode="json")
+        for event in current.timeline
+        if event.event in {"sandbox_queued", "sandbox_started"} and event.at not in known
+    )
+    return {**state, "timeline": sorted(timeline, key=lambda event: datetime.fromisoformat(event["at"]))}
 
 
 def _raise_if_cancelled(store_path: str, run_id: str) -> None:
@@ -220,7 +259,9 @@ class _Progress:
         _raise_if_cancelled(self.store_path, state["run_id"])
         if state.get("status") == "VALIDATING" and (not self.timeline or self.timeline[-1]["event"] != "spec_ready"):
             self.timeline.append(_event("spec_ready"))
-        save_run_report(self.store_path, _report({**state, "timeline": self.timeline}, self.created_at))
+        merged = _with_queue_timeline({**state, "timeline": self.timeline}, self.store_path)
+        self.timeline = merged["timeline"]
+        save_run_report(self.store_path, _report(merged, self.created_at))
 
 
 def _run(
@@ -232,6 +273,7 @@ def _run(
     plan_gate: bool = False,
     entry: str = "planner",
 ) -> RunReport:
+    deps = _deps_for_store(deps, store_path)
     _raise_if_cancelled(store_path, initial["run_id"])
     progress = _Progress(initial.get("timeline", []), created_at, store_path)
     state = _invoke(deps, initial, stop_after_spec=draft, progress=progress, stop_after_plan=plan_gate, entry=entry)
@@ -473,21 +515,22 @@ def start_continue(
 
     def job() -> RunReport:
         current = state
+        running_deps = _deps_for_store(deps, store_path)
         steps = {
-            "budget": budget_node(deps),
-            "arbitrate": arbitrate_node(deps),
-            "render": render_node(deps),
-            "test_run": sandbox_run_node(deps),
-            "optimize": optimize_node(deps),
+            "budget": budget_node(running_deps),
+            "arbitrate": arbitrate_node(running_deps),
+            "render": render_node(running_deps),
+            "test_run": sandbox_run_node(running_deps),
+            "optimize": optimize_node(running_deps),
         }
-        for node in (timed(deps, name, step) for name, step in steps.items()):
+        for node in (timed(running_deps, name, step) for name, step in steps.items()):
             _raise_if_cancelled(store_path, draft.run_id)
             if current["status"] not in RUNNING:
                 break
             current = {**current, **node(current)}
             _raise_if_cancelled(store_path, draft.run_id)
             if current["status"] in RUNNING:
-                save_run_report(store_path, _report(current, draft.created_at))
+                _save(current, draft.created_at, store_path)
         _raise_if_cancelled(store_path, draft.run_id)
         return _save({**current, "timeline": [*current["timeline"], _event("finished")]}, draft.created_at, store_path)
 

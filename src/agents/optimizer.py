@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from src.agents import budget
 from src.codegen import guard
 from src.codegen.render import RenderError, file_hashes, render
+from src.codegen.sandbox import call_sandbox
 from src.pipeline.postgres import SourceUnavailableError
 from src.spec.models import Spec
 
@@ -151,7 +152,9 @@ def _evaluate(proposal: Proposal, baseline, deps, run_id: str, version: int) -> 
         files = render(candidate, policy)
     except RenderError as exc:
         return reject(f"render lỗi: {exc}")
-    result = deps.sandbox(candidate, files, policy, settings, rerun_model=policy.budgets.optimizer.rerun_samples)
+    result = call_sandbox(
+        deps.sandbox, candidate, files, policy, settings, rerun_model=policy.budgets.optimizer.rerun_samples
+    )
     if result.status != "READY_FOR_REVIEW":
         last = result.error_trace[-1].get("error", "") if result.error_trace else ""
         return reject(f"chạy thử không đạt ({result.status}): {str(last)[:300]}")
