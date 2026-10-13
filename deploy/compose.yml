@@ -65,6 +65,7 @@ services:
       DAGSTER_HOST: 0.0.0.0
       DAGSTER_PORT: "3070"
       DAGSTER_CODE_READONLY: "1"
+      PIPELINE_CONNECTION_KEY: ${PIPELINE_CONNECTION_KEY:-}
     volumes:
       - ../data:/app/data
       # Chỉ deployer ghi; workspace.yaml đổi thì Dagster tự khởi động lại. Kết quả dbt từng lần chạy ghi vào

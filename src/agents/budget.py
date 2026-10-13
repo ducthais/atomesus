@@ -58,7 +58,7 @@ def _source_bytes(
             rows = rest_api.records(decl, settings, endpoint)
             sizes[source.id] = sum(len(json.dumps(row, ensure_ascii=False).encode()) for row in rows)
         else:
-            with postgres.connection(settings) as conn:
+            with postgres.connection(settings, decl) as conn:
                 row = conn.execute(TABLE_BYTES_SQL, (decl.schema_, source.table)).fetchone()
             sizes[source.id] = int(row[0]) if row else 0  # bảng không còn: schema_real/el_run báo lỗi rõ hơn
     return sizes

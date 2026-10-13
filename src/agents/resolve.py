@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.pipeline import connectors, files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
-from src.policy.models import Policy
+from src.policy.models import Policy, SourceDecl
 
 SAMPLE_ROWS = 20
 MAX_PARALLEL_SOURCES = 6  # bằng trần budgets.yml rules.max_tables_joined
@@ -18,14 +18,19 @@ class ResolveError(Exception):
     """Kế hoạch trỏ tới nguồn/đối tượng không đọc được."""
 
 
-def _tables(settings: PipelineSettings, schema: str) -> dict[str, list[str]]:
+def _tables(settings: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> dict[str, list[str]]:
     """Bảng → tên cột, cùng nguồn với GET /catalog (connectors): bỏ view và partition con."""
-    return {table: [c["name"] for c in cols] for table, cols in connectors.postgres_columns(settings, schema).items()}
+    options = {"decl": decl} if decl and decl.connection_ref.startswith("conn:") else {}
+    return {
+        table: [c["name"] for c in cols]
+        for table, cols in connectors.postgres_columns(settings, schema, **options).items()
+    }
 
 
-def _relations(settings: PipelineSettings, schema: str) -> list[str]:
+def _relations(settings: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> list[str]:
     """Khóa ngoại trong cùng schema dạng `bảng.cột -> bảng_đích.cột_đích`: planner ghép bảng theo đúng các quan hệ này."""
-    _, foreign = connectors.postgres_keys(settings, schema)
+    options = {"decl": decl} if decl and decl.connection_ref.startswith("conn:") else {}
+    _, foreign = connectors.postgres_keys(settings, schema, **options)
     return [
         f"{fk['table']}.{col} -> {fk['ref_table']}.{ref}"
         for fk in foreign
@@ -104,11 +109,12 @@ def catalog(policy: Policy, settings: PipelineSettings) -> dict:
         sources = {}
         for ref, decl in domain.sources.items():
             if decl.kind == "postgres":
+                options = {"decl": decl} if decl.connection_ref.startswith("conn:") else {}
                 sources[ref] = {
                     "kind": decl.kind,
                     "available": True,
-                    "objects": _tables(settings, decl.schema_),
-                    "relations": _relations(settings, decl.schema_),
+                    "objects": _tables(settings, decl.schema_, **options),
+                    "relations": _relations(settings, decl.schema_, **options),
                 }
             elif decl.kind == "rest_api":
                 sources[ref] = _api_entry(decl, settings)
@@ -148,7 +154,7 @@ def _snapshot_one(decl, item: dict, settings: PipelineSettings) -> dict:
     if decl.kind != "postgres":
         raise ResolveError(f"chưa hỗ trợ đọc nguồn {decl.kind} '{item['source_ref']}'")
     table = sql.Identifier(decl.schema_, item["object"])
-    with postgres.connection(settings) as conn:
+    with postgres.connection(settings, decl) as conn:
         columns = conn.execute(
             "SELECT column_name, data_type FROM information_schema.columns "
             "WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position",

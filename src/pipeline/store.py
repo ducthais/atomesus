@@ -215,6 +215,18 @@ def get_connection(path: str, connection_id: str, owner_id: str) -> tuple[dict[s
     return (dict(zip(fields, row[:-1], strict=True)), row[-1]) if row else None
 
 
+def get_connection_internal(path: str, connection_id: str) -> tuple[dict[str, Any], str] | None:
+    """Chỉ runtime dùng id đã được khai báo trong policy; API phải dùng get_connection có owner."""
+    with database(path) as conn:
+        row = conn.execute(
+            "SELECT id, owner_id, name, host, port, database_name, database_user, sslmode, created_at, password_encrypted"
+            " FROM connections WHERE id = ?",
+            (connection_id,),
+        ).fetchone()
+    fields = ("id", "owner_id", "name", "host", "port", "database", "user", "sslmode", "created_at")
+    return (dict(zip(fields, row[:-1], strict=True)), row[-1]) if row else None
+
+
 def save_connection_selection(path: str, connection_id: str, owner_id: str, schema: str, tables: list[str]) -> bool:
     with database(path) as conn:
         return bool(

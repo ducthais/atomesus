@@ -32,9 +32,9 @@ ORDER BY c.relname, a.attnum
 """
 
 
-def postgres_columns(config: PipelineSettings, schema: str) -> dict[str, list[dict]]:
+def postgres_columns(config: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> dict[str, list[dict]]:
     """Bảng và cột (tên, kiểu) mà tài khoản reader đọc được trong một schema."""
-    with postgres.connection(config) as conn:
+    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
         return postgres_columns_from_connection(conn, schema)
 
 
@@ -68,9 +68,11 @@ ORDER BY src.relname, c.conname
 """
 
 
-def postgres_keys(config: PipelineSettings, schema: str) -> tuple[dict[str, list[str]], list[dict]]:
+def postgres_keys(
+    config: PipelineSettings, schema: str, decl: SourceDecl | None = None
+) -> tuple[dict[str, list[str]], list[dict]]:
     """Khóa chính theo bảng và khóa ngoại (bảng, cột → bảng đích, cột đích) của một schema."""
-    with postgres.connection(config) as conn:
+    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
         return postgres_keys_from_connection(conn, schema)
 
 
@@ -103,13 +105,13 @@ def postgres_keys_from_connection(conn: psycopg.Connection, schema: str) -> tupl
 ROW_COUNT_CAP = 100_000
 
 
-def postgres_row_estimates(config: PipelineSettings, schema: str) -> dict[str, int]:
+def postgres_row_estimates(config: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> dict[str, int]:
     """Số dòng theo bảng mà không quét bảng lớn.
 
     Dùng thống kê của Postgres (pg_class.reltuples). Bảng chưa từng ANALYZE (reltuples = -1) thì đếm
     nhưng dừng ở ROW_COUNT_CAP + 1 dòng; giá trị đó nghĩa là "hơn ROW_COUNT_CAP".
     """
-    with postgres.connection(config) as conn:
+    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
         return postgres_row_estimates_from_connection(conn, schema)
 
 
@@ -136,9 +138,9 @@ def postgres_row_estimates_from_connection(
     return counts
 
 
-def schema_visibility(config: PipelineSettings, schema: str) -> tuple[bool, bool]:
+def schema_visibility(config: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> tuple[bool, bool]:
     """(schema có trong database, tài khoản đang dùng có quyền USAGE trên schema đó)."""
-    with postgres.connection(config) as conn:
+    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
         return schema_visibility_from_connection(conn, schema)
 
 
@@ -151,9 +153,9 @@ def schema_visibility_from_connection(conn: psycopg.Connection, schema: str) -> 
     return bool(row[0]), bool(row[1])
 
 
-def _empty_reason(config: PipelineSettings, schema: str) -> str:
+def _empty_reason(config: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> str:
     """Kết nối được nhưng không thấy bảng nào: nói rõ vì sao và cách sửa, thay vì trả danh sách rỗng."""
-    exists, usable = schema_visibility(config, schema)
+    exists, usable = schema_visibility(config, schema, decl) if decl else schema_visibility(config, schema)
     fix = (
         " Chạy `python scripts/load_pagila.py` (Postgres tạo từ trước khi repo có Pagila không tự nạp lại)."
         if schema == "pagila"
@@ -168,11 +170,12 @@ def _empty_reason(config: PipelineSettings, schema: str) -> str:
 
 def _postgres(decl: SourceDecl, config: PipelineSettings) -> dict:
     schema = decl.schema_
-    columns = postgres_columns(config, schema)
+    options = {"decl": decl} if decl.connection_ref.startswith("conn:") else {}
+    columns = postgres_columns(config, schema, **options)
     if not columns:
-        raise postgres.SourceUnavailableError(_empty_reason(config, schema))
-    primary, foreign = postgres_keys(config, schema)
-    estimates = postgres_row_estimates(config, schema)
+        raise postgres.SourceUnavailableError(_empty_reason(config, schema, **options))
+    primary, foreign = postgres_keys(config, schema, **options)
+    estimates = postgres_row_estimates(config, schema, **options)
     objects = [
         {
             "name": table,
