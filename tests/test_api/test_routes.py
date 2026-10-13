@@ -76,15 +76,17 @@ def catalog_api(tmp_path, monkeypatch):
     app.dependency_overrides[auth.settings] = lambda: config
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     monkeypatch.setattr(
-        connectors, "postgres_columns", lambda _c, schema: {"orders": [{"name": "order_id", "type": "integer"}]}
+        connectors,
+        "postgres_columns",
+        lambda _c, schema, decl=None: {"orders": [{"name": "order_id", "type": "integer"}]},
     )
-    monkeypatch.setattr(connectors, "postgres_keys", lambda _c, schema: ({"orders": ["order_id"]}, [FK]))
-    monkeypatch.setattr(connectors, "postgres_row_estimates", lambda _c, schema: {"orders": 30})
+    monkeypatch.setattr(connectors, "postgres_keys", lambda _c, schema, decl=None: ({"orders": ["order_id"]}, [FK]))
+    monkeypatch.setattr(connectors, "postgres_row_estimates", lambda _c, schema, decl=None: {"orders": 30})
     yield connectors
     app.dependency_overrides.pop(auth.settings, None)
 
 
-def _down(_config, schema):
+def _down(_config, schema, decl=None):
     from src.pipeline import postgres
 
     raise postgres.SourceUnavailableError("Không đọc được Postgres.")
@@ -171,8 +173,8 @@ def test_empty_postgres_schema_explains_how_to_fix(monkeypatch, schema, visibili
     from src.pipeline import connectors, postgres
     from src.policy.models import SourceDecl
 
-    monkeypatch.setattr(connectors, "postgres_columns", lambda _c, _s: {})
-    monkeypatch.setattr(connectors, "schema_visibility", lambda _c, _s: visibility)
+    monkeypatch.setattr(connectors, "postgres_columns", lambda _c, _s, decl=None: {})
+    monkeypatch.setattr(connectors, "schema_visibility", lambda _c, _s, decl=None: visibility)
     decl = SourceDecl.model_validate({"kind": "postgres", "connection_ref": "sandbox_pg", "schema": schema})
     with pytest.raises(
         postgres.SourceUnavailableError, match=expected.replace("(", r"\(").replace(")", r"\)").replace(".", r"\.")

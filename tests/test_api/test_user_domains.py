@@ -174,6 +174,48 @@ async def test_chat_without_selection_uses_only_the_engineers_policy(client, use
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path,message_key", [("/api/v1/agent/runs", "request"), ("/api/v1/chat", "message")])
+async def test_creating_run_or_chat_rejects_tables_outside_saved_selection(
+    client, user_domains, monkeypatch, path, message_key
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Không được lập kế hoạch với bảng ngoài lựa chọn")
+
+    monkeypatch.setattr(routes, "start_agent", unexpected)
+    monkeypatch.setattr(chat_api, "plan_agent", unexpected)
+    response = await client.post(
+        path,
+        json={
+            message_key: "Đọc bảng riêng",
+            "sources": [{"source_ref": SOURCE_A, "tables": ["orders", "private_table"]}],
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == f"bảng private_table không nằm trong các bảng đã chọn cho nguồn {SOURCE_A}"
+    assert user_domains.discovered == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path,message_key", [("/api/v1/agent/runs", "request"), ("/api/v1/chat", "message")])
+@pytest.mark.parametrize("source_ref,tables", [(SOURCE_A, []), ("sales_pg", ["other_table"])])
+async def test_run_and_chat_keep_empty_choice_and_yaml_table_behavior(
+    client, user_domains, monkeypatch, path, message_key, source_ref, tables
+):
+    expected_sources = [{"source_ref": source_ref, "tables": tables}]
+
+    def plan(request, created_by, deps, store_path, sources=None, parent_run_id=None):
+        assert sources == expected_sources
+        user_domains.calls.append(sources)
+        return _report(created_by, request, sources)
+
+    monkeypatch.setattr(routes, "start_agent", lambda *args: (plan(*args), lambda: None))
+    monkeypatch.setattr(chat_api, "plan_agent", plan)
+    response = await client.post(path, json={message_key: "Đọc đơn hàng", "sources": expected_sources})
+    assert response.status_code == (200 if path.endswith("chat") else 201), response.text
+    assert user_domains.calls == [expected_sources]
+
+
+@pytest.mark.asyncio
 async def test_selected_catalog_keeps_connection_error_handling(client, user_domains, monkeypatch):
     def down(decl, config):
         raise postgres.SourceUnavailableError("Không đọc được Postgres.")

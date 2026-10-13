@@ -34,7 +34,7 @@ ORDER BY c.relname, a.attnum
 
 def postgres_columns(config: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> dict[str, list[dict]]:
     """Bảng và cột (tên, kiểu) mà tài khoản reader đọc được trong một schema."""
-    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
+    with postgres.connection(config, decl) as conn:
         return postgres_columns_from_connection(conn, schema)
 
 
@@ -72,7 +72,7 @@ def postgres_keys(
     config: PipelineSettings, schema: str, decl: SourceDecl | None = None
 ) -> tuple[dict[str, list[str]], list[dict]]:
     """Khóa chính theo bảng và khóa ngoại (bảng, cột → bảng đích, cột đích) của một schema."""
-    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
+    with postgres.connection(config, decl) as conn:
         return postgres_keys_from_connection(conn, schema)
 
 
@@ -111,7 +111,7 @@ def postgres_row_estimates(config: PipelineSettings, schema: str, decl: SourceDe
     Dùng thống kê của Postgres (pg_class.reltuples). Bảng chưa từng ANALYZE (reltuples = -1) thì đếm
     nhưng dừng ở ROW_COUNT_CAP + 1 dòng; giá trị đó nghĩa là "hơn ROW_COUNT_CAP".
     """
-    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
+    with postgres.connection(config, decl) as conn:
         return postgres_row_estimates_from_connection(conn, schema)
 
 
@@ -140,7 +140,7 @@ def postgres_row_estimates_from_connection(
 
 def schema_visibility(config: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> tuple[bool, bool]:
     """(schema có trong database, tài khoản đang dùng có quyền USAGE trên schema đó)."""
-    with postgres.connection(config, decl) if decl else postgres.connection(config) as conn:
+    with postgres.connection(config, decl) as conn:
         return schema_visibility_from_connection(conn, schema)
 
 
@@ -155,7 +155,7 @@ def schema_visibility_from_connection(conn: psycopg.Connection, schema: str) -> 
 
 def _empty_reason(config: PipelineSettings, schema: str, decl: SourceDecl | None = None) -> str:
     """Kết nối được nhưng không thấy bảng nào: nói rõ vì sao và cách sửa, thay vì trả danh sách rỗng."""
-    exists, usable = schema_visibility(config, schema, decl) if decl else schema_visibility(config, schema)
+    exists, usable = schema_visibility(config, schema, decl)
     fix = (
         " Chạy `python scripts/load_pagila.py` (Postgres tạo từ trước khi repo có Pagila không tự nạp lại)."
         if schema == "pagila"
@@ -170,12 +170,11 @@ def _empty_reason(config: PipelineSettings, schema: str, decl: SourceDecl | None
 
 def _postgres(decl: SourceDecl, config: PipelineSettings) -> dict:
     schema = decl.schema_
-    options = {"decl": decl} if decl.connection_ref.startswith("conn:") else {}
-    columns = postgres_columns(config, schema, **options)
+    columns = postgres_columns(config, schema, decl)
     if not columns:
-        raise postgres.SourceUnavailableError(_empty_reason(config, schema, **options))
-    primary, foreign = postgres_keys(config, schema, **options)
-    estimates = postgres_row_estimates(config, schema, **options)
+        raise postgres.SourceUnavailableError(_empty_reason(config, schema, decl))
+    primary, foreign = postgres_keys(config, schema, decl)
+    estimates = postgres_row_estimates(config, schema, decl)
     objects = [
         {
             "name": table,
