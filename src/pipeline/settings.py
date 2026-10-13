@@ -1,3 +1,4 @@
+from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -6,6 +7,9 @@ class PipelineSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PIPELINE_", env_file=".env", extra="ignore")
     database_url: SecretStr = SecretStr("")
     store_path: str = "data/pipeline/runs.sqlite3"
+    connection_key: SecretStr = SecretStr("")
+    # Chỉ cho phép nguồn nội bộ ở development/test; staging/production luôn chặn.
+    connection_allow_private: bool = False
     # Tài khoản local/demo. Production vẫn chặn đăng nhập này trong auth.demo_only.
     engineer_password: SecretStr = SecretStr("Engineer@123")
     reviewer_password: SecretStr = SecretStr("Reviewer@123")
@@ -38,3 +42,14 @@ class PipelineSettings(BaseSettings):
     azure_storage_container: str = ""
     max_rows: int = Field(default=1000, ge=1, le=10000)
     max_bytes: int = Field(default=2_000_000, ge=1024, le=10_000_000)
+
+    def validate_connection_key(self, app_env: str) -> None:
+        key = self.connection_key.get_secret_value()
+        if not key:
+            if app_env in ("staging", "production"):
+                raise RuntimeError("Phải đặt PIPELINE_CONNECTION_KEY để mã hóa mật khẩu kết nối Postgres.")
+            return
+        try:
+            Fernet(key.encode())
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("PIPELINE_CONNECTION_KEY phải là khóa Fernet hợp lệ.") from exc

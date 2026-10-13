@@ -18,6 +18,7 @@ langgraph>=0.2.0
 
 # Nguồn Postgres và sandbox
 psycopg[binary]>=3.2,<4
+cryptography>=44
 duckdb>=1.4,<2
 # Chạy thử pipeline sinh ra (P9–P12): dlt đọc Postgres qua SQLAlchemy, dbt chạy trên DuckDB
 dlt[duckdb,sql_database]>=1.5,<2
