@@ -371,8 +371,7 @@ def source_rows(spec: Spec, policy: Policy, settings) -> tuple[str, list[dict]]:
     postgres_decl = postgres_decls[0] if postgres_decls else None
 
     def columns_of(schema: str) -> dict[str, dict[str, str]]:
-        options = {"decl": postgres_decl} if postgres_decl and postgres_decl.connection_ref.startswith("conn:") else {}
-        tables = connectors.postgres_columns(settings, schema, **options)
+        tables = connectors.postgres_columns(settings, schema, postgres_decl)
         return {table: {c["name"]: c["type"] for c in columns} for table, columns in tables.items()}
 
     inline = {}

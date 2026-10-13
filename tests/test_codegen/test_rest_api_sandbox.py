@@ -133,8 +133,8 @@ def test_reads_every_page_and_counts_distinct_keys(in_process):
 
 def test_catalog_and_snapshot_for_the_agent(in_process, monkeypatch):
     policy = load_policy()
-    monkeypatch.setattr(resolve, "_tables", lambda settings, schema: {})  # không cần Postgres cho phần này
-    monkeypatch.setattr(resolve, "_relations", lambda settings, schema: [])
+    monkeypatch.setattr(resolve, "_tables", lambda settings, schema, decl=None: {})  # không cần Postgres cho phần này
+    monkeypatch.setattr(resolve, "_relations", lambda settings, schema, decl=None: [])
     catalog = resolve.catalog(policy, in_process)
     api = catalog["sales"]["sources"]["sales_api"]
     assert api["available"] and "paid_at" in api["objects"]["payments"]
@@ -153,8 +153,8 @@ def test_catalog_and_snapshot_for_the_agent(in_process, monkeypatch):
 
 def test_api_down_only_disables_that_source(monkeypatch):
     policy = load_policy()
-    monkeypatch.setattr(resolve, "_tables", lambda settings, schema: {})
-    monkeypatch.setattr(resolve, "_relations", lambda settings, schema: [])
+    monkeypatch.setattr(resolve, "_tables", lambda settings, schema, decl=None: {})
+    monkeypatch.setattr(resolve, "_relations", lambda settings, schema, decl=None: [])
     down = PipelineSettings(_env_file=None, mock_api_url="http://127.0.0.1:9")
     api = resolve.catalog(policy, down)["sales"]["sources"]["sales_api"]
     assert api["available"] is False and "mock_api" in api["reason"] and "127.0.0.1" not in api["reason"]

@@ -86,10 +86,12 @@ async def test_drift_endpoint(client, tmp_path, monkeypatch):
     app.dependency_overrides[auth.settings] = lambda: config
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     monkeypatch.setattr(
-        connectors, "postgres_columns", lambda _c, schema: {"orders": [{"name": "order_id", "type": "integer"}]}
+        connectors,
+        "postgres_columns",
+        lambda _c, schema, decl=None: {"orders": [{"name": "order_id", "type": "integer"}]},
     )
-    monkeypatch.setattr(connectors, "postgres_keys", lambda _c, schema: ({}, []))
-    monkeypatch.setattr(connectors, "postgres_row_estimates", lambda _c, schema: {})
+    monkeypatch.setattr(connectors, "postgres_keys", lambda _c, schema, decl=None: ({}, []))
+    monkeypatch.setattr(connectors, "postgres_row_estimates", lambda _c, schema, decl=None: {})
     save_run_report(config.store_path, report("dep", 0, "DEPLOYED"))
     save_run_report(config.store_path, report("draft", 5))  # chưa duyệt: không kiểm tra
     try:

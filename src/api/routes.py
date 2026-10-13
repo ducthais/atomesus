@@ -73,6 +73,9 @@ def _checked_sources(body: AgentRunRequest, user: dict, deps: AgentDeps) -> list
             raise HTTPException(
                 422, f"Nguồn '{choice.source_ref}' ({decl.kind}) chưa hỗ trợ; chọn nguồn Postgres hoặc REST API."
             )
+        for table in choice.tables:
+            if decl.tables is not None and table not in decl.tables:
+                raise HTTPException(422, f"bảng {table} không nằm trong các bảng đã chọn cho nguồn {choice.source_ref}")
     return [choice.model_dump() for choice in body.sources]
 
 

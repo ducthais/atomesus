@@ -353,7 +353,8 @@ def test_legacy_catalog_helpers_keep_connection_lifecycle_and_results(monkeypatc
     opened, closed = [], []
 
     @contextmanager
-    def connection(config):
+    def connection(config, decl=None):
+        assert decl is None
         opened.append(config)
         try:
             yield source

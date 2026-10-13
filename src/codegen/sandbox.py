@@ -129,7 +129,7 @@ def _safe_output(output: str, env: dict[str, str]) -> str:
         if key.endswith("__CREDENTIALS"):
             secrets.add(value)
             password = urlsplit(value).password
-            if password:
+            if password and len(unquote(password)) >= 6:
                 secrets.update((password, unquote(password)))
     for secret in sorted(secrets, key=len, reverse=True):
         output = output.replace(secret, "[đã ẩn]")
@@ -170,7 +170,7 @@ def _run(command: list[str], sandbox: Path, env: dict[str, str], timeout: int, s
     if process.returncode != 0:
         output = _safe_output((stderr or stdout).strip(), env)
         raise _StopError("NEEDS_HUMAN", stage, output[-2000:] or f"{stage} thất bại (mã {process.returncode}).")
-    return _safe_output(stdout, env)
+    return stdout
 
 
 def _terminate_process_tree(process: subprocess.Popen) -> None:

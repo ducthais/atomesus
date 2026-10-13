@@ -140,21 +140,65 @@ def test_missing_user_template_is_a_clear_policy_error(policy_dir, selected_stor
         effective_policy(selected_store)
 
 
-def test_invalid_saved_selection_is_a_clear_policy_error(selected_store):
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("tables_json", "invalid"),
+        ("tables_json", "null"),
+        ("tables_json", "{}"),
+        ("tables_json", "[123]"),
+        ("schema_name", ""),
+        ("schema_name", "   "),
+    ],
+)
+def test_invalid_saved_selection_is_skipped_with_safe_warning(selected_store, caplog, column, value):
+    with store.database(selected_store.store_path) as conn:
+        conn.execute(f"UPDATE connection_selections SET {column} = ? WHERE connection_id = ?", (value, CONNECTION_A))
+    policy = effective_policy(selected_store)
+    assert DOMAIN_A not in policy.domains.domains
+    assert DOMAIN_A not in policy.objectives
+    assert DOMAIN_B in policy.domains.domains
+    yaml = load_policy()
+    for name, domain in yaml.domains.domains.items():
+        assert policy.domains.domains[name] == domain
+        assert policy.objectives[name] == yaml.objectives[name]
+    assert any(record.levelname == "WARNING" and "Bỏ qua lựa chọn" in record.message for record in caplog.records)
+    for secret in ("host-khong-duoc-doc", "user-khong-duoc-doc", "mat-khau-ma-hoa"):
+        assert secret not in caplog.text
+    assert effective_policy(selected_store, "minh") == yaml
+
+
+@pytest.mark.parametrize("second_id,length", [("12345678-collision", 12), ("12345678-aaa-collision", None)])
+def test_short_id_collision_does_not_overwrite_a_domain(selected_store, caplog, second_id, length):
+    with store.database(selected_store.store_path) as conn:
+        conn.execute("UPDATE connections SET id = ? WHERE id = 'unselected'", (second_id,))
+    store.save_connection_selection(selected_store.store_path, second_id, "minh", "other", ["other_table"])
+    policy = effective_policy(selected_store)
+    for connection_id, schema, tables in [
+        (CONNECTION_A, "shop", ["orders", "customers"]),
+        (second_id, "other", ["other_table"]),
+    ]:
+        prefix = connection_id[:length] if length else connection_id
+        domain = policy.domains.domains[f"u_{prefix}"]
+        source = domain.sources[f"c_{prefix}"]
+        assert source.connection_ref == f"conn:{connection_id}"
+        assert source.schema_ == schema and source.tables == tables
+        assert policy.objectives[f"u_{prefix}"] == policy.objectives["_user_default"]
+    assert DOMAIN_A not in policy.domains.domains
+    assert DOMAIN_B in policy.domains.domains
+    assert "tiền tố id dài hơn" in caplog.text
+
+
+def test_invalid_domain_is_skipped_without_logging_its_values(selected_store, caplog):
     with store.database(selected_store.store_path) as conn:
         conn.execute(
-            "UPDATE connection_selections SET tables_json = ? WHERE connection_id = ?", ("invalid", CONNECTION_A)
+            "UPDATE users SET email = ? WHERE id = 'minh'", ("user-khong-duoc-doc@host-khong-duoc-doc invalid",)
         )
-    with pytest.raises(PolicyError, match="Không đọc được lựa chọn"):
-        effective_policy(selected_store)
-
-
-def test_short_id_collision_does_not_overwrite_a_domain(selected_store):
-    with store.database(selected_store.store_path) as conn:
-        conn.execute("UPDATE connections SET id = ? WHERE id = 'unselected'", ("12345678-collision",))
-    store.save_connection_selection(selected_store.store_path, "12345678-collision", "minh", "shop", ["orders"])
-    with pytest.raises(PolicyError, match="trùng tên"):
-        effective_policy(selected_store)
+    policy = effective_policy(selected_store)
+    assert DOMAIN_A not in policy.domains.domains and DOMAIN_A not in policy.objectives
+    assert DOMAIN_B in policy.domains.domains and "sales" in policy.domains.domains
+    assert "domain không hợp lệ" in caplog.text
+    assert "host-khong-duoc-doc" not in caplog.text and "user-khong-duoc-doc" not in caplog.text
 
 
 def test_corrupt_store_is_not_silently_ignored(tmp_path):

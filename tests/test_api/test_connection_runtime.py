@@ -169,6 +169,16 @@ def test_internal_store_lookup_does_not_change_owner_scoped_lookup(runtime):
     assert store.get_connection_internal(r.config.store_path, "missing") is None
 
 
+def test_snapshot_reads_a_selected_table(runtime):
+    decl = runtime.decl.model_copy(update={"tables": ["orders"]})
+    policy = with_sources(runtime.policy, {"sales_pg": decl})
+    plan = {"domain": "sales", "sources": [{"id": "orders", "source_ref": "sales_pg", "object": "orders"}]}
+    snapshot = resolve.snapshot(plan, policy, runtime.config)["orders"]
+    assert snapshot["columns"] == SALES_COLUMNS["orders"]
+    assert len(snapshot["sample_rows"]) == 2
+    runtime.opened.assert_called_once()
+
+
 def test_legacy_refs_keep_platform_connection_and_url(runtime):
     r = runtime
     for decl in (None, SourceDecl(kind="postgres", connection_ref="sandbox_pg", schema="sales_raw")):
