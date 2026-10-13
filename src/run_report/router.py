@@ -11,10 +11,11 @@ from src.deployer.manifest import ManifestError
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
+from src.run_report.access import viewable_run, visible_run_ids
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, Deployment, RunReport, RunStatus
 from src.run_report.store import _database as run_report_database
-from src.run_report.store import get_run_files, get_run_report, list_run_reports, save_run_report, transition_run_report
+from src.run_report.store import get_run_files, list_run_reports, save_run_report, transition_run_report
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
 
@@ -106,36 +107,39 @@ def rework_deps(config: PipelineSettings = Depends(settings)) -> Callable[[], An
 
 
 @router.get("", response_model=list[RunReport])
-async def list_runs(status: RunStatus | None = None, config: PipelineSettings = Depends(settings)) -> list[RunReport]:
-    """Lịch sử run từ sổ bằng chứng, mới nhất trước, lọc theo status (SPEC §15)."""
-    return list_run_reports(config.store_path, status)
+async def list_runs(
+    status: RunStatus | None = None, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
+) -> list[RunReport]:
+    """Lịch sử run từ sổ bằng chứng, mới nhất trước, lọc theo status (SPEC §15); chỉ run người dùng được thấy."""
+    return list_run_reports(config.store_path, status, run_ids=visible_run_ids(user, config.store_path))
 
 
 @router.get("/{run_id}", response_model=RunReport)
-async def get_run(run_id: str, config: PipelineSettings = Depends(settings)) -> RunReport:
+async def get_run(
+    run_id: str, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
+) -> RunReport:
     """RunReport đầy đủ của một run (SPEC §15)."""
-    report = get_run_report(config.store_path, run_id)
-    if report is None:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy run {run_id}")
-    return report
+    return viewable_run(config.store_path, run_id, user)
 
 
 @router.get("/{run_id}/compare")
-async def compare_run(run_id: str, base: str | None = None, config: PipelineSettings = Depends(settings)) -> dict:
+async def compare_run(
+    run_id: str,
+    base: str | None = None,
+    user: dict = Depends(current_user),
+    config: PipelineSettings = Depends(settings),
+) -> dict:
     """So sánh run với một phiên bản khác của cùng pipeline và đánh giá ảnh hưởng nếu duyệt.
 
-    Không truyền `base` thì tự chọn: run cha → bản đang chạy trên Dagster → bản trước của cùng model.
+    Không truyền `base` thì tự chọn: run cha → bản đang chạy trên Dagster → bản trước của cùng model. Chỉ so với
+    run người dùng được thấy: bản của người khác không bao giờ làm base.
     """
-    report = get_run_report(config.store_path, run_id)
-    if report is None:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy run {run_id}")
+    report = viewable_run(config.store_path, run_id, user)
     if not (report.spec or {}).get("sources"):
         return {"available": False, "reason": "Run chưa có Spec nên chưa có gì để so sánh."}
-    reports = list_run_reports(config.store_path)
+    reports = list_run_reports(config.store_path, run_ids=visible_run_ids(user, config.store_path))
     if base:
-        chosen, reason = get_run_report(config.store_path, base), "bản được chọn để so"
-        if chosen is None:
-            raise HTTPException(status_code=404, detail=f"Không tìm thấy run {base}")
+        chosen, reason = viewable_run(config.store_path, base, user), "bản được chọn để so"
     else:
         chosen, reason = pick_base(report, reports)
     if chosen is None:
@@ -151,11 +155,14 @@ async def compare_run(run_id: str, base: str | None = None, config: PipelineSett
 
 
 @router.get("/{run_id}/files")
-async def get_files(run_id: str, version: int | None = None, config: PipelineSettings = Depends(settings)) -> dict:
+async def get_files(
+    run_id: str,
+    version: int | None = None,
+    user: dict = Depends(current_user),
+    config: PipelineSettings = Depends(settings),
+) -> dict:
     """Nội dung đầy đủ các file sinh ra của một version (mặc định version hiện tại của run)."""
-    report = get_run_report(config.store_path, run_id)
-    if report is None:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy run {run_id}")
+    report = viewable_run(config.store_path, run_id, user)
     version = version or report.version
     return {"run_id": run_id, "version": version, "files": get_run_files(config.store_path, run_id, version)}
 
@@ -164,9 +171,8 @@ def _reviewable(run_id: str, body: ReviewRequest, user: dict, store_path: str) -
     """Điều kiện chung của mọi quyết định review (bất biến 3, SPEC §11.1)."""
     if user["role"] != "Reviewer":
         raise HTTPException(403, "Chỉ Reviewer được duyệt hoặc từ chối run.")
-    report = get_run_report(store_path, run_id)
-    if report is None:
-        raise HTTPException(404, f"Không tìm thấy run {run_id}")
+    # Reviewer chỉ thấy (và duyệt) run của Engineer đã mời mình.
+    report = viewable_run(store_path, run_id, user)
     if report.created_by == user["id"]:
         raise HTTPException(403, "Không được tự duyệt run của mình.")
     if report.status != "READY_FOR_REVIEW":
@@ -285,14 +291,12 @@ def deploy_run(
     if user["role"] != "Reviewer":
         raise HTTPException(403, "Chỉ Reviewer được deploy run.")
     try:
-        report = get_run_report(config.store_path, run_id)
+        report = viewable_run(config.store_path, run_id, user)
     except ValidationError:
         # RunReport tự kiểm chữ ký: bản lưu có approval lệch files_hash / version thì không đọc được thành RunReport.
         raise HTTPException(
             409, "Chữ ký duyệt không khớp bộ file hoặc version hiện tại nên không deploy được."
         ) from None
-    if report is None:
-        raise HTTPException(404, f"Không tìm thấy run {run_id}")
     if report.status != "APPROVED":
         raise HTTPException(409, f"Run đang ở trạng thái {report.status}, chỉ run đã duyệt mới deploy được.")
     approval = report.approval
@@ -394,9 +398,7 @@ def request_changes(
     """Reviewer yêu cầu sửa đúng bản đang xem; version mới chạy lại từ bước viết Spec với feedback."""
     if user["role"] != "Reviewer":
         raise HTTPException(403, "Chỉ Reviewer được yêu cầu sửa run.")
-    report = get_run_report(config.store_path, run_id)
-    if report is None:
-        raise HTTPException(404, f"Không tìm thấy run {run_id}")
+    report = viewable_run(config.store_path, run_id, user)
     if report.created_by == user["id"]:
         raise HTTPException(403, "Không được review run của mình.")
     if report.status != "READY_FOR_REVIEW":
@@ -424,9 +426,7 @@ def cancel_run(
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
     """Engineer hủy run của mình; job nền dừng hợp tác sau phase hiện tại và không thể ghi đè trạng thái này."""
-    report = get_run_report(config.store_path, run_id)
-    if report is None:
-        raise HTTPException(404, f"Không tìm thấy run {run_id}")
+    report = viewable_run(config.store_path, run_id, user)
     if user["role"] != "Engineer" or report.created_by != user["id"]:
         raise HTTPException(403, "Chỉ Engineer tạo run được hủy run của mình.")
     cancellable = {"DRAFT", "PLAN_CONFIRMED", "GENERATING", "VALIDATING"}

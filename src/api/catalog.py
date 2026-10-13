@@ -8,6 +8,7 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.policy.models import Policy
+from src.run_report.access import visible_run_ids
 from src.run_report.drift import detect, live_pipelines
 from src.run_report.store import list_run_reports
 from src.spec.models import Spec
@@ -155,7 +156,9 @@ def schema_drift(user: dict = Depends(current_user), config: PipelineSettings = 
             raise cache[ref]
         return cache[ref]
 
-    pipelines = [detect(report, tables_of) for report in live_pipelines(list_run_reports(config.store_path))]
+    visible = visible_run_ids(user, config.store_path)
+    reports = list_run_reports(config.store_path, run_ids=visible)
+    pipelines = [detect(report, tables_of) for report in live_pipelines(reports)]
     return {"checked_at": datetime.now(UTC).isoformat(), "pipelines": pipelines}
 
 
@@ -174,7 +177,12 @@ def reconcile_deployed(
         raise HTTPException(403, "Chỉ Engineer được đối soát pipeline đã deploy.")
     import duckdb
 
-    live = [r for r in live_pipelines(list_run_reports(config.store_path, limit=1000)) if r.domain == domain]
+    visible = visible_run_ids(user, config.store_path)
+    live = [
+        r
+        for r in live_pipelines(list_run_reports(config.store_path, limit=1000, run_ids=visible))
+        if r.domain == domain
+    ]
     report = next((r for r in live if r.spec and r.spec.get("transform", {}).get("model_name") == model), None)
     if report is None:
         raise HTTPException(404, f"Không có pipeline đã duyệt nào tạo gold.{model} trong domain {domain}.")

@@ -16,17 +16,15 @@ from src.chat import answers, store
 from src.chat.models import ChatMessage, ChatRequest, ChatResponse
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
+from src.run_report.access import viewable_run
 from src.run_report.models import RunReport
-from src.run_report.store import get_run_report
 
 router = APIRouter(tags=["chat"])
 
 
-def _existing_run(store_path: str, run_id: str) -> RunReport:
-    report = get_run_report(store_path, run_id)
-    if report is None:
-        raise HTTPException(404, f"Không tìm thấy run {run_id}")
-    return report
+def _existing_run(store_path: str, run_id: str, user: dict) -> RunReport:
+    """Run mà người dùng được thấy; run của người khác trả 404 như không tồn tại."""
+    return viewable_run(store_path, run_id, user)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -53,7 +51,7 @@ def post_chat(
             report = plan_agent(message, user["id"], deps, config.store_path, sources=sources)
         intent, reply = "new_request", answers.created_reply(report)
     elif answers.intent(message) == "revise":
-        report = _existing_run(config.store_path, body.run_id)
+        report = _existing_run(config.store_path, body.run_id, user)
         if user["role"] != "Engineer":
             raise HTTPException(403, "Reviewer không sửa pipeline qua chat; dùng nút Yêu cầu sửa trên run.")
         if report.created_by != user["id"]:
@@ -65,7 +63,7 @@ def post_chat(
         background.add_task(job)
         intent, reply = "revise", answers.revised_reply(report, message)
     else:
-        report = _existing_run(config.store_path, body.run_id)
+        report = _existing_run(config.store_path, body.run_id, user)
         limit = deps.policy.budgets.per_run.max_chat_calls
         if store.count_questions(config.store_path, report.run_id) >= limit:
             raise HTTPException(429, f"Run đã dùng hết {limit} câu hỏi (budgets.yml: per_run.max_chat_calls).")
@@ -75,7 +73,9 @@ def post_chat(
     return ChatResponse(intent=intent, reply=reply, run_id=report.run_id, report=report)
 
 
-@router.get("/runs/{run_id}/messages", response_model=list[ChatMessage], dependencies=[Depends(current_user)])
-def get_messages(run_id: str, config: PipelineSettings = Depends(settings)) -> list[ChatMessage]:
-    _existing_run(config.store_path, run_id)
+@router.get("/runs/{run_id}/messages", response_model=list[ChatMessage])
+def get_messages(
+    run_id: str, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
+) -> list[ChatMessage]:
+    _existing_run(config.store_path, run_id, user)
     return store.list_messages(config.store_path, run_id)

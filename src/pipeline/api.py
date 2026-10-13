@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import get_settings
 from src.pipeline import email as email_delivery
@@ -22,6 +23,8 @@ from src.pipeline.auth import (
     ACCOUNTS,
     COOKIE,
     COOKIE_PATH,
+    DEMO_ENGINEER,
+    DEMO_REVIEWER,
     SESSION_SECONDS,
     USERS,
     current_user,
@@ -44,6 +47,34 @@ MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema ngu�
 VERIFICATION_SECONDS = 600
 MAX_VERIFICATION_ATTEMPTS = 5
 REGISTRATION_IP_SECONDS = 600  # mỗi IP đăng ký được 1 tài khoản trong cửa sổ này
+INVITE_SECONDS = 7 * 24 * 3600
+MAX_ACTIVE_INVITES = 20  # lời mời còn hạn chưa dùng của mỗi Engineer
+INVITE_PATH = "/invite/"
+INVITE_INVALID = "Link mời không hợp lệ."
+INVITE_GONE = "Link mời đã hết hạn hoặc đã được dùng. Hãy xin người mời gửi link mới."
+
+
+class InviteRegisterRequest(RegisterRequest):
+    """Đăng ký; kèm `invite_token` (link mời của Engineer) thì tài khoản tạo ra là Reviewer đã liên kết."""
+
+    invite_token: str | None = Field(default=None, min_length=16, max_length=128)
+
+
+class AcceptInviteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=16, max_length=128)
+
+
+def _invite_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _check_invite(state: str) -> None:
+    """Token sai: 404; hết hạn / đã dùng: 410. Không thông báo nào nói ai đã mời."""
+    if state == "missing":
+        raise HTTPException(404, INVITE_INVALID)
+    if state != "ok":
+        raise HTTPException(410, INVITE_GONE)
 
 
 @router.get("/users", dependencies=[Depends(current_user)])
@@ -145,16 +176,23 @@ def client_ip(request: Request) -> str:
 
 
 @router.post("/register", status_code=202, dependencies=[Depends(demo_only)])
-def register(body: RegisterRequest, request: Request, response: Response, config: PipelineSettings = Depends(settings)):
-    """Đăng ký tài khoản Engineer. Mỗi IP một lần mỗi REGISTRATION_IP_SECONDS.
+def register(
+    body: InviteRegisterRequest, request: Request, response: Response, config: PipelineSettings = Depends(settings)
+):
+    """Đăng ký tài khoản Engineer; kèm `invite_token` thì tạo Reviewer liên kết với Engineer đã mời. Mỗi IP một
+    lần mỗi REGISTRATION_IP_SECONDS.
 
     `registration_email_verification` tắt: tạo tài khoản, đăng nhập ngay và trả 201. Bật: gửi mã email, trả 202,
-    tài khoản chỉ được tạo ở /register/verify.
+    tài khoản chỉ được tạo ở /register/verify (lời mời được dùng lúc đó).
     """
     if body.username in ACCOUNTS or body.username in USERS:
         raise HTTPException(409, "Tên đăng nhập này đã được sử dụng.")
     if store.email_or_username_exists(config.store_path, body.email, body.username):
         raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.")
+    invite_hash = _invite_hash(body.invite_token) if body.invite_token else None
+    if invite_hash:
+        # Kiểm trước khi giữ lượt của IP: link sai không làm mất lượt đăng ký.
+        _check_invite(store.invite_state(config.store_path, invite_hash, time.time()))
     ip = client_ip(request)
     wait = store.claim_registration_slot(config.store_path, ip, REGISTRATION_IP_SECONDS)
     if wait > 0:
@@ -167,19 +205,20 @@ def register(body: RegisterRequest, request: Request, response: Response, config
 
     if not config.registration_email_verification:
         try:
-            user = store.create_user(
-                config.store_path,
-                user_id=f"user_{uuid4().hex}",
+            user = _create_account(
+                config,
+                invite_hash,
                 username=body.username,
                 name=body.name,
-                role="Engineer",
                 password_hash=hash_password(body.password),
-                created_at=time.time(),
                 email=body.email,
             )
         except sqlite3.IntegrityError as exc:  # request đồng thời vừa lấy cùng email/username
             store.release_registration_slot(config.store_path, ip)
             raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.") from exc
+        except HTTPException:  # lời mời vừa bị dùng / hết hạn giữa lúc kiểm và lúc tạo
+            store.release_registration_slot(config.store_path, ip)
+            raise
         _start_session(response, user["id"], config)
         response.status_code = 201
         return user
@@ -193,6 +232,7 @@ def register(body: RegisterRequest, request: Request, response: Response, config
         password_hash=hash_password(body.password),
         verification_hash=_verification_hash(body.email, code),
         expires=time.time() + VERIFICATION_SECONDS,
+        invite_hash=invite_hash,
     )
     try:
         sent = email_delivery.send_verification_code(config, body.email, code)
@@ -216,11 +256,11 @@ def register(body: RegisterRequest, request: Request, response: Response, config
 def verify_registration(
     body: VerifyRegistrationRequest, response: Response, config: PipelineSettings = Depends(settings)
 ):
-    """Xác thực OTP một lần, tạo Engineer rồi đăng nhập ngay."""
+    """Xác thực OTP một lần, tạo Engineer (hoặc Reviewer nếu đăng ký qua link mời) rồi đăng nhập ngay."""
     pending = store.get_pending_registration(config.store_path, body.email)
     if pending is None:
         raise HTTPException(404, "Không tìm thấy yêu cầu đăng ký. Vui lòng gửi lại mã.")
-    email, username, name, password_hash, encoded, expires, attempts = pending
+    email, username, name, password_hash, encoded, expires, attempts, invite_hash = pending
     if expires < time.time():
         store.delete_pending_registration(config.store_path, email)
         raise HTTPException(410, "Mã xác thực đã hết hạn. Vui lòng gửi lại mã.")
@@ -235,7 +275,25 @@ def verify_registration(
         store.delete_pending_registration(config.store_path, email)
         raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.")
     try:
-        user = store.create_user(
+        user = _create_account(
+            config, invite_hash, username=username, name=name, password_hash=password_hash, email=email
+        )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.") from exc
+    except HTTPException:  # lời mời hết hạn / đã dùng trong lúc chờ mã: bỏ yêu cầu, không tạo tài khoản nào
+        store.delete_pending_registration(config.store_path, email)
+        raise
+    store.delete_pending_registration(config.store_path, email)
+    _start_session(response, user["id"], config)
+    return user
+
+
+def _create_account(
+    config: PipelineSettings, invite_hash: str | None, *, username: str, name: str, password_hash: str, email: str
+) -> dict:
+    """Engineer khi không có lời mời; có thì Reviewer + liên kết + dùng lời mời trong cùng một giao dịch."""
+    if invite_hash is None:
+        return store.create_user(
             config.store_path,
             user_id=f"user_{uuid4().hex}",
             username=username,
@@ -245,11 +303,89 @@ def verify_registration(
             created_at=time.time(),
             email=email,
         )
-    except sqlite3.IntegrityError as exc:
-        raise HTTPException(409, "Email hoặc tên đăng nhập này đã được sử dụng.") from exc
-    store.delete_pending_registration(config.store_path, email)
-    _start_session(response, user["id"], config)
+    state, user = store.create_invited_reviewer(
+        config.store_path,
+        invite_hash,
+        time.time(),
+        user_id=f"user_{uuid4().hex}",
+        username=username,
+        name=name,
+        password_hash=password_hash,
+        email=email,
+    )
+    if user is None:
+        _check_invite(state)
+        raise HTTPException(404, INVITE_INVALID)
     return user
+
+
+def _engineer_only(user: dict) -> None:
+    if user["role"] != "Engineer":
+        raise HTTPException(403, "Chỉ Engineer được mời và quản lý Reviewer của mình.")
+
+
+@router.post("/invites", status_code=201)
+def create_invite(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)):
+    """Engineer tạo link mời Reviewer (ADR-0001 D1). Token chỉ trả một lần ở đây; máy chủ chỉ lưu hash."""
+    _engineer_only(user)
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    if not store.create_invite(
+        config.store_path, user["id"], _invite_hash(token), now, now + INVITE_SECONDS, MAX_ACTIVE_INVITES
+    ):
+        raise HTTPException(
+            429, f"Bạn đang có {MAX_ACTIVE_INVITES} link mời chưa dùng. Đợi link cũ hết hạn hoặc được dùng."
+        )
+    return {
+        "token": token,
+        "path": f"{INVITE_PATH}{token}",
+        "expires_at": datetime.fromtimestamp(now + INVITE_SECONDS, UTC).isoformat(),
+    }
+
+
+@router.post("/invites/accept")
+def accept_invite(
+    body: AcceptInviteRequest, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
+):
+    """Reviewer đã đăng nhập chấp nhận link mời: từ giờ thấy và duyệt được run của Engineer đã mời."""
+    if user["role"] == "Engineer":
+        raise HTTPException(
+            400,
+            "Tài khoản Engineer không nhận lời mời duyệt được. Hãy đăng nhập bằng tài khoản Reviewer, "
+            "hoặc đăng ký tài khoản mới từ link này.",
+        )
+    if user["role"] != "Reviewer":
+        raise HTTPException(400, "Chỉ tài khoản Reviewer nhận được lời mời duyệt.")
+    _check_invite(store.accept_invite(config.store_path, _invite_hash(body.token), user["id"], time.time()))
+    return {"ok": True}
+
+
+@router.get("/reviewers")
+def list_reviewers(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)):
+    """Reviewer đang duyệt run của Engineer. Cặp demo minh ↔ an luôn có và không gỡ được."""
+    _engineer_only(user)
+    linked = [{**item, "demo": False} for item in store.list_linked_reviewers(config.store_path, user["id"])]
+    for item in linked:
+        if item["id"] in USERS:  # Reviewer hệ thống không có dòng trong bảng users
+            item.update(username=None, name=USERS[item["id"]]["name"])
+    if user["id"] == DEMO_ENGINEER:
+        demo = USERS[DEMO_REVIEWER]
+        linked = [
+            {"id": demo["id"], "username": None, "name": demo["name"], "linked_at": None, "demo": True},
+            *(item for item in linked if item["id"] != DEMO_REVIEWER),
+        ]
+    return linked
+
+
+@router.delete("/reviewers/{reviewer_id}")
+def remove_reviewer(reviewer_id: str, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)):
+    """Gỡ liên kết: Reviewer mất quyền xem và duyệt run của Engineer ngay lập tức."""
+    _engineer_only(user)
+    if user["id"] == DEMO_ENGINEER and reviewer_id == DEMO_REVIEWER:
+        raise HTTPException(409, "Không thể gỡ Reviewer của cặp tài khoản demo.")
+    if not store.remove_reviewer_link(config.store_path, user["id"], reviewer_id):
+        raise HTTPException(404, "Reviewer này không có trong danh sách của bạn.")
+    return {"ok": True}
 
 
 @router.get("/session")

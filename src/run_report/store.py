@@ -3,8 +3,9 @@
 Mỗi run một dòng, khóa theo `run_id`; bản ghi được kiểm tra bằng `RunReport` khi đọc ra.
 """
 
+import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -397,11 +398,15 @@ def is_run_cancelled(path: str, run_id: str) -> bool:
     return bool(row and row[0] == "CANCELLED")
 
 
-def list_run_reports(path: str, status: RunStatus | None = None, limit: int = HISTORY_LIMIT) -> list[RunReport]:
-    """Lịch sử run, mới nhất trước, lọc theo status nếu có."""
-    query, params = "SELECT report FROM run_reports", []
+def list_run_reports(
+    path: str, status: RunStatus | None = None, limit: int = HISTORY_LIMIT, run_ids: Collection[str] | None = None
+) -> list[RunReport]:
+    """Lịch sử run, mới nhất trước, lọc theo status nếu có; `run_ids` (nếu có) giới hạn trong các run được thấy."""
+    query, params = "SELECT report FROM run_reports WHERE 1 = 1", []
     if status is not None:
-        query, params = query + " WHERE status = ?", [status]
+        query, params = query + " AND status = ?", [status]
+    if run_ids is not None:
+        query, params = query + " AND run_id IN (SELECT value FROM json_each(?))", [*params, json.dumps(list(run_ids))]
     with _database(path) as conn:
         rows = conn.execute(query + " ORDER BY created_at DESC, rowid DESC LIMIT ?", [*params, limit]).fetchall()
     return [RunReport.model_validate_json(row[0]) for row in rows]
@@ -443,6 +448,16 @@ def abandon_unfinished(path: str, stale_before: datetime | None = None) -> list[
                 )
             abandoned.append(listed.run_id)
     return abandoned
+
+
+def list_run_lineage(path: str) -> dict[str, tuple[str | None, str | None]]:
+    """run_id → (created_by, parent_run_id) của mọi run, đọc thẳng JSON (không dựng RunReport) để lọc quyền."""
+    with _database(path) as conn:
+        rows = conn.execute(
+            "SELECT run_id, json_extract(report, '$.created_by'), json_extract(report, '$.parent_run_id')"
+            " FROM run_reports"
+        ).fetchall()
+    return {row[0]: (row[1], row[2]) for row in rows}
 
 
 def get_run_report(path: str, run_id: str) -> RunReport | None:
