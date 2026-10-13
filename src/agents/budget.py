@@ -15,6 +15,7 @@ Trần một run (`per_run.max_usd`) chỉ áp cho chi phí quét dữ liệu, n
 """
 
 import json
+from collections.abc import Callable
 
 from src.agents import azure_storage
 from src.pipeline import files, postgres, rest_api
@@ -104,6 +105,34 @@ def reserve_daily(
     daily_limit: float,
 ) -> tuple[bool, float]:
     return reserve_budget(settings.store_path, run_id, version, category, usd, daily_limit)
+
+
+def check(
+    spec: Spec,
+    policy: Policy,
+    settings: PipelineSettings,
+    *,
+    estimate_cost: Callable | None = None,
+    spent_fn: Callable | None = None,
+    reserve: Callable | None = None,
+    run_id: str = "",
+    version: int = 1,
+    category: str = "scan",
+) -> tuple[GateResult, list[str], dict]:
+    """Cổng budget cho một Spec: ước tính → so trần run và ngày → qua thì giữ chỗ ngân sách ngày (nếu có `reserve`).
+
+    Dùng chung cho P8 (Spec agent viết) và P13 (bản ứng viên của optimizer, SPEC §9.3), để hai nơi không lệch nhau.
+    Giữ chỗ thất bại (run khác vừa tiêu hết ngân sách ngày) thì chấm lại với số đã tiêu mới. Nguồn không đọc được thì
+    ném `SourceUnavailableError` cho nơi gọi quyết định trạng thái.
+    """
+    estimated = (estimate_cost or estimate)(spec, policy, settings)
+    spent = (spent_fn or spent_today)(settings)
+    result, errors = gate(estimated, policy, spent)
+    if not errors and reserve:
+        reserved, spent = reserve(settings, run_id, version, category, estimated["usd"], policy.budgets.per_day.max_usd)
+        if not reserved:
+            result, errors = gate(estimated, policy, spent)
+    return result, errors, estimated
 
 
 def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, list[str]]:

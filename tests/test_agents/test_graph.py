@@ -80,7 +80,7 @@ def tiered_llm(tier, system, user):
     return json.dumps(PLAN if tier == "cheap" else SPEC)
 
 
-def passing_sandbox(spec, files, policy, settings):
+def passing_sandbox(spec, files, policy, settings, rerun_model=0):
     return SandboxResult(
         "READY_FOR_REVIEW",
         "t_validate",

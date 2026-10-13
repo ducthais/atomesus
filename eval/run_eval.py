@@ -1,4 +1,4 @@
-"""Chấm điểm agent trên 15 ca của SPEC §18.2: chạy thật từng ca bằng LLM thật và nguồn thật.
+"""Chấm điểm agent trên 15 ca của SPEC §18.2 và 3 ca optimizer: chạy thật từng ca bằng LLM thật và nguồn thật.
 
 Cần Postgres nguồn và `make mock-api` đang chạy. Mỗi ca: lập kế hoạch → tự xác nhận (P2) → viết Spec → chạy thử
 trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn dữ liệu demo.
@@ -8,6 +8,10 @@ trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn
 | hợp lệ    | 6     | eval/golden/    | tới READY_FOR_REVIEW và bảng gold khớp golden từng dòng               |
 | vi phạm   | 6     | eval/cases/     | dừng đúng mã `BLOCKED_*` mong đợi (2 ca mỗi cổng semantic, budget, ast_guard) |
 | mơ hồ     | 3     | eval/cases/     | dừng NEEDS_HUMAN ở bước `plan` kèm câu hỏi làm rõ, không đoán         |
+| optimizer | 3     | eval/cases/     | P13 và UC-3 đúng hành vi: đo khi luật áp, bỏ qua kèm lý do khi không; UC-3 `llm_calls = 0`; chỉ giữ bản vừa đúng vừa nhanh hơn |
+
+Ca optimizer: tạo pipeline như ca hợp lệ (có P13), rồi chạy UC-3 (tối ưu thủ công) trên chính run đó. Không ép phải
+thắng: với dữ liệu nhỏ, bản incremental có thể không nhanh hơn và bị loại mới là đúng; ca chấm quyết định có khớp số đo.
 
 So với golden: tên cột do LLM đặt nên ghép theo giá trị. Bảng gold được lấy nguyên vẹn ngay trong sandbox trước khi
 sandbox bị xóa (bọc `reference.read_gold`, không sửa code sản phẩm).
@@ -18,7 +22,7 @@ sandbox bị xóa (bọc `reference.read_gold`, không sửa code sản phẩm).
 Ca vi phạm có thể hạ trần ngân sách cho riêng lượt chạy (`policy`, `spent_today_usd`) vì dữ liệu seed không đủ lớn để
 vượt trần thật; báo cáo ghi rõ điều này. Kết quả luôn ghi kèm mẫu số (SPEC §18.3).
 
-Chạy: python eval/run_eval.py [--only <id>,<id>] [--group valid|violation|ambiguous] [--store data/eval/runs.sqlite3]
+Chạy: python eval/run_eval.py [--only <id>,<id>] [--group valid|violation|ambiguous|optimize] [--store <sqlite>]
 """
 
 import argparse
@@ -36,7 +40,7 @@ sys.path.insert(0, str(ROOT))
 GOLDEN_DIR = ROOT / "eval" / "golden"
 CASES_DIR = ROOT / "eval" / "cases"
 RESULTS_DIR = ROOT / "eval" / "results"
-GROUPS = ("valid", "violation", "ambiguous")
+GROUPS = ("valid", "violation", "ambiguous", "optimize")
 REL_TOLERANCE, ABS_TOLERANCE = Decimal("0.0001"), Decimal("0.005")
 
 
@@ -153,6 +157,41 @@ def with_policy(policy, overrides: dict | None):
     return policy.model_copy(update={"budgets": budgets})
 
 
+def score_optimize(case: dict, parent: dict, uc3: dict, min_gain_pct: float) -> dict:
+    """Ca optimizer. `parent`, `uc3`: {status, llm_calls, optimizer: [bước]} của run tạo pipeline và run UC-3.
+
+    Luật chung cho cả hai run: bước nào `applied` thì phải nhanh hơn đủ ngưỡng; UC-3 READY_FOR_REVIEW khi và chỉ khi
+    có bước `applied`, và không bao giờ gọi LLM.
+    """
+    expected, problems = case["expected"], []
+    if parent["status"] != "READY_FOR_REVIEW":
+        return {"matched": False, "problems": [f"tạo pipeline dừng ở {parent['status']}, không có gì để tối ưu"]}
+
+    def steps(run: dict) -> dict[str, dict]:
+        return {step["rule"]: step for step in run.get("optimizer", [])}
+
+    for label, run in (("P13", parent), ("UC-3", uc3)):
+        for step in run.get("optimizer", []):
+            before, after = step.get("before_sec"), step.get("after_sec")
+            fast_enough = bool(before) and after is not None and after <= before * (1 - min_gain_pct / 100)
+            if step["applied"] and not fast_enough:
+                problems.append(f"{label} giữ {step['rule']} dù số đo không nhanh hơn đủ ngưỡng")
+    for prefix, run in (("p13", parent), ("uc3", uc3)):
+        for rule in expected.get(f"{prefix}_measured", []):
+            if steps(run).get(rule, {}).get("before_sec") is None:
+                problems.append(f"{prefix.upper()} không đo luật {rule}: {steps(run).get(rule, {}).get('reason')}")
+        for rule, phrase in expected.get(f"{prefix}_skipped", {}).items():
+            if phrase not in (steps(run).get(rule, {}).get("reason") or ""):
+                problems.append(f"{prefix.upper()} {rule}: mong lý do có «{phrase}», ra {steps(run).get(rule)}")
+    if uc3["llm_calls"] != 0:
+        problems.append(f"UC-3 gọi LLM {uc3['llm_calls']} lần (SPEC FR-14: phải là 0)")
+    if uc3["status"] not in expected["uc3_status_in"]:
+        problems.append(f"UC-3 ra {uc3['status']}, mong đợi một trong {expected['uc3_status_in']}")
+    if (uc3["status"] == "READY_FOR_REVIEW") != any(step["applied"] for step in uc3.get("optimizer", [])):
+        problems.append("UC-3: trạng thái không khớp quyết định của optimizer")
+    return {"matched": not problems, "problems": problems}
+
+
 def _ratio(results: list[dict]) -> str:
     return f"{sum(r['matched'] for r in results)}/{len(results)}"
 
@@ -168,6 +207,7 @@ def summarize_all(results: list[dict]) -> dict:
         "blocked": _ratio(violations) if violations else None,
         "blocked_by_gate": {g: _ratio([r for r in violations if r["gate"] == g]) for g in gates},
         "asked": _ratio(by_group["ambiguous"]) if by_group["ambiguous"] else None,
+        "optimized": _ratio(by_group["optimize"]) if by_group["optimize"] else None,
         "avg_spec_repairs": round(sum(r["spec_attempts"] for r in valid) / len(valid), 2) if valid else None,
         "total": _ratio(results),
         "llm_usd": round(sum(r["llm_usd"] for r in results), 6),
@@ -179,7 +219,7 @@ def summarize_all(results: list[dict]) -> dict:
 
 
 def load_cases(only: set[str] | None = None, groups: set[str] | None = None) -> list[dict]:
-    """15 ca: 6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm và 3 ca mơ hồ (eval/cases)."""
+    """6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm, 3 ca mơ hồ và 3 ca optimizer (eval/cases)."""
     golden = [
         {**json.loads(p.read_text(encoding="utf-8")), "group": "valid"} for p in sorted(GOLDEN_DIR.glob("*.json"))
     ]
@@ -193,7 +233,9 @@ def capturing_sandbox(captured: dict) -> Callable:
     from src.codegen import reference
     from src.codegen.sandbox import run_in_sandbox
 
-    def run(spec, files, policy, settings):
+    def run(spec, files, policy, settings, rerun_model=0):
+        if rerun_model:  # lượt đo của optimizer P13: không thay bảng gold của lần chạy thử
+            return run_in_sandbox(spec, files, policy, settings, rerun_model=rerun_model)
         original = reference.read_gold
 
         def keep(db, model):
@@ -207,6 +249,34 @@ def capturing_sandbox(captured: dict) -> Callable:
             reference.read_gold = original
 
     return run
+
+
+def _view(report) -> dict:
+    return {
+        "status": report.status,
+        "llm_calls": report.llm_calls,
+        "optimizer": [step.model_dump() for step in report.optimizer],
+        "timing": report.timing.model_dump(),
+    }
+
+
+def uc3_policy_gain(deps, case: dict) -> float:
+    return with_policy(deps.policy, case.get("uc3_policy")).budgets.optimizer.min_gain_pct
+
+
+def _run_manual_optimize(parent, case: dict, deps, store: str):
+    """UC-3 trên run vừa tạo, với chính sách riêng của ca (nếu có) và sandbox thật."""
+    from dataclasses import replace
+
+    from src.agents.manual_optimize import start_manual_optimize
+    from src.codegen.sandbox import run_in_sandbox
+
+    if patch := case.get("uc3_parent_patch"):  # giả lập pipeline đã deploy khác bản agent vừa viết (ví dụ `table`)
+        spec = {**parent.spec, "transform": {**parent.spec["transform"], **patch}}
+        parent = parent.model_copy(update={"spec": spec})
+    uc3_deps = replace(deps, policy=with_policy(deps.policy, case.get("uc3_policy")), sandbox=run_in_sandbox)
+    _started, job = start_manual_optimize(parent, "eval", uc3_deps, store)
+    return job()
 
 
 def run_case(case: dict, store: str) -> dict:
@@ -240,6 +310,11 @@ def run_case(case: dict, store: str) -> dict:
         if not scored and last:
             problems.append(str(last.get("error", ""))[:300])
         mapping = scored and {"key": scored["key"], "measures": scored["measures"]}
+    elif case["group"] == "optimize":
+        uc3 = _run_manual_optimize(report, case, deps, store)
+        scored = score_optimize(case, _view(report), _view(uc3), uc3_policy_gain(deps, case))
+        matched, problems = scored["matched"], scored["problems"]
+        mapping = {"p13": _view(report)["optimizer"], "uc3": _view(uc3)}
     else:
         scored = score_outcome(case, report.status, report.stage_reached, last)
         matched, problems = scored["matched"], scored["problems"]
@@ -262,12 +337,27 @@ def run_case(case: dict, store: str) -> dict:
     }
 
 
-GROUP_TITLES = {"valid": "Hợp lệ", "violation": "Vi phạm", "ambiguous": "Mơ hồ"}
+GROUP_TITLES = {"valid": "Hợp lệ", "violation": "Vi phạm", "ambiguous": "Mơ hồ", "optimize": "Optimizer"}
+
+
+def _steps_note(steps: list[dict]) -> str:
+    def one(step: dict) -> str:
+        timing = f" {step['before_sec']:g}s→{step['after_sec']:g}s" if step.get("after_sec") is not None else ""
+        verdict = "giữ" if step["applied"] else "bỏ"
+        return f"{step['rule']}: {verdict}{timing} ({step.get('reason')})"
+
+    return "; ".join(one(step) for step in steps)
 
 
 def _note(result: dict) -> str:
     if result["problems"]:
         return "; ".join(result["problems"])
+    if result["group"] == "optimize":
+        uc3 = result["mapping"]["uc3"]
+        return (
+            f"P13: {_steps_note(result['mapping']['p13'])} · UC-3 {uc3['status']}, llm_calls {uc3['llm_calls']}: "
+            f"{_steps_note(uc3['optimizer'])}"
+        )
     if result["mapping"]:
         measures = ", ".join(f"{k}→`{v}`" for k, v in result["mapping"]["measures"].items())
         return f"khóa `{result['mapping']['key']['gold']}`, chỉ số {measures}"
@@ -290,21 +380,30 @@ def summary_lines(summary: dict) -> list[str]:
         lines.append(f"- Chặn đúng: **{summary['blocked']}** ca vi phạm ({gates})")
     if summary["asked"]:
         lines.append(f"- Hỏi lại thay vì đoán: **{summary['asked']}** ca mơ hồ")
+    if summary.get("optimized"):
+        lines.append(f"- Optimizer (P13 + UC-3) đúng hành vi: **{summary['optimized']}** ca")
     lines.append(f"- Tiền LLM cả lượt: ${summary['llm_usd']:.4f}; tổng thời gian {summary['seconds']} giây")
     return lines
 
 
-def write_report(results: list[dict], summary: dict) -> Path:
+def results_name(only: set[str] | None, groups: set[str] | None) -> str:
+    """Tên file kết quả: lượt đầy đủ ghi `latest`, lượt lọc ghi riêng để không đè kết quả đầy đủ báo cáo đang trỏ tới."""
+    if only:
+        return "latest_selected"
+    return f"latest_{'_'.join(sorted(groups))}" if groups else "latest"
+
+
+def write_report(results: list[dict], summary: dict, name: str = "latest") -> Path:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    (RESULTS_DIR / "latest.json").write_text(
+    (RESULTS_DIR / f"{name}.json").write_text(
         json.dumps({"at": stamp, "summary": summary, "results": results}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     lines = [
-        "# Kết quả chấm 15 ca (SPEC §18)",
+        "# Kết quả chấm 15 ca (SPEC §18) và 3 ca optimizer" if name == "latest" else f"# Kết quả chấm ({name})",
         "",
-        f"Chạy lúc {stamp} bằng `python eval/run_eval.py`; số liệu đầy đủ ở `latest.json`.",
+        f"Chạy lúc {stamp} bằng `python eval/run_eval.py`; số liệu đầy đủ ở `{name}.json`.",
         "",
         *summary_lines(summary),
         "",
@@ -318,7 +417,7 @@ def write_report(results: list[dict], summary: dict) -> Path:
             f"{'✅' if r['matched'] else '❌'} | {r['spec_attempts']} | {r['llm_calls']} | {r['seconds']} giây | "
             f"{_note(r).replace('|', '/')} |"
         )
-    path = RESULTS_DIR / "latest.md"
+    path = RESULTS_DIR / f"{name}.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -326,23 +425,25 @@ def write_report(results: list[dict], summary: dict) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--only", default="", help="chỉ chạy các ca này (id, phân cách bằng dấu phẩy)")
-    parser.add_argument("--group", default="", help="chỉ chạy các nhóm này: valid, violation, ambiguous")
+    parser.add_argument("--group", default="", help="chỉ chạy các nhóm này: valid, violation, ambiguous, optimize")
     parser.add_argument("--store", default="data/eval/runs.sqlite3", help="sổ bằng chứng riêng cho lượt chấm")
     args = parser.parse_args()
     Path(args.store).parent.mkdir(parents=True, exist_ok=True)
     only = {c for c in args.only.split(",") if c} or None
-    cases = load_cases(only, {g for g in args.group.split(",") if g} or None)
+    groups = {g for g in args.group.split(",") if g} or None
+    cases = load_cases(only, groups)
     results = []
     for case in cases:
         print(f"→ [{case['group']}] {case['id']} …", flush=True)
         result = run_case(case, args.store)
-        result["expected"] = case["expected"]["status"] if "expected" in case else "khớp golden"
+        expected = case.get("expected") or {}
+        result["expected"] = expected.get("status") or ("đúng hành vi optimizer" if expected else "khớp golden")
         verdict = "đạt" if result["matched"] else "KHÔNG đạt"
         print(f"  {result['status']} · {verdict} · {result['seconds']} giây", flush=True)
         results.append(result)
     summary = summarize_all(results)
     print("\n".join(summary_lines(summary)))
-    print(f"Báo cáo: {write_report(results, summary).relative_to(ROOT)}")
+    print(f"Báo cáo: {write_report(results, summary, results_name(only, groups)).relative_to(ROOT)}")
     return 0
 
 

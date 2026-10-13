@@ -14,6 +14,10 @@ per_run:
   phase_timeout_sec: 300    # một phase chạy quá thời gian này thì dừng (NFR-05)
 per_day:
   max_usd: 2.00             # tổng chi phí mọi run trong ngày (quét dữ liệu + LLM); cổng budget cộng dồn
+optimizer:                  # P13 (SPEC §9.3): luật tối ưu tất định, không gọi LLM
+  incremental_min_rows: 10000   # table_to_incremental chỉ thử khi bảng nguồn chính có ít nhất ngần này dòng
+  rerun_samples: 5              # chạy lại model gold ngần này lần sau lần build đầu (trung vị; hai dải đo không chồng nhau)
+  min_gain_pct: 10              # bản ứng viên phải nhanh hơn bản gốc ít nhất ngần này % mới được giữ
 rules:
   - require_partition_filter_on: [sales_pg.orders]
   - forbid_select_star_in: [gold]

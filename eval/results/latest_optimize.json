@@ -1,0 +1,193 @@
+{
+  "at": "2026-10-13 04:53 UTC",
+  "summary": {
+    "valid": null,
+    "blocked": null,
+    "blocked_by_gate": {},
+    "asked": null,
+    "optimized": "3/3",
+    "avg_spec_repairs": null,
+    "total": "3/3",
+    "llm_usd": 0.003208,
+    "seconds": 736.1
+  },
+  "results": [
+    {
+      "id": "optimize_incremental_tried_on_real_dbt",
+      "group": "optimize",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "4c65e502-2658-4797-96a4-f9db08d11a5f",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "p13": [
+          {
+            "rule": "table_to_incremental",
+            "applied": false,
+            "before_sec": null,
+            "after_sec": null,
+            "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+          },
+          {
+            "rule": "missing_partition_filter",
+            "applied": false,
+            "before_sec": 0.1683,
+            "after_sec": 0.2377,
+            "reason": "không nhanh hơn đủ: chạy lại 0.2377s so với bản gốc 0.1683s (cần ≤ 0.1515s, budgets.yml optimizer.min_gain_pct = 10)"
+          }
+        ],
+        "uc3": {
+          "status": "NO_IMPROVEMENT",
+          "llm_calls": 0,
+          "optimizer": [
+            {
+              "rule": "table_to_incremental",
+              "applied": false,
+              "before_sec": 0.2031,
+              "after_sec": 0.2333,
+              "reason": "không nhanh hơn đủ: chạy lại 0.2333s so với bản gốc 0.2031s (cần ≤ 0.1828s, budgets.yml optimizer.min_gain_pct = 10)"
+            },
+            {
+              "rule": "missing_partition_filter",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "chỉ áp cho model `incremental` (model `table` tính lại toàn bộ mỗi lần)"
+            }
+          ],
+          "timing": {
+            "baseline_sec": 51.538,
+            "optimized_sec": null
+          }
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00106665,
+      "seconds": 229.2,
+      "expected": "đúng hành vi optimizer"
+    },
+    {
+      "id": "optimize_pagila_rentals_by_day",
+      "group": "optimize",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "2f31e9f3-4d23-4475-8c21-a67a103d0e03",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "p13": [
+          {
+            "rule": "table_to_incremental",
+            "applied": false,
+            "before_sec": null,
+            "after_sec": null,
+            "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+          },
+          {
+            "rule": "missing_partition_filter",
+            "applied": false,
+            "before_sec": 0.2148,
+            "after_sec": 0.279,
+            "reason": "không nhanh hơn đủ: chạy lại 0.279s so với bản gốc 0.2148s (cần ≤ 0.1933s, budgets.yml optimizer.min_gain_pct = 10)"
+          }
+        ],
+        "uc3": {
+          "status": "NO_IMPROVEMENT",
+          "llm_calls": 0,
+          "optimizer": [
+            {
+              "rule": "table_to_incremental",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+            },
+            {
+              "rule": "missing_partition_filter",
+              "applied": false,
+              "before_sec": 0.1622,
+              "after_sec": 0.1654,
+              "reason": "không nhanh hơn đủ: chạy lại 0.1654s so với bản gốc 0.1622s (cần ≤ 0.146s, budgets.yml optimizer.min_gain_pct = 10)"
+            }
+          ],
+          "timing": {
+            "baseline_sec": 53.256,
+            "optimized_sec": null
+          }
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00105495,
+      "seconds": 292.0,
+      "expected": "đúng hành vi optimizer"
+    },
+    {
+      "id": "optimize_small_table_skipped",
+      "group": "optimize",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "3e6d5ea3-9915-4753-9f47-fd21ebd25008",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "p13": [
+          {
+            "rule": "table_to_incremental",
+            "applied": false,
+            "before_sec": null,
+            "after_sec": null,
+            "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+          },
+          {
+            "rule": "missing_partition_filter",
+            "applied": false,
+            "before_sec": 0.2462,
+            "after_sec": 0.1788,
+            "reason": "chênh lệch nằm trong nhiễu đo: các lần chạy lại của bản ứng viên [0.4991, 0.3619, 0.1788, 0.1718, 0.1506] chồng lên bản gốc [0.1948, 0.1735, 0.3148, 0.2611, 0.2462] (mọi lần của bản ứng viên phải nhanh hơn mọi lần của bản gốc)"
+          }
+        ],
+        "uc3": {
+          "status": "NO_IMPROVEMENT",
+          "llm_calls": 0,
+          "optimizer": [
+            {
+              "rule": "table_to_incremental",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "bảng nguồn chính có 30 dòng, dưới ngưỡng 10,000 (budgets.yml optimizer.incremental_min_rows)"
+            },
+            {
+              "rule": "missing_partition_filter",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "chỉ áp cho model `incremental` (model `table` tính lại toàn bộ mỗi lần)"
+            }
+          ],
+          "timing": {
+            "baseline_sec": 48.319,
+            "optimized_sec": null
+          }
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00108675,
+      "seconds": 214.9,
+      "expected": "đúng hành vi optimizer"
+    }
+  ]
+}

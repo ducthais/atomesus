@@ -112,6 +112,26 @@ TOTAL                              5252    575    89%
 thật trên DuckDB), API, chat, monitor Day 2, chấm eval, cổng budget trên Azure (`tests/test_agents/test_azure_storage.py`)
 và các bản sửa ở mục 2.1 (`tests/test_agents/test_graph.py`, `tests/test_codegen/test_render.py`).
 
+### 2.5. Optimizer P13 và tối ưu thủ công UC-3 (SPEC §9.3, §3.3, FR-14)
+
+Chạy `python eval/run_eval.py --group optimize` lúc 2026-10-13, dbt + DuckDB + Postgres thật. Chi tiết từng luật:
+[`latest_optimize.md`](latest_optimize.md).
+
+| Ca | P13 lúc tạo pipeline | UC-3 (tối ưu thủ công) | Đạt |
+|---|---|---|---|
+| `optimize_pagila_rentals_by_day` (16.044 dòng) | `missing_partition_filter` đo thật, bỏ: 0,279s so với 0,215s | NO_IMPROVEMENT, `llm_calls = 0`; đo lại 0,165s so với 0,162s, bỏ | ✅ |
+| `optimize_incremental_tried_on_real_dbt` (bản deploy là `table`) | `missing_partition_filter` bỏ (chậm hơn) | `table_to_incremental` chạy thật trên dbt, bỏ: 0,233s so với 0,203s; `llm_calls = 0` | ✅ |
+| `optimize_small_table_skipped` (30 dòng, bản deploy là `table`) | `missing_partition_filter`: trung vị nhanh hơn 27% nhưng **dải đo chồng nhau → bỏ vì nhiễu** | NO_IMPROVEMENT, không chạy thử thêm; lý do "dưới ngưỡng 10,000" | ✅ |
+
+- **Đúng hành vi 3/3 ca**; mọi run UC-3 có `llm_calls = 0` (LLM bị thay bằng hàm ném lỗi, nên không thể gọi).
+- Trên dữ liệu seed (≤ 16 nghìn dòng), bản incremental **không nhanh hơn đo được** so với bản gốc: chưa ca thật nào giữ
+  bản ứng viên. Trường hợp giữ được kiểm bằng test với sandbox giả (`tests/test_agents/test_optimizer.py`).
+- Lượt đầu (cùng ngày, máy đang chạy song song cả bộ test) giữ nhầm một bản 30 dòng "nhanh hơn 26,9%" mà lượt sau đo
+  chậm hơn 41%. Từ đó optimizer chỉ giữ bản ứng viên khi trung vị nhanh hơn `min_gain_pct` **và** mọi lần chạy lại của
+  nó nhanh hơn mọi lần của bản gốc; `rerun_samples` tăng từ 3 lên 5.
+- Ghi nhận: model LLM viết gần như luôn là `incremental` thiếu `partition_by`, nên luật hay áp nhất là
+  `missing_partition_filter`; `table_to_incremental` áp cho pipeline deploy dạng `table`.
+
 ## 3. User Feedback
 
 Chưa tổ chức buổi lấy ý kiến người dùng; điền sau buổi demo.
@@ -131,4 +151,5 @@ Chưa tổ chức buổi lấy ý kiến người dùng; điền sau buổi demo
 - [ ] Chạy `python eval/run_eval.py` thêm vài lượt để đo độ ổn định (lượt 2–4 mỗi lượt trượt một ca do LLM trả lời khác nhau)
 - [ ] Bật đo byte trên Azure Storage thật của nhóm trên máy chủ, rồi chạy lại eval với Azure bật
 - [ ] Bất biến 8: duyệt xong mở pull request thay vì ghi thẳng Dagster local
+- [ ] Optimizer: đo trên bảng nguồn đủ lớn (vài triệu dòng, ví dụ sau `scripts/grow_data`) để có ca thật giữ bản ứng viên
 - [ ] Thu ý kiến người dùng sau buổi demo

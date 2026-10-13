@@ -2,8 +2,8 @@ from dataclasses import replace
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
+from src.agents.manual_optimize import start_manual_optimize
 from src.agents.nodes.common import AgentDeps
-from src.agents.regression import start_manual_optimize
 from src.api.routes import agent_deps
 from src.monitor import alerts, day2, runs
 from src.pipeline.auth import current_user, settings
@@ -31,7 +31,7 @@ def optimize_pipeline(
     config: PipelineSettings = Depends(settings),
     deps: AgentDeps = Depends(monitor_deps),
 ) -> RunReport:
-    """Engineer yêu cầu tối ưu pipeline đã deploy; tác vụ chạy nền bằng luồng Người 3."""
+    """Engineer yêu cầu tối ưu pipeline đã deploy (UC-3): chạy nền lại pipeline và optimizer P13, không gọi LLM."""
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được yêu cầu tối ưu pipeline.")
     parent = runs.deployed_report(config.store_path, model)

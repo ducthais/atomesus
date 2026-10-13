@@ -9,24 +9,21 @@ from src.spec.models import Spec
 
 def budget_node(deps: AgentDeps):
     def node(state: AgentState) -> dict:
+        budget_passes = sum(gate.get("name") == "budget" for gate in state.get("gates", [])) + 1
         try:
-            estimated = deps.estimate_cost(Spec.model_validate(state["spec"]), deps.policy, deps.settings)
-            spent = deps.spent_today(deps.settings)
+            result, errors, estimated = budget.check(
+                Spec.model_validate(state["spec"]),
+                deps.policy,
+                deps.settings,
+                estimate_cost=deps.estimate_cost,
+                spent_fn=deps.spent_today,
+                reserve=deps.reserve_daily,
+                run_id=state.get("run_id", ""),
+                version=state.get("version", 1),
+                category=f"scan:{budget_passes}",
+            )
         except SourceUnavailableError as exc:
             return StopError("INFRA_ERROR", "budget", str(exc)).update(state)
-        result, errors = budget.gate(estimated, deps.policy, spent)
-        budget_passes = sum(gate.get("name") == "budget" for gate in state.get("gates", [])) + 1
-        if not errors and deps.reserve_daily:
-            reserved, spent = deps.reserve_daily(
-                deps.settings,
-                state["run_id"],
-                state.get("version", 1),
-                f"scan:{budget_passes}",
-                estimated["usd"],
-                deps.policy.budgets.per_day.max_usd,
-            )
-            if not reserved:
-                result, errors = budget.gate(estimated, deps.policy, spent)
         previous = state.get("cost") or {"estimated_bytes": 0, "actual_bytes": 0, "usd": 0}
         update = {
             "gates": [*state.get("gates", []), result.model_dump()],
