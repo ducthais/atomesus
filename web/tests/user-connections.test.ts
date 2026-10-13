@@ -328,6 +328,51 @@ test('giao diện: mật khẩu không có giá trị HTML, input có nhãn, IP 
   assert.match(renderToStaticMarkup(createElement(ConnectionForm, { egressIp: '203.0.113.10' })), /Mở firewall.*203\.0\.113\.10/);
 });
 
+test('trang kết nối: đọc IP lúc request, ưu tiên runtime, fallback biến public và ẩn khi thiếu', async () => {
+  const previous = { runtime: process.env.PIPELINE_EGRESS_IP, public: process.env.NEXT_PUBLIC_EGRESS_IP };
+  let requested = false, role = 'Engineer';
+  const page = component('../app/connections/page.tsx', {
+    'next/server': { connection: async () => { await Promise.resolve(); requested = true; } },
+    '@/lib/catalog/source': { currentUser: async () => {
+      assert.equal(requested, true, 'Trang phải chờ request trước khi render.');
+      return { role };
+    } },
+    '../actions': { listUserConnections: async () => ({ data: [] }) },
+    '../_components/connection-form': { ConnectionForm, ConnectionList }, '../_components/ui': ui,
+  }).default as unknown as () => Promise<ReactNode>;
+  try {
+    for (const [runtime, publicIp, expected] of [
+      [' 4.145.113.187 ', '203.0.113.10', '4.145.113.187'],
+      ['198.51.100.20', undefined, '198.51.100.20'],
+      [undefined, ' 203.0.113.10 ', '203.0.113.10'],
+      ['', '203.0.113.10', '203.0.113.10'],
+      ['   ', '203.0.113.10', '203.0.113.10'],
+      [undefined, undefined, undefined],
+      ['', '', undefined],
+      ['   ', '   ', undefined],
+    ]) {
+      if (runtime === undefined) delete process.env.PIPELINE_EGRESS_IP;
+      else process.env.PIPELINE_EGRESS_IP = runtime;
+      if (publicIp === undefined) delete process.env.NEXT_PUBLIC_EGRESS_IP;
+      else process.env.NEXT_PUBLIC_EGRESS_IP = publicIp;
+      requested = false;
+      const html = renderToStaticMarkup(await page());
+      if (expected) assert.ok(html.includes(`Mở firewall của máy chủ Postgres cho IP máy chủ Atomesus: <strong>${expected}</strong>.`));
+      else assert.doesNotMatch(html, /Mở firewall/);
+      if (runtime?.trim()) assert.doesNotMatch(html, /203\.0\.113\.10/);
+    }
+    process.env.PIPELINE_EGRESS_IP = '4.145.113.187';
+    role = 'Reviewer';
+    requested = false;
+    assert.doesNotMatch(renderToStaticMarkup(await page()), /Mở firewall|4\.145\.113\.187|<form/);
+  } finally {
+    if (previous.runtime === undefined) delete process.env.PIPELINE_EGRESS_IP;
+    else process.env.PIPELINE_EGRESS_IP = previous.runtime;
+    if (previous.public === undefined) delete process.env.NEXT_PUBLIC_EGRESS_IP;
+    else process.env.NEXT_PUBLIC_EGRESS_IP = previous.public;
+  }
+});
+
 test('giao diện: chọn schema có số bảng, ô tick có nhãn, xem cột và vô hiệu hóa lựa chọn rỗng', () => {
   const props = { id: mock.USER_CONNECTIONS[0].id, schemas: mock.USER_CONNECTION_SCHEMAS, initialSchema: 'public',
     initialTables: { data: mock.USER_CONNECTION_TABLES.public }, selection: mock.USER_CONNECTIONS[0].selection };

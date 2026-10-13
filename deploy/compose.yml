@@ -139,6 +139,7 @@ services:
     image: atomesus-web
     environment:
       PIPELINE_BACKEND_URL: http://backend:8000
+      PIPELINE_EGRESS_IP: ${PIPELINE_EGRESS_IP:-}
     depends_on:
       backend: { condition: service_started }
     restart: unless-stopped
