@@ -2,6 +2,7 @@ import hashlib
 import socket
 import time
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -280,7 +281,11 @@ async def test_private_override_is_limited_to_local_environments(registry, app_e
         (psycopg.errors.InvalidPassword('password authentication failed for user "ssl_reader"'), "mật khẩu"),
         (psycopg.OperationalError('password authentication failed for user "ssl_reader"'), "mật khẩu"),
         (psycopg.OperationalError(f"connection timed out {PAYLOAD['password']}"), "host"),
+        (psycopg.OperationalError('connection to server at "ssl.example.com" failed: timeout expired'), "host"),
         (psycopg.OperationalError(f"server requires SSL {PAYLOAD['password']}"), "SSL"),
+        (psycopg.OperationalError("server does not support SSL, but SSL was required"), "SSL"),
+        (psycopg.OperationalError("SSL error: certificate verify failed"), "SSL"),
+        (psycopg.OperationalError("no pg_hba.conf entry for host, no encryption"), "SSL"),
         (psycopg.errors.InsufficientPrivilege(f"permission denied {PAYLOAD['password']}"), "SELECT"),
         (psycopg.errors.InsufficientPrivilege("permission denied for table ssl_events"), "SELECT"),
         (psycopg.errors.InvalidCatalogName("database does not exist"), "Database"),
@@ -328,6 +333,29 @@ async def test_unresolvable_dns_has_a_safe_reason(registry, answers):
     assert response.status_code == 422 and "DNS" in response.json()["detail"]
     assert PAYLOAD["password"] not in response.text
     registry.connect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dns_timeout_returns_without_waiting_for_getaddrinfo(registry):
+    finished = Event()
+    started = Event()
+
+    def slow_dns(*args, **kwargs):
+        started.set()
+        finished.wait(10)
+        return dns_rows("8.8.8.8")
+
+    registry.dns.side_effect = slow_dns
+    before = time.monotonic()
+    try:
+        response = await registry.client.post("/api/v1/connections/test", json=PAYLOAD)
+        elapsed = time.monotonic() - before
+        assert started.is_set() and not finished.is_set()
+        assert response.status_code == 422 and "Không phân giải được host" in response.json()["detail"]
+        assert 2.5 <= elapsed < 4.5
+        registry.connect.assert_not_called()
+    finally:
+        finished.set()
 
 
 @pytest.mark.asyncio
