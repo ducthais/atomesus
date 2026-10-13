@@ -84,3 +84,6 @@ atomesus_deploy.pub
 # Local agent session settings; shared rules and source stay versioned
 /.claude/settings.local.json
 /.claude/settings.json.graphify-bak
+
+# Temporary Superdesign HTML used for direct draft corrections
+/.superdesign/tmp/

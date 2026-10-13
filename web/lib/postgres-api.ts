@@ -105,6 +105,12 @@ export type RunReport = {
   review_history?: Approval[];
   timeline?: { event: string; at: string; actor?: string | null }[];
 };
+export type BatchBudget = {
+  run_count: number; reservation_usd_per_run: number; estimated_usd: number;
+  spent_today_usd: number; remaining_usd: number; remaining_after_usd: number;
+  max_usd_per_day: number; max_batch_runs: number; allowed: boolean;
+};
+export type AgentBatchRunResponse = { runs: RunReport[]; budget: BatchBudget };
 export function stagingOf(report: RunReport): StagingObserved | null {
   const check = report.checks.find(item => item.name === 'staging_reconcile');
   return check ? check.observed as StagingObserved : null;

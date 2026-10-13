@@ -349,6 +349,18 @@ a.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
 .plain-code span { width: 48px; flex: none; padding-right: 14px; text-align: right; color: var(--muted); user-select: none; }
 .plain-code code { background: none; padding: 0; }
 .request-form { display: grid; gap: 14px; margin: 0; }
+.request-modes { display: inline-flex; width: fit-content; gap: 3px; padding: 3px; border: 1px solid var(--rule); border-radius: var(--r-control); background: var(--surface-2); }
+.request-modes button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 7px; padding: 7px 11px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.request-modes button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.batch-requests { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.batch-requests legend { margin-bottom: 10px; padding: 0; font-weight: 600; }
+.batch-requests legend .muted { font-weight: 400; }
+.batch-request { display: grid; grid-template-columns: minmax(0, 1fr) 36px; gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--rule-soft); border-radius: var(--r-control); background: var(--surface-2); }
+.batch-request textarea { background: var(--surface); }
+.batch-request .icon-button { margin-bottom: 2px; }
+.batch-budget { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--rule)); border-radius: var(--r-control); background: var(--accent-soft); font-size: 13px; }
+.batch-budget small { grid-column: 1 / -1; color: var(--muted); }
+.batch-budget.over { border-color: color-mix(in srgb, var(--bad) 45%, var(--rule)); background: var(--bad-soft); color: var(--bad); }
 .field { display: grid; gap: 8px; font-weight: 600; }
 .field textarea, .field input { font-weight: 400; }
 .examples { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }

@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -5,6 +8,7 @@ from src.agents.llm import openai_llm
 from src.agents.nodes.common import AgentDeps
 from src.agents.resolve import ResolveError
 from src.agents.service import (
+    Job,
     PlanNotAwaitingError,
     PlanRejectedError,
     RunChangedError,
@@ -24,6 +28,14 @@ from src.run_report.store import get_run_report, is_run_cancelled
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
+def _run_batch_jobs(jobs: list[Job]) -> None:
+    """Fan-out các run sau khi response đã được gửi; mỗi job tự ghi trạng thái cuối vào sổ bằng chứng."""
+    with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="pipeline-batch") as executor:
+        futures = [executor.submit(job) for job in jobs]
+        for future in futures:
+            future.result()
+
+
 class SourceChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_ref: str = Field(min_length=1, description="Khóa nguồn trong domains.yml, ví dụ sales_pg")
@@ -39,6 +51,19 @@ class AgentRunRequest(BaseModel):
     sources: list[SourceChoice] | None = Field(
         default=None, min_length=1, max_length=10, description="Nguồn người dùng chọn; agent chỉ lập kế hoạch trên đó"
     )
+
+
+class AgentBatchRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    requests: list[AgentRunRequest] = Field(
+        min_length=2, description="Các pipeline cần tạo; giới hạn thực tế đọc từ budgets.yml"
+    )
+
+
+class AgentBatchRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    runs: list[RunReport]
+    budget: dict
 
 
 def agent_deps(config: PipelineSettings = Depends(settings), user: dict = Depends(current_user)) -> AgentDeps:
@@ -95,6 +120,80 @@ def create_agent_run(
     started, job = start_agent(body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id)
     background.add_task(job)
     return started
+
+
+@router.get("/runs/batch/budget")
+def batch_budget(
+    user: dict = Depends(current_user),
+    deps: AgentDeps = Depends(agent_deps),
+    config: PipelineSettings = Depends(settings),
+) -> dict:
+    """Ngân sách hiện tại để UI ước tính mẻ; POST vẫn kiểm tra lại atomically vì số dư có thể đổi."""
+    if user["role"] != "Engineer":
+        raise HTTPException(403, "Chỉ Engineer được tạo pipeline.")
+    from src.agents import budget
+
+    return budget.estimate_batch(0, deps.policy, config)
+
+
+@router.post("/runs/batch", status_code=201, response_model=AgentBatchRunResponse)
+def create_agent_run_batch(
+    body: AgentBatchRunRequest,
+    background: BackgroundTasks,
+    user: dict = Depends(current_user),
+    deps: AgentDeps = Depends(agent_deps),
+    config: PipelineSettings = Depends(settings),
+) -> AgentBatchRunResponse:
+    """Tạo nhiều pipeline all-or-none ở cổng ngân sách rồi mới fan-out các job lập kế hoạch."""
+    from src.agents import budget
+    from src.run_report.store import rollback_batch_start
+
+    count = len(body.requests)
+    estimate = budget.estimate_batch(count, deps.policy, config)
+    if count > estimate["max_batch_runs"]:
+        raise HTTPException(
+            422,
+            f"Một mẻ tối đa {estimate['max_batch_runs']} pipeline theo budgets.yml per_day.max_batch_runs.",
+        )
+    checked = [(item, _checked_sources(item, user, deps)) for item in body.requests]
+    run_ids = [str(uuid4()) for _ in checked]
+    reservation_usd = estimate["reservation_usd_per_run"]
+    reservations = [(run_id, 1, "llm:plan:1", reservation_usd) for run_id in run_ids]
+    reserved, spent = budget.reserve_batch_daily(config, reservations, estimate["max_usd_per_day"])
+    if not reserved:
+        raise HTTPException(
+            409,
+            f"Cả mẻ ước tính {estimate['estimated_usd']:.4f} USD nhưng hôm nay đã dùng hoặc giữ chỗ "
+            f"{spent:.4f}/{estimate['max_usd_per_day']:.4f} USD; không tạo pipeline nào.",
+        )
+
+    started_jobs: list[tuple[RunReport, Job]] = []
+    try:
+        for run_id, (item, sources) in zip(run_ids, checked, strict=True):
+            started_jobs.append(
+                start_agent(
+                    item.request.strip(),
+                    user["id"],
+                    deps,
+                    config.store_path,
+                    sources,
+                    item.parent_run_id,
+                    run_id=run_id,
+                )
+            )
+    except Exception:
+        rollback_batch_start(config.store_path, run_ids)
+        raise
+
+    background.add_task(_run_batch_jobs, [job for _started, job in started_jobs])
+    estimate = {
+        **estimate,
+        "spent_today_usd": spent,
+        "remaining_usd": max(0.0, estimate["max_usd_per_day"] - spent),
+        "remaining_after_usd": max(0.0, estimate["max_usd_per_day"] - spent - estimate["estimated_usd"]),
+        "allowed": True,
+    }
+    return AgentBatchRunResponse(runs=[started for started, _job in started_jobs], budget=estimate)
 
 
 class ConfirmPlanRequest(BaseModel):

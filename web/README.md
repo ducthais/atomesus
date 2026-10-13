@@ -12,6 +12,7 @@ npm ci
 npm run dev        # http://localhost:3000
 npm run typecheck
 npm test
+npm run test:e2e   # Playwright tự bật Next + backend fixture, không gọi LLM/GitHub thật
 npm run build
 ```
 
@@ -32,7 +33,7 @@ Cần Postgres nguồn và backend đang chạy (xem README gốc, mục "Chạy
 | `/glossary` | Thuật ngữ theo domain, bảng khai báo, dataset dùng thuật ngữ; cảnh báo trùng tên chưa có trong `conformed_dimensions` | `GET /policy` |
 | `/runs` Hoạt động | Run lọc theo trạng thái, dataset liên quan, chi phí so với trần `budgets.yml` | `GET /runs`, `GET /policy` |
 | `/runs/[id]` | Sửa/xác nhận kế hoạch; xem Staging (lý do và dòng rác mẫu), bằng chứng, code, log; duyệt / từ chối / yêu cầu sửa; hủy run đang chạy | `GET /runs/{id}`, `GET /runs/{id}/files`, `POST /agent/runs/{id}/confirm-plan`, `POST /runs/{id}/approve`, `/reject`, `/request-changes`, `/cancel` |
-| `/runs/new` | Chọn kết nối khai báo trong `domains.yml`, bấm **Kết nối**: backend kết nối trực tiếp tới nguồn lúc đó và trả các bảng đang có (cột, khóa chính, số dòng). Chọn bảng rồi mô tả yêu cầu. Nguồn chưa có connector (REST, file) hiện khóa. Bắt đầu từ một dataset (`?dataset=`) thì tự kết nối và chọn sẵn bảng nguồn của nó | `GET /catalog/sources`, `GET /catalog/sources/{ref}/objects`, `POST /agent/runs` với `sources: [{source_ref, tables}]` |
+| `/runs/new` | Chọn kết nối khai báo trong `domains.yml`, bấm **Kết nối**: backend kết nối trực tiếp tới nguồn lúc đó và trả các bảng đang có (cột, khóa chính, số dòng). Có thể tạo một pipeline hoặc một mẻ nhiều pipeline dùng chung phạm vi nguồn; UI hiện chi phí giữ chỗ ước tính và backend chặn toàn mẻ nếu vượt số dư ngày. Bắt đầu từ một dataset (`?dataset=`) thì tự kết nối và chọn sẵn bảng nguồn của nó | `GET /catalog/sources`, `GET /catalog/sources/{ref}/objects`, `GET /agent/runs/batch/budget`, `POST /agent/runs` hoặc `POST /agent/runs/batch` |
 | `/policy` | Nội dung `policy/*.yml`, chỉ đọc | `GET /policy` |
 
 ## Dữ liệu đến từ đâu
