@@ -41,8 +41,15 @@ export function validateConnectionSelection(value: unknown): ConnectionResult<Co
   return { data: { schema, tables } };
 }
 
-/** Mỗi bảng thuộc nguồn riêng c_<8 ký tự đầu id>; mã hóa tên để không tạo thêm tham số URL. */
+const canPreselectTable = (name: string) => name.length > 0 && !/[^A-Za-z0-9_-]/.test(name);
+
+/** Tên ngoài định dạng của trang tạo run cần chọn tay ở trang đó. */
+export function connectionTablesToSelectManually(tables: string[]): string[] {
+  return [...new Set(tables)].filter(table => !canPreselectTable(table));
+}
+
+/** Mỗi bảng thuộc nguồn riêng c_<8 ký tự đầu id>; chỉ đưa tên được trang tạo run hỗ trợ vào link. */
 export function connectionTablesLink(id: string, tables: string[]): string {
   const source = `c_${id.slice(0, 8)}`;
-  return `/runs/new?tables=${[...new Set(tables)].map(table => encodeURIComponent(`${source}.${table}`)).join(',')}`;
+  return `/runs/new?tables=${[...new Set(tables)].filter(canPreselectTable).map(table => `${source}.${table}`).join(',')}`;
 }

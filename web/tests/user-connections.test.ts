@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire, stripTypeScriptTypes } from 'node:module';
-import { createElement, type ComponentType } from 'react';
+import { createElement, isValidElement, type ComponentType, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as connections from '../lib/user-connections.ts';
-import { connectionTablesLink, validateConnectionForm, validateConnectionSelection, type UserConnection } from '../lib/user-connections.ts';
+import { connectionTablesLink, connectionTablesToSelectManually, validateConnectionForm, validateConnectionSelection, type UserConnection } from '../lib/user-connections.ts';
 import * as mock from '../lib/catalog/mock.ts';
 
 function form(changes: Record<string, string | null | undefined> = {}) {
@@ -20,10 +20,19 @@ test('kết nối: link dùng nguồn c_<8 ký tự id>, giữ thứ tự và b�
   const tables = ['orders', 'customers', 'orders'];
   assert.equal(connectionTablesLink(mock.USER_CONNECTIONS[0].id, tables), '/runs/new?tables=c_a12bc345.orders,c_a12bc345.customers');
   assert.deepEqual(tables, ['orders', 'customers', 'orders']);
-  const link = connectionTablesLink('a12bc3456789', ['Đơn hàng & khách?x=#', 'orders']);
+});
+
+test('kết nối: bỏ tên không được trang tạo run hỗ trợ khỏi link và liệt kê để chọn tay', () => {
+  const manual = ['Đơn hàng & khách?x=#', 'order.items', 'orders,customers', 'space name', 'bảng', 'orders%20', 'orders\n', 'orders\r', 'orders\t', ''];
+  const tables = [...manual, 'orders', 'order_items-2026', ...manual, 'orders'];
+  const link = connectionTablesLink('a12bc3456789', tables);
+  assert.equal(link, '/runs/new?tables=c_a12bc345.orders,c_a12bc345.order_items-2026');
+  assert.deepEqual(connectionTablesToSelectManually(tables), manual);
   const url = new URL(link, 'https://example.vn');
   assert.equal(url.searchParams.size, 1);
-  assert.equal(url.searchParams.get('tables'), 'c_a12bc345.Đơn hàng & khách?x=#,c_a12bc345.orders');
+  assert.equal(url.searchParams.get('tables'), 'c_a12bc345.orders,c_a12bc345.order_items-2026');
+  assert.equal(connectionTablesLink('a12bc3456789', manual), '/runs/new?tables=');
+  assert.deepEqual(connectionTablesToSelectManually(['orders', 'order_items-2026']), []);
 });
 
 test('kết nối: kiểm trường bắt buộc, chuẩn hóa metadata nhưng giữ nguyên mật khẩu', () => {
@@ -186,6 +195,115 @@ const modules = { '../actions': {}, '@/lib/user-connections': connections, './ui
 const { ConnectionForm, ConnectionList } = component('../app/_components/connection-form.tsx', modules);
 const { ConnectionTables } = component('../app/_components/connection-tables.tsx', modules);
 const { Sidebar } = component('../app/_components/shell.tsx', { ...modules, 'next/navigation': { usePathname: () => '/connections' } });
+
+// Giữ state qua các lần render và chạy handler thật; chỉ giả lập hooks và Server Actions.
+function interactiveTables(props: Record<string, unknown>, actor: Record<string, unknown>) {
+  const state: unknown[] = [], transitions: Promise<void>[] = [];
+  let cursor = 0, tree: ReactNode;
+  const { ConnectionTables } = component('../app/_components/connection-tables.tsx', {
+    ...modules, '../actions': actor,
+    react: { ...require('react'), useState: (initial: unknown) => {
+      const index = cursor++;
+      if (index >= state.length) state.push(initial);
+      return [state[index], (value: unknown) => {
+        state[index] = typeof value === 'function' ? value(state[index]) : value;
+      }];
+    }, useTransition: () => [false, (action: () => Promise<void>) => { transitions.push(action()); }] },
+  });
+  const render = () => { cursor = 0; tree = (ConnectionTables as (props: Record<string, unknown>) => ReactNode)(props); };
+  const find = (predicate: (element: ReactElement<Record<string, unknown>>) => boolean) => {
+    const visit = (node: ReactNode): ReactElement<Record<string, unknown>> | undefined => {
+      if (Array.isArray(node)) {
+        for (const child of node) { const found = visit(child); if (found) return found; }
+      } else if (isValidElement<Record<string, unknown>>(node)) {
+        if (predicate(node)) return node;
+        return visit(node.props.children as ReactNode);
+      }
+    };
+    const found = visit(tree);
+    assert.ok(found, 'Không tìm thấy control trong component.');
+    return found;
+  };
+  render();
+  return {
+    find, html: () => renderToStaticMarkup(tree),
+    flush: async () => { await Promise.all(transitions.splice(0)); render(); },
+    check: (index: number, checked: boolean) => {
+      const input = find(node => node.props.id === `connection-table-${index}`);
+      (input.props.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked } });
+      render();
+    },
+    schema: (value: string) => {
+      const select = find(node => node.type === 'select');
+      (select.props.onChange as (event: { target: { value: string } }) => void)({ target: { value } });
+      render();
+    },
+    save: () => {
+      const button = find(node => node.type === 'button' && node.props.children === 'Dùng các bảng này');
+      assert.equal(button.props.disabled, false);
+      (button.props.onClick as () => void)();
+      render();
+    },
+  };
+}
+
+test('giao diện: lựa chọn vừa lưu thay thế prop ban đầu khi đổi schema rồi quay lại; lỗi giữ lựa chọn cũ', async () => {
+  const id = mock.USER_CONNECTIONS[0].id;
+  let fail = false;
+  const saved: connections.ConnectionSelection[] = [];
+  const view = interactiveTables({ id, schemas: mock.USER_CONNECTION_SCHEMAS, initialSchema: 'public',
+    initialTables: { data: mock.USER_CONNECTION_TABLES.public }, selection: { schema: 'public', tables: ['orders'] } }, {
+    getUserConnectionTables: async (_: string, schema: string) => ({ data: mock.USER_CONNECTION_TABLES[schema] }),
+    selectUserConnectionTables: async (_: string, selection: connections.ConnectionSelection) => {
+      saved.push(selection);
+      return fail ? { error: 'Không lưu được lựa chọn.' } : { data: connectionTablesLink(id, selection.tables) };
+    },
+  });
+  view.check(0, false);
+  view.check(1, true);
+  view.save();
+  await view.flush();
+  assert.deepEqual(saved, [{ schema: 'public', tables: ['customers'] }]);
+  assert.match(view.html(), /href="\/runs\/new\?tables=c_a12bc345.customers"/);
+  view.schema('archive');
+  await view.flush();
+  view.schema('public');
+  await view.flush();
+  assert.equal(view.find(node => node.props.id === 'connection-table-0').props.checked, false);
+  assert.equal(view.find(node => node.props.id === 'connection-table-1').props.checked, true);
+  fail = true;
+  view.check(0, true);
+  view.check(1, false);
+  view.save();
+  await view.flush();
+  assert.match(view.html(), /role="alert">Không lưu được lựa chọn\./);
+  view.schema('archive');
+  await view.flush();
+  view.schema('public');
+  await view.flush();
+  assert.equal(view.find(node => node.props.id === 'connection-table-0').props.checked, false);
+  assert.equal(view.find(node => node.props.id === 'connection-table-1').props.checked, true);
+});
+
+test('giao diện: sau khi lưu, ghi chú cạnh link liệt kê đúng các bảng cần chọn tay', async () => {
+  const id = mock.USER_CONNECTIONS[0].id;
+  const manual = ['Đơn hàng & khách?x=#', 'order.items'];
+  for (const names of [['orders', ...manual], manual, ['orders']]) {
+    const view = interactiveTables({ id, schemas: mock.USER_CONNECTION_SCHEMAS, initialSchema: 'public',
+      initialTables: { data: names.map(name => ({ name, columns: [], primary_key: [], row_estimate: null })) },
+      selection: null }, {
+      selectUserConnectionTables: async (_: string, selection: connections.ConnectionSelection) => ({ data: connectionTablesLink(id, selection.tables) }),
+    });
+    names.forEach((_, index) => view.check(index, true));
+    view.save();
+    await view.flush();
+    const html = view.html();
+    assert.match(html, /Đã lưu lựa chọn bảng\./);
+    assert.match(html, new RegExp(`href="${connectionTablesLink(id, names).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+    if (names.includes(manual[0])) assert.match(html, /Tạo pipeline từ các bảng này<\/a><p class="section-note">Chọn tay các bảng sau ở trang tạo run: Đơn hàng &amp; khách\?x=#, order\.items\./);
+    else assert.doesNotMatch(html, /Chọn tay các bảng sau/);
+  }
+});
 
 test('giao diện: Reviewer chỉ thấy tên, không thấy metadata, liên kết hay nút xóa', () => {
   const html = renderToStaticMarkup(createElement(ConnectionList, { connections: mock.USER_CONNECTIONS, engineer: false }));

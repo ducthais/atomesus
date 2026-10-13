@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { getUserConnectionTables, selectUserConnectionTables } from '../actions';
 import type { ConnectionResult, ConnectionSchema, ConnectionSelection, ConnectionTable } from '@/lib/user-connections';
+import { connectionTablesToSelectManually } from '@/lib/user-connections';
 import { fmtNum, Panel } from './ui';
 
 export function ConnectionTables({ id, schemas, initialSchema, initialTables, selection }: {
@@ -11,13 +12,14 @@ export function ConnectionTables({ id, schemas, initialSchema, initialTables, se
 }) {
   const [schema, setSchema] = useState(initialSchema);
   const [tables, setTables] = useState(initialTables);
+  const [savedSelection, setSavedSelection] = useState(selection);
   const [checked, setChecked] = useState(selection?.schema === initialSchema ? selection.tables : []);
   const [result, setResult] = useState<ConnectionResult<string> | null>(null);
   const [pending, start] = useTransition();
   const load = (name: string) => {
     setSchema(name);
     setTables({ data: [] });
-    setChecked(selection?.schema === name ? selection.tables : []);
+    setChecked(savedSelection?.schema === name ? savedSelection.tables : []);
     setResult(null);
     start(async () => {
       try { setTables(await getUserConnectionTables(id, name)); }
@@ -26,6 +28,7 @@ export function ConnectionTables({ id, schemas, initialSchema, initialTables, se
   };
   const available = 'data' in tables ? tables.data : [];
   const selected = available.filter(table => checked.includes(table.name)).map(table => table.name);
+  const manualTables = connectionTablesToSelectManually(savedSelection?.tables ?? []);
   return <Panel title="Chọn schema và bảng">
     <label className="field" htmlFor="connection-schema">Schema
       <select id="connection-schema" value={schema} disabled={pending || !schemas.length} onChange={event => load(event.target.value)}>
@@ -53,11 +56,16 @@ export function ConnectionTables({ id, schemas, initialSchema, initialTables, se
       <button className="button primary" disabled={pending || !schema || !selected.length || 'error' in tables} onClick={() => {
         setResult(null);
         start(async () => {
-          try { setResult(await selectUserConnectionTables(id, { schema, tables: selected })); }
+          try {
+            const nextSelection = { schema, tables: selected };
+            const saved = await selectUserConnectionTables(id, nextSelection);
+            if ('data' in saved) setSavedSelection(nextSelection);
+            setResult(saved);
+          }
           catch { setResult({ error: 'Không lưu được lựa chọn. Vui lòng thử lại.' }); }
         });
       }}>Dùng các bảng này</button>
     </div>
-    {result && ('error' in result ? <p className="form-error" role="alert">{result.error}</p> : <div className="callout good"><div><p role="status">Đã lưu lựa chọn bảng.</p><Link href={result.data}>Tạo pipeline từ các bảng này</Link></div></div>)}
+    {result && ('error' in result ? <p className="form-error" role="alert">{result.error}</p> : <div className="callout good"><div><p role="status">Đã lưu lựa chọn bảng.</p><Link href={result.data}>Tạo pipeline từ các bảng này</Link>{manualTables.length > 0 && <p className="section-note">Chọn tay các bảng sau ở trang tạo run: {manualTables.join(', ')}.</p>}</div></div>)}
   </Panel>;
 }
