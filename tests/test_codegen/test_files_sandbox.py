@@ -100,8 +100,8 @@ def test_root_must_stay_inside_the_repo():
 
 
 def test_snapshot_feeds_the_agent_and_validates(monkeypatch):
-    monkeypatch.setattr(resolve, "_tables", lambda settings, schema: {})
-    monkeypatch.setattr(resolve, "_relations", lambda settings, schema: [])
+    monkeypatch.setattr(resolve, "_tables", lambda settings, schema, decl=None: {})
+    monkeypatch.setattr(resolve, "_relations", lambda settings, schema, decl=None: [])
     policy, settings = load_policy(), PipelineSettings(_env_file=None, mock_api_url="http://127.0.0.1:9")
     assert resolve.catalog(policy, settings)["sales"]["sources"]["landing_sales"]["available"] is True
     plan = {"domain": "sales", "sources": [{"id": "refunds", "source_ref": "landing_sales", "object": "refunds"}]}
