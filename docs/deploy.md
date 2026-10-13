@@ -137,6 +137,8 @@ Chưa có SSO, nên chỉ đưa mật khẩu cho người cần dùng; ai đăng
 
 ### Kết nối Postgres của người dùng
 
+Đặt `PIPELINE_EGRESS_IP=<IP public của VM>` trong `~/atomesus/.env` rồi tạo lại container web (`docker compose ... up -d web`) để trang Nguồn dữ liệu hiện IP cần mở firewall; không cần build lại image.
+
 Trước khi cập nhật backend, tạo một khóa Fernet và đặt `PIPELINE_CONNECTION_KEY` trong `~/atomesus/.env`:
 
 ```bash

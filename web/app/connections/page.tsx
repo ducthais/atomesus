@@ -1,10 +1,12 @@
 import { Database } from 'lucide-react';
+import { connection } from 'next/server';
 import { currentUser } from '@/lib/catalog/source';
 import { listUserConnections } from '../actions';
 import { ConnectionForm, ConnectionList } from '../_components/connection-form';
 import { PageHeader } from '../_components/ui';
 
 export default async function ConnectionsPage() {
+  await connection();
   const user = await currentUser();
   if (!user) return null;
   const engineer = user.role === 'Engineer';
@@ -15,7 +17,7 @@ export default async function ConnectionsPage() {
     </PageHeader>
     <div className={engineer ? 'detail-grid' : undefined}>
       {'error' in result ? <p className="callout bad" role="alert">{result.error}</p> : <ConnectionList connections={result.data} engineer={engineer} />}
-      {engineer && <ConnectionForm egressIp={process.env.NEXT_PUBLIC_EGRESS_IP?.trim() || undefined} />}
+      {engineer && <ConnectionForm egressIp={process.env.PIPELINE_EGRESS_IP?.trim() || process.env.NEXT_PUBLIC_EGRESS_IP?.trim() || undefined} />}
     </div>
   </div>;
 }
