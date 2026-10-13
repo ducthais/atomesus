@@ -13,7 +13,8 @@ trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn
 Ca optimizer: tạo pipeline như ca hợp lệ (có P13), rồi chạy UC-3 (tối ưu thủ công) trên chính run đó. Không ép phải
 thắng: với dữ liệu nhỏ, bản incremental có thể không nhanh hơn và bị loại mới là đúng; ca chấm quyết định có khớp số đo.
 Ca có `bench_rows` cần bộ sự kiện lớn: sinh trước khi chạy nếu chưa có (eval/bench/make_events.py); ca này (3 triệu
-dòng, domain `bench`) mong bản incremental được đo VÀ giữ vì đủ lớn để thắng overhead dbt. Báo cáo có bảng
+dòng, domain `bench`) đủ lớn để thắng overhead dbt: UC-3 phải đo bản incremental và ít nhất một lượt (P13 hoặc UC-3)
+phải giữ được bản tối ưu; UC-3 có thể bỏ khi một mẫu nhiễu làm hai dải đo chồng nhau. Báo cáo có bảng
 trước → sau (giây trung vị chạy lại, % nhanh hơn, giữ / bỏ) cho từng luật của từng ca và số ca có bản tối ưu được giữ.
 
 So với golden: tên cột do LLM đặt nên ghép theo giá trị. Bảng gold được lấy nguyên vẹn ngay trong sandbox trước khi
@@ -164,7 +165,7 @@ def score_optimize(case: dict, parent: dict, uc3: dict, min_gain_pct: float) -> 
     """Ca optimizer. `parent`, `uc3`: {status, llm_calls, optimizer: [bước]} của run tạo pipeline và run UC-3.
 
     Luật chung cho cả hai run: bước nào `applied` thì phải nhanh hơn đủ ngưỡng; UC-3 READY_FOR_REVIEW khi và chỉ khi
-    có bước `applied`, và không bao giờ gọi LLM.
+    có bước `applied`, và không bao giờ gọi LLM. `any_applied`: ít nhất một bước `applied` ở P13 hoặc UC-3.
     """
     expected, problems = case["expected"], []
     if parent["status"] != "READY_FOR_REVIEW":
@@ -189,6 +190,8 @@ def score_optimize(case: dict, parent: dict, uc3: dict, min_gain_pct: float) -> 
         for rule, phrase in expected.get(f"{prefix}_skipped", {}).items():
             if phrase not in (steps(run).get(rule, {}).get("reason") or ""):
                 problems.append(f"{prefix.upper()} {rule}: mong lý do có «{phrase}», ra {steps(run).get(rule)}")
+    if expected.get("any_applied") and not any(s["applied"] for run in (parent, uc3) for s in run.get("optimizer", [])):
+        problems.append("không lượt nào (P13, UC-3) giữ được bản tối ưu")
     if uc3["llm_calls"] != 0:
         problems.append(f"UC-3 gọi LLM {uc3['llm_calls']} lần (SPEC FR-14: phải là 0)")
     if uc3["status"] not in expected["uc3_status_in"]:

@@ -168,6 +168,27 @@ def test_optimizer_case_can_require_the_candidate_to_be_kept():
     assert any("không giữ table_to_incremental" in p for p in problems)
 
 
+def test_optimizer_case_can_require_a_kept_candidate_in_either_run():
+    # Ca lớn: UC-3 có thể bỏ incremental vì một mẫu nhiễu làm hai dải đo chồng nhau; chỉ cần P13 hoặc UC-3 giữ.
+    any_kept = {
+        "group": "optimize",
+        "expected": {
+            "uc3_status_in": ["READY_FOR_REVIEW", "NO_IMPROVEMENT"],
+            "uc3_measured": ["table_to_incremental"],
+            "any_applied": True,
+        },
+    }
+    p13_kept = {**READY, "optimizer": [_step("missing_partition_filter", True, 0.222, 0.155)]}
+    p13_dropped = {**READY, "optimizer": [_step("missing_partition_filter", False, 0.2, 0.25)]}
+    uc3_kept = {"status": "READY_FOR_REVIEW", "llm_calls": 0, "optimizer": [_step("table_to_incremental", True, 0.227, 0.139)]}  # fmt: skip
+    uc3_dropped = {"status": "NO_IMPROVEMENT", "llm_calls": 0, "optimizer": [_step("table_to_incremental", False, 0.2235, 0.1382)]}  # fmt: skip
+    assert run_eval.score_optimize(any_kept, p13_kept, uc3_dropped, 10)["matched"], "chỉ P13 giữ"
+    assert run_eval.score_optimize(any_kept, p13_dropped, uc3_kept, 10)["matched"], "chỉ UC-3 giữ"
+    none = run_eval.score_optimize(any_kept, p13_dropped, uc3_dropped, 10)
+    assert not none["matched"] and none["problems"] == ["không lượt nào (P13, UC-3) giữ được bản tối ưu"]
+    assert run_eval.score_optimize(TRIED, p13_dropped, uc3_dropped, 10)["matched"], "ca không đặt any_applied"
+
+
 def _optimize_result(case_id, p13, uc3_steps):
     return {
         "id": case_id,

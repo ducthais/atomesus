@@ -6,9 +6,9 @@
   "bench_rows": 3000000,
   "uc3_parent_patch": { "materialization": "table" },
   "expected": {
-    "uc3_status_in": ["READY_FOR_REVIEW"],
+    "uc3_status_in": ["READY_FOR_REVIEW", "NO_IMPROVEMENT"],
     "uc3_measured": ["table_to_incremental"],
-    "uc3_applied": ["table_to_incremental"]
+    "any_applied": true
   },
-  "note": "pipeline đã deploy dạng table trên 3 triệu dòng sự kiện trải 365 ngày (eval/bench/make_events.py --rows 3000000 sinh tất định nếu chưa có; 3 triệu thay vì 5 triệu để bước el_run nạp bronze xong trong giới hạn 300 giây). Mỗi lần chạy lại, bản table tính lại cả 3 triệu dòng (group by ngày + count distinct + sum), còn bản incremental theo event_date chỉ tính lại phân vùng ngày mới nhất (~8,2 nghìn dòng): đo thử dbt-duckdb được 0,213 s [0,203-0,218] so với 0,158 s [0,152-0,158], nhanh hơn ~26% và hai dải đo không chồng nhau, vượt xa min_gain_pct = 10. Gold theo ngày giống hệt nên UC-3 phải đo VÀ giữ table_to_incremental, kết thúc READY_FOR_REVIEW, llm_calls = 0"
+  "note": "pipeline đã deploy dạng table trên 3 triệu dòng sự kiện trải 365 ngày (eval/bench/make_events.py --rows 3000000 sinh tất định nếu chưa có; 3 triệu thay vì 5 triệu để bước el_run nạp bronze xong trong giới hạn 300 giây). Mỗi lần chạy lại, bản table tính lại cả 3 triệu dòng (group by ngày + count distinct + sum), còn bản incremental theo event_date chỉ tính lại phân vùng ngày mới nhất (~8,2 nghìn dòng), và P13 thêm lọc phân vùng cũng bớt dữ liệu quét, nên đủ lớn để thắng overhead dbt. Hai lần chạy eval thật: lần 1 P13 giữ missing_partition_filter 0,250→0,140 s (44%), UC-3 giữ table_to_incremental 0,227→0,139 s (39%); lần 2 P13 giữ missing_partition_filter 0,222→0,155 s (30%), UC-3 BỎ table_to_incremental dù trung vị 0,2235→0,1382 s (38%) vì một mẫu nhiễu 0,2338 chồng lên dải bản gốc [0,2133..0,2706]. Luật chống nhiễu (hai dải đo không được chồng nhau) là quyết định có chủ đích của optimizer, nên không bắt buộc UC-3 thắng: UC-3 phải đo table_to_incremental (READY_FOR_REVIEW nếu giữ, NO_IMPROVEMENT nếu bỏ, llm_calls = 0), và ít nhất một lượt (P13 hoặc UC-3) phải giữ được bản tối ưu với gold giống hệt và nhanh hơn đủ min_gain_pct = 10"
 }
