@@ -60,3 +60,18 @@ rental:
     cost_increase_pct: 40
     test_fail_rate_pct: 5
     cooldown_hours: 24
+bench:                            # bộ sự kiện lớn của eval optimizer
+  hard:
+    freshness_minutes: 1440
+  soft:
+    cost_usd_per_day: 0.5
+  prefer: cheapest_feasible
+  degrade_order: [freshness, completeness]
+  quality:
+    max_reject_pct: 1.0
+  regression:
+    window_runs: 7
+    runtime_increase_pct: 50
+    cost_increase_pct: 40
+    test_fail_rate_pct: 5
+    cooldown_hours: 24

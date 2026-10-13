@@ -155,7 +155,7 @@ async def test_creating_run_or_chat_rejects_another_owners_source(
         assert "không có" in response.json()["detail"]
         assert user_domains.calls == []
     else:
-        assert user_domains.calls == [("minh", sources, {"sales", "marketing", "rental", DOMAIN_A})]
+        assert user_domains.calls == [("minh", sources, {"sales", "marketing", "rental", "bench", DOMAIN_A})]
     assert user_domains.discovered == []
 
 

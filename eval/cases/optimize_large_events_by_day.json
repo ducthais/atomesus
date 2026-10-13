@@ -1,0 +1,14 @@
+{
+  "id": "optimize_large_events_by_day",
+  "group": "optimize",
+  "request": "Theo từng ngày: số sự kiện, số người dùng khác nhau và tổng số tiền",
+  "sources": [{ "source_ref": "landing_bench", "tables": ["events"] }],
+  "bench_rows": 5000000,
+  "uc3_parent_patch": { "materialization": "table" },
+  "expected": {
+    "uc3_status_in": ["READY_FOR_REVIEW"],
+    "uc3_measured": ["table_to_incremental"],
+    "uc3_applied": ["table_to_incremental"]
+  },
+  "note": "pipeline đã deploy dạng table trên 5 triệu dòng sự kiện trải 365 ngày (eval/bench/make_events.py sinh tất định nếu chưa có). Mỗi lần chạy lại, bản table tính lại cả 5 triệu dòng (group by ngày + count distinct + sum), còn bản incremental theo event_date chỉ tính lại phân vùng ngày mới nhất (~13,7 nghìn dòng): đo thử dbt-duckdb được 0,22 s so với 0,145 s, nhanh hơn ~35% và hai dải đo không chồng nhau, vượt xa min_gain_pct = 10. Gold theo ngày giống hệt nên UC-3 phải đo VÀ giữ table_to_incremental, kết thúc READY_FOR_REVIEW, llm_calls = 0"
+}

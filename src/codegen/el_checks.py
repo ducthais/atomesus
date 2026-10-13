@@ -54,8 +54,11 @@ def source_records(source, decl, settings: PipelineSettings):
 def read_source(source, decl, settings: PipelineSettings) -> Side:
     columns = key_columns(source)
     if source.kind in ("rest_api", "filesystem"):
-        rows = list(source_records(source, decl, settings))
-        return Side(len(rows), {tuple(_text(row.get(c)) for c in columns) for row in rows})
+        count, keys = 0, set()
+        for row in source_records(source, decl, settings):  # theo luồng: không giữ mọi dòng (CSV hàng triệu dòng)
+            count += 1
+            keys.add(tuple(_text(row.get(c)) for c in columns))
+        return Side(count, keys)
     from psycopg import sql
 
     table = sql.Identifier(decl.schema_, source.table)

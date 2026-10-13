@@ -80,5 +80,19 @@ domains:
         canonical: true
         definition: "cửa hàng cho thuê DVD"
         tables: [pagila_pg.store]
+  bench:                              # bộ sự kiện lớn cho eval optimizer, sinh lúc chạy (eval/bench/make_events.py)
+    datasets: [bench]
+    steward: steward@company.vn       # TODO: đổi thành steward thật của domain
+    currency:
+      base: VND
+      rates: { VND: 1 }
+    sources:                          # thư mục chưa sinh thì nguồn hiện `available: false`, domain khác không ảnh hưởng
+      landing_bench: { kind: filesystem, connection_ref: landing_bench, root: infra/landing/bench }
+    entities:
+      event:
+        canonical: true
+        definition: "một sự kiện phát sinh tiền của một người dùng trong một ngày (VND)"
+        tables: [landing_bench.events]
+        aliases: [sự kiện]
 
 conformed_dimensions: []   # rỗng nghĩa là chưa có thực thể nào được công nhận dùng chung

@@ -1,4 +1,4 @@
-"""Chấm điểm agent trên 15 ca của SPEC §18.2 và 3 ca optimizer: chạy thật từng ca bằng LLM thật và nguồn thật.
+"""Chấm điểm agent trên 15 ca của SPEC §18.2 và 4 ca optimizer: chạy thật từng ca bằng LLM thật và nguồn thật.
 
 Cần Postgres nguồn và `make mock-api` đang chạy. Mỗi ca: lập kế hoạch → tự xác nhận (P2) → viết Spec → chạy thử
 trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn dữ liệu demo.
@@ -8,11 +8,12 @@ trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn
 | hợp lệ    | 6     | eval/golden/    | tới READY_FOR_REVIEW và bảng gold khớp golden từng dòng               |
 | vi phạm   | 6     | eval/cases/     | dừng đúng mã `BLOCKED_*` mong đợi (2 ca mỗi cổng semantic, budget, ast_guard) |
 | mơ hồ     | 3     | eval/cases/     | dừng NEEDS_HUMAN ở bước `plan` kèm câu hỏi làm rõ, không đoán         |
-| optimizer | 3     | eval/cases/     | P13 và UC-3 đúng hành vi: đo khi luật áp, bỏ qua kèm lý do khi không; UC-3 `llm_calls = 0`; chỉ giữ bản vừa đúng vừa nhanh hơn |
+| optimizer | 4     | eval/cases/     | P13 và UC-3 đúng hành vi: đo khi luật áp, bỏ qua kèm lý do khi không; UC-3 `llm_calls = 0`; chỉ giữ bản vừa đúng vừa nhanh hơn |
 
 Ca optimizer: tạo pipeline như ca hợp lệ (có P13), rồi chạy UC-3 (tối ưu thủ công) trên chính run đó. Không ép phải
 thắng: với dữ liệu nhỏ, bản incremental có thể không nhanh hơn và bị loại mới là đúng; ca chấm quyết định có khớp số đo.
-Ca có `bench_rows` cần bộ sự kiện lớn: sinh trước khi chạy nếu chưa có (eval/bench/make_events.py). Báo cáo có bảng
+Ca có `bench_rows` cần bộ sự kiện lớn: sinh trước khi chạy nếu chưa có (eval/bench/make_events.py); ca này (5 triệu
+dòng, domain `bench`) mong bản incremental được đo VÀ giữ vì đủ lớn để thắng overhead dbt. Báo cáo có bảng
 trước → sau (giây trung vị chạy lại, % nhanh hơn, giữ / bỏ) cho từng luật của từng ca và số ca có bản tối ưu được giữ.
 
 So với golden: tên cột do LLM đặt nên ghép theo giá trị. Bảng gold được lấy nguyên vẹn ngay trong sandbox trước khi
@@ -237,7 +238,7 @@ def summarize_all(results: list[dict]) -> dict:
 
 
 def load_cases(only: set[str] | None = None, groups: set[str] | None = None) -> list[dict]:
-    """6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm, 3 ca mơ hồ và 3 ca optimizer (eval/cases)."""
+    """6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm, 3 ca mơ hồ và 4 ca optimizer (eval/cases)."""
     golden = [
         {**json.loads(p.read_text(encoding="utf-8")), "group": "valid"} for p in sorted(GOLDEN_DIR.glob("*.json"))
     ]
@@ -474,7 +475,7 @@ def write_report(results: list[dict], summary: dict, name: str = "latest") -> Pa
         encoding="utf-8",
     )
     lines = [
-        "# Kết quả chấm 15 ca (SPEC §18) và 3 ca optimizer" if name == "latest" else f"# Kết quả chấm ({name})",
+        "# Kết quả chấm 15 ca (SPEC §18) và 4 ca optimizer" if name == "latest" else f"# Kết quả chấm ({name})",
         "",
         f"Chạy lúc {stamp} bằng `python eval/run_eval.py`; số liệu đầy đủ ở `{name}.json`.",
         "",

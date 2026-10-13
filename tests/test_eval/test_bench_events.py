@@ -57,6 +57,25 @@ def test_existing_file_with_enough_rows_is_not_rewritten(tmp_path, monkeypatch):
     assert len(_rows(tmp_path)) == 800
 
 
+def test_large_case_reads_the_generated_folder_through_the_bench_domain():
+    """Ca optimizer lớn trỏ tới nguồn filesystem của domain bench, gốc là thư mục cha của nơi script ghi CSV."""
+    import json
+
+    from src.policy.loader import load_policy
+
+    case = json.loads((ROOT / "eval" / "cases" / "optimize_large_events_by_day.json").read_text(encoding="utf-8"))
+    assert case["bench_rows"] >= 5_000_000 and case["uc3_parent_patch"] == {"materialization": "table"}
+    assert case["expected"]["uc3_measured"] == case["expected"]["uc3_applied"] == ["table_to_incremental"]
+    assert case["expected"]["uc3_status_in"] == ["READY_FOR_REVIEW"]
+    domains = load_policy().domains
+    (source,) = case["sources"]
+    assert domains.domain_of_source(source["source_ref"]) == "bench"
+    assert source["tables"] == [make_events.EVENTS_DIR.name]
+    decl = domains.domains["bench"].sources[source["source_ref"]]
+    assert decl.kind == "filesystem" and ROOT / decl.root == make_events.EVENTS_DIR.parent
+    assert domains.domains["bench"].entities["event"].tables == [f"{source['source_ref']}.events"]
+
+
 def test_rejects_non_positive_rows(tmp_path):
     with pytest.raises(ValueError, match="lớn hơn 0"):
         make_events.ensure_events(0, tmp_path)

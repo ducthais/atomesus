@@ -87,10 +87,10 @@ def test_fifteen_cases_follow_the_spec_split():
     groups = [c["group"] for c in cases]
     gates = sorted(c["gate"] for c in cases if c["group"] == "violation")
     counts = tuple(groups.count(g) for g in ("valid", "violation", "ambiguous", "optimize"))
-    assert counts == (6, 6, 3, 3), "15 ca của SPEC §18.2 cộng 3 ca optimizer"
+    assert counts == (6, 6, 3, 4), "15 ca của SPEC §18.2 cộng 4 ca optimizer"
     assert gates == ["ast_guard", "ast_guard", "budget", "budget", "semantic", "semantic"]
     assert all(c["expected"]["status"].startswith("BLOCKED_") for c in cases if c["group"] == "violation")
-    assert len({c["id"] for c in cases}) == len(cases) == 18
+    assert len({c["id"] for c in cases}) == len(cases) == 19
 
 
 def test_violation_passes_only_with_the_expected_block_code():
