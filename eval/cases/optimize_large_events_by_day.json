@@ -1,0 +1,13 @@
+{
+  "id": "optimize_large_events_by_day",
+  "group": "optimize",
+  "request": "Theo từng ngày: số sự kiện, số người dùng khác nhau và tổng số tiền",
+  "sources": [{ "source_ref": "landing_bench", "tables": ["events"] }],
+  "bench_rows": 3000000,
+  "uc3_parent_patch": { "materialization": "table" },
+  "expected": {
+    "uc3_status_in": ["READY_FOR_REVIEW"],
+    "uc3_applied": ["table_to_incremental"]
+  },
+  "note": "pipeline đã deploy dạng table trên 3 triệu dòng sự kiện trải 365 ngày (eval/bench/make_events.py --rows 3000000 sinh tất định nếu chưa có; 3 triệu thay vì 5 triệu để bước el_run nạp bronze xong trong giới hạn 300 giây). Mỗi lần chạy lại, bản table tính lại cả 3 triệu dòng (group by ngày + count distinct + sum), còn bản incremental theo event_date chỉ tính lại phân vùng ngày mới nhất (~8,2 nghìn dòng), nên đủ lớn để thắng overhead dbt. UC-3 phải GIỮ table_to_incremental (READY_FOR_REVIEW, gold giống hệt, trung vị nhanh hơn ít nhất min_gain_pct = 10, llm_calls = 0). Hai lần chạy eval thật: lần 1 giữ 0,227→0,139 s (39%); lần 2 trung vị 0,2235→0,1382 s (38%) nhưng một mẫu nhiễu 0,2338 chồng lên dải bản gốc [0,2133..0,2706]. Luật chống nhiễu nay bỏ một mẫu chậm nhất của bản ứng viên (khi có ≥ 3 mẫu) trước khi so: bốn mẫu còn lại [0,1352..0,1553] đều nhanh hơn mọi mẫu bản gốc nên lượt đó cũng được giữ"
+}

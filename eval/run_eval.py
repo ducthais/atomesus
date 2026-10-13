@@ -1,4 +1,4 @@
-"""Chấm điểm agent trên 15 ca của SPEC §18.2 và 3 ca optimizer: chạy thật từng ca bằng LLM thật và nguồn thật.
+"""Chấm điểm agent trên 15 ca của SPEC §18.2 và 4 ca optimizer: chạy thật từng ca bằng LLM thật và nguồn thật.
 
 Cần Postgres nguồn và `make mock-api` đang chạy. Mỗi ca: lập kế hoạch → tự xác nhận (P2) → viết Spec → chạy thử
 trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn dữ liệu demo.
@@ -8,10 +8,13 @@ trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn
 | hợp lệ    | 6     | eval/golden/    | tới READY_FOR_REVIEW và bảng gold khớp golden từng dòng               |
 | vi phạm   | 6     | eval/cases/     | dừng đúng mã `BLOCKED_*` mong đợi (2 ca mỗi cổng semantic, budget, ast_guard) |
 | mơ hồ     | 3     | eval/cases/     | dừng NEEDS_HUMAN ở bước `plan` kèm câu hỏi làm rõ, không đoán         |
-| optimizer | 3     | eval/cases/     | P13 và UC-3 đúng hành vi: đo khi luật áp, bỏ qua kèm lý do khi không; UC-3 `llm_calls = 0`; chỉ giữ bản vừa đúng vừa nhanh hơn |
+| optimizer | 4     | eval/cases/     | P13 và UC-3 đúng hành vi: đo khi luật áp, bỏ qua kèm lý do khi không; UC-3 `llm_calls = 0`; chỉ giữ bản vừa đúng vừa nhanh hơn |
 
 Ca optimizer: tạo pipeline như ca hợp lệ (có P13), rồi chạy UC-3 (tối ưu thủ công) trên chính run đó. Không ép phải
 thắng: với dữ liệu nhỏ, bản incremental có thể không nhanh hơn và bị loại mới là đúng; ca chấm quyết định có khớp số đo.
+Ca có `bench_rows` cần bộ sự kiện lớn: sinh trước khi chạy nếu chưa có (eval/bench/make_events.py); ca này (3 triệu
+dòng, domain `bench`) đủ lớn để thắng overhead dbt: UC-3 phải giữ bản `table_to_incremental` (READY_FOR_REVIEW, gold
+giống hệt). Báo cáo có bảng trước → sau (giây trung vị chạy lại, % nhanh hơn, giữ / bỏ) cho từng luật của từng ca và số ca có bản tối ưu được giữ.
 
 So với golden: tên cột do LLM đặt nên ghép theo giá trị. Bảng gold được lấy nguyên vẹn ngay trong sandbox trước khi
 sandbox bị xóa (bọc `reference.read_gold`, không sửa code sản phẩm).
@@ -180,6 +183,9 @@ def score_optimize(case: dict, parent: dict, uc3: dict, min_gain_pct: float) -> 
         for rule in expected.get(f"{prefix}_measured", []):
             if steps(run).get(rule, {}).get("before_sec") is None:
                 problems.append(f"{prefix.upper()} không đo luật {rule}: {steps(run).get(rule, {}).get('reason')}")
+        for rule in expected.get(f"{prefix}_applied", []):  # optimizer chỉ giữ khi gold giống hệt và nhanh hơn đủ
+            if not steps(run).get(rule, {}).get("applied"):
+                problems.append(f"{prefix.upper()} không giữ {rule}: {steps(run).get(rule, {}).get('reason')}")
         for rule, phrase in expected.get(f"{prefix}_skipped", {}).items():
             if phrase not in (steps(run).get(rule, {}).get("reason") or ""):
                 problems.append(f"{prefix.upper()} {rule}: mong lý do có «{phrase}», ra {steps(run).get(rule)}")
@@ -196,6 +202,18 @@ def _ratio(results: list[dict]) -> str:
     return f"{sum(r['matched'] for r in results)}/{len(results)}"
 
 
+def _optimizer_runs(result: dict) -> list[tuple[str, list[dict]]]:
+    """Các bước optimizer của một ca optimizer theo lượt: P13 lúc tạo pipeline, UC-3 sau đó."""
+    mapping = result.get("mapping") or {}
+    return [("P13", mapping.get("p13") or []), ("UC-3", (mapping.get("uc3") or {}).get("optimizer") or [])]
+
+
+def kept_ratio(results: list[dict]) -> str:
+    """Số ca optimizer có ít nhất một bản tối ưu được giữ (ở P13 hoặc UC-3), kèm mẫu số."""
+    kept = sum(any(step["applied"] for _, steps in _optimizer_runs(r) for step in steps) for r in results)
+    return f"{kept}/{len(results)}"
+
+
 def summarize_all(results: list[dict]) -> dict:
     """Chỉ số SPEC §18.3 theo nhóm, luôn kèm mẫu số; ca vi phạm tách theo cổng."""
     by_group = {g: [r for r in results if r["group"] == g] for g in GROUPS}
@@ -208,6 +226,7 @@ def summarize_all(results: list[dict]) -> dict:
         "blocked_by_gate": {g: _ratio([r for r in violations if r["gate"] == g]) for g in gates},
         "asked": _ratio(by_group["ambiguous"]) if by_group["ambiguous"] else None,
         "optimized": _ratio(by_group["optimize"]) if by_group["optimize"] else None,
+        "optimizer_kept": kept_ratio(by_group["optimize"]) if by_group["optimize"] else None,
         "avg_spec_repairs": round(sum(r["spec_attempts"] for r in valid) / len(valid), 2) if valid else None,
         "total": _ratio(results),
         "llm_usd": round(sum(r["llm_usd"] for r in results), 6),
@@ -219,7 +238,7 @@ def summarize_all(results: list[dict]) -> dict:
 
 
 def load_cases(only: set[str] | None = None, groups: set[str] | None = None) -> list[dict]:
-    """6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm, 3 ca mơ hồ và 3 ca optimizer (eval/cases)."""
+    """6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm, 3 ca mơ hồ và 4 ca optimizer (eval/cases)."""
     golden = [
         {**json.loads(p.read_text(encoding="utf-8")), "group": "valid"} for p in sorted(GOLDEN_DIR.glob("*.json"))
     ]
@@ -349,6 +368,58 @@ def _steps_note(steps: list[dict]) -> str:
     return "; ".join(one(step) for step in steps)
 
 
+def _sec(value: float | None) -> str:
+    return "—" if value is None else f"{value:g}"
+
+
+def gain_text(before: float | None, after: float | None) -> str:
+    """% nhanh hơn của bản ứng viên so với bản gốc; âm thì ghi rõ chậm hơn."""
+    if not before or after is None:
+        return "—"
+    pct = (before - after) * 100 / before
+    return f"{pct:.1f}%" if pct >= 0 else f"chậm hơn {-pct:.1f}%"
+
+
+def before_after_lines(results: list[dict]) -> list[str]:
+    """Bảng trước → sau cho từng luật của từng ca optimizer; rỗng nếu lượt chấm không có ca optimizer."""
+    rows = []
+    for result in results:
+        if result["group"] != "optimize":
+            continue
+        for label, steps in _optimizer_runs(result):
+            for step in steps:
+                before, after = step.get("before_sec"), step.get("after_sec")
+                verdict = "giữ" if step["applied"] else ("bỏ" if before is not None else "không thử")
+                rows.append(
+                    f"| `{result['id']}` | {label} | `{step['rule']}` | {_sec(before)} | {_sec(after)} | "
+                    f"{gain_text(before, after)} | {verdict} |"
+                )
+    if not rows:
+        return []
+    return [
+        "## Optimizer: trước → sau",
+        "",
+        "Giây là trung vị thời gian chạy lại model gold (`optimizer.rerun_samples` lần) của bản gốc và bản ứng viên. "
+        "Chỉ giữ bản có gold giống hệt, nhanh hơn ít nhất `optimizer.min_gain_pct` % và các lần đo của bản ứng viên "
+        "(bỏ một lần chậm nhất khi có ≥ 3 lần) đều nhanh hơn mọi lần của bản gốc; "
+        "luật không áp thì không thử (lý do ở cột Ghi chú phía trên).",
+        "",
+        "| Ca | Lượt | Luật | Trước (giây) | Sau (giây) | Nhanh hơn | Giữ / bỏ |",
+        "|---|---|---|---|---|---|---|",
+        *rows,
+    ]
+
+
+def prepare_data(case: dict) -> bool:
+    """Ca cần bộ sự kiện lớn (`bench_rows`): sinh trước nếu chưa có (eval/bench/make_events.py). True khi vừa sinh."""
+    rows = case.get("bench_rows")
+    if not rows:
+        return False
+    from eval.bench.make_events import ensure_events
+
+    return ensure_events(rows)
+
+
 def _note(result: dict) -> str:
     if result["problems"]:
         return "; ".join(result["problems"])
@@ -382,6 +453,10 @@ def summary_lines(summary: dict) -> list[str]:
         lines.append(f"- Hỏi lại thay vì đoán: **{summary['asked']}** ca mơ hồ")
     if summary.get("optimized"):
         lines.append(f"- Optimizer (P13 + UC-3) đúng hành vi: **{summary['optimized']}** ca")
+    if summary.get("optimizer_kept"):
+        lines.append(
+            f"- **{summary['optimizer_kept']} ca có bản tối ưu được giữ** (gold giống hệt, nhanh hơn đủ ngưỡng)"
+        )
     lines.append(f"- Tiền LLM cả lượt: ${summary['llm_usd']:.4f}; tổng thời gian {summary['seconds']} giây")
     return lines
 
@@ -401,7 +476,7 @@ def write_report(results: list[dict], summary: dict, name: str = "latest") -> Pa
         encoding="utf-8",
     )
     lines = [
-        "# Kết quả chấm 15 ca (SPEC §18) và 3 ca optimizer" if name == "latest" else f"# Kết quả chấm ({name})",
+        "# Kết quả chấm 15 ca (SPEC §18) và 4 ca optimizer" if name == "latest" else f"# Kết quả chấm ({name})",
         "",
         f"Chạy lúc {stamp} bằng `python eval/run_eval.py`; số liệu đầy đủ ở `{name}.json`.",
         "",
@@ -417,6 +492,8 @@ def write_report(results: list[dict], summary: dict, name: str = "latest") -> Pa
             f"{'✅' if r['matched'] else '❌'} | {r['spec_attempts']} | {r['llm_calls']} | {r['seconds']} giây | "
             f"{_note(r).replace('|', '/')} |"
         )
+    if table := before_after_lines(results):
+        lines += ["", *table]
     path = RESULTS_DIR / f"{name}.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -435,6 +512,8 @@ def main() -> int:
     results = []
     for case in cases:
         print(f"→ [{case['group']}] {case['id']} …", flush=True)
+        if prepare_data(case):
+            print(f"  đã sinh {case['bench_rows']:,} dòng sự kiện (eval/bench/make_events.py)", flush=True)
         result = run_case(case, args.store)
         expected = case.get("expected") or {}
         result["expected"] = expected.get("status") or ("đúng hành vi optimizer" if expected else "khớp golden")

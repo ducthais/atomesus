@@ -28,10 +28,12 @@ def fake_sandbox(
     profiles: dict | None = None,
     status: dict | None = None,
     spread: dict | None = None,
+    measured: dict | None = None,
 ):
     """Kết quả chạy thử theo materialization; ghi lại các lần gọi (materialization, rerun_model).
 
     `spread[kind]`: độ dao động ± quanh trung vị của các lần chạy lại (mặc định 0: mọi lần như nhau).
+    `measured[kind]`: các lần chạy lại đo thật (thay cho trung vị ± spread); `rerun[kind]` phải là trung vị của chúng.
     """
     calls = []
 
@@ -40,7 +42,8 @@ def fake_sandbox(
         calls.append((kind, rerun_model))
         profile = (profiles or {}).get(kind, PROFILE)
         width = (spread or {}).get(kind, 0.0)
-        samples = [rerun[kind] - width, rerun[kind], rerun[kind] + width] if rerun_model else []
+        samples = (measured or {}).get(kind, [rerun[kind] - width, rerun[kind], rerun[kind] + width])
+        samples = samples if rerun_model else []
         return SandboxResult(
             (status or {}).get(kind, "READY_FOR_REVIEW"),
             "t_validate",
@@ -124,12 +127,61 @@ def test_candidate_that_is_not_fast_enough_is_dropped():
 
 
 def test_a_faster_median_inside_the_measurement_noise_is_dropped():
-    """Trung vị nhanh hơn 30% nhưng các lần đo chồng lên nhau (eval 2026-10-13): chưa chắc nhanh hơn, không giữ."""
-    noisy = fake_sandbox({"table": 0.28, "incremental": 0.2}, spread={"table": 0.06, "incremental": 0.1})
+    """Trung vị nhanh hơn 28% nhưng các lần đo chồng lên nhau (eval 2026-10-13): chưa chắc nhanh hơn, không giữ.
+
+    Ứng viên [0.1, 0.2, 0.3] bỏ mẫu chậm nhất còn [0.1, 0.2]; 0.2 vẫn chậm hơn lần nhanh nhất 0.18 của bản gốc.
+    """
+    noisy = fake_sandbox({"table": 0.28, "incremental": 0.2}, spread={"table": 0.1, "incremental": 0.1})
 
     outcome = _optimize(noisy)
 
-    assert outcome["best"] is None and "nằm trong nhiễu đo" in outcome["steps"][0]["reason"]
+    reason = outcome["steps"][0]["reason"]
+    assert outcome["best"] is None and "nằm trong nhiễu đo" in reason and "bỏ 1 mẫu chậm nhất" in reason
+
+
+def test_one_noisy_slow_sample_does_not_sink_a_clearly_faster_candidate():
+    """Eval 3 triệu dòng, lần 2: một mẫu 0.2338 của bản incremental chồng lên dải bản gốc; bỏ mẫu đó thì giữ."""
+    sandbox = fake_sandbox(
+        {"table": 0.2235, "incremental": 0.1382},
+        measured={
+            "table": [0.2133, 0.2706, 0.2235, 0.2146, 0.2265],
+            "incremental": [0.1382, 0.2338, 0.1553, 0.1352, 0.1375],
+        },
+    )
+
+    outcome = _optimize(sandbox)
+
+    step = outcome["steps"][0]
+    assert step["applied"] is True and (step["before_sec"], step["after_sec"]) == (0.2235, 0.1382)
+    assert outcome["best"]["spec"]["transform"]["materialization"] == "incremental"
+
+
+def test_two_slow_samples_on_a_small_table_are_still_noise():
+    """Eval bảng 30 dòng: trung vị nhanh hơn 27% nhưng bỏ 0.4991 vẫn còn 0.3619 chồng lên dải bản gốc: bỏ."""
+    sandbox = fake_sandbox(
+        {"table": 0.2462, "incremental": 0.1788},
+        measured={
+            "table": [0.1948, 0.1735, 0.3148, 0.2611, 0.2462],
+            "incremental": [0.4991, 0.3619, 0.1788, 0.1718, 0.1506],
+        },
+    )
+
+    outcome = _optimize(sandbox)
+
+    reason = outcome["steps"][0]["reason"]
+    assert outcome["best"] is None and "nằm trong nhiễu đo" in reason and "bỏ 1 mẫu chậm nhất" in reason
+
+
+def test_with_fewer_than_three_samples_no_sample_is_dropped():
+    sandbox = fake_sandbox(
+        {"table": 0.3, "incremental": 0.15},
+        measured={"table": [0.25, 0.35], "incremental": [0.1, 0.26]},
+    )
+
+    outcome = _optimize(sandbox)
+
+    reason = outcome["steps"][0]["reason"]
+    assert outcome["best"] is None and "nằm trong nhiễu đo" in reason and "bỏ 1 mẫu" not in reason
 
 
 def test_faster_candidate_with_a_different_gold_table_is_dropped():

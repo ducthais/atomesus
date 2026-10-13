@@ -33,6 +33,8 @@ Thumbs.db
 
 # Data (never commit large data)
 data/
+# Bộ sự kiện lớn sinh lúc chạy eval (eval/bench/make_events.py)
+/infra/landing/bench/
 *.db
 *.sqlite3
 

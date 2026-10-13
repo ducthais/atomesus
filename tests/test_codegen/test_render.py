@@ -81,6 +81,8 @@ def test_single_source_pipeline_content(policy):
     assert 'dlt.secrets["sources.sales_pg.credentials"]' in ingestion
     assert 'schema="sales_raw"' in ingestion and 'table_name="raw_orders"' in ingestion
     assert 'write_disposition="replace"' in ingestion and "incremental" not in ingestion
+    assert 'LOADER_FILE_FORMAT = "parquet"' in ingestion
+    assert "pipeline().run(source(), loader_file_format=LOADER_FILE_FORMAT)" in ingestion
 
     staging = files["dbt_project/models/staging/stg_fct_daily_orders__orders.sql"]
     assert "{{ source('bronze', 'raw_orders') }}" in staging
@@ -101,6 +103,7 @@ def test_single_source_pipeline_content(policy):
     dagster = files["infra/dagster/generated/fct_daily_orders_asset.py"]
     assert 'cron_schedule="0 2 * * *"' in dagster
     assert "from ingestion.fct_daily_orders_pipeline import pipeline, source" in dagster
+    assert 'dlt.run(context=context, loader_file_format="parquet")' in dagster
 
 
 def test_multi_source_pipeline_content(policy):

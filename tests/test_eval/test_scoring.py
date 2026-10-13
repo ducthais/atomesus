@@ -87,10 +87,10 @@ def test_fifteen_cases_follow_the_spec_split():
     groups = [c["group"] for c in cases]
     gates = sorted(c["gate"] for c in cases if c["group"] == "violation")
     counts = tuple(groups.count(g) for g in ("valid", "violation", "ambiguous", "optimize"))
-    assert counts == (6, 6, 3, 3), "15 ca của SPEC §18.2 cộng 3 ca optimizer"
+    assert counts == (6, 6, 3, 4), "15 ca của SPEC §18.2 cộng 4 ca optimizer"
     assert gates == ["ast_guard", "ast_guard", "budget", "budget", "semantic", "semantic"]
     assert all(c["expected"]["status"].startswith("BLOCKED_") for c in cases if c["group"] == "violation")
-    assert len({c["id"] for c in cases}) == len(cases) == 18
+    assert len({c["id"] for c in cases}) == len(cases) == 19
 
 
 def test_violation_passes_only_with_the_expected_block_code():
@@ -154,6 +154,96 @@ def test_optimizer_case_fails_on_llm_calls_or_a_kept_candidate_that_is_not_faste
     assert "không đo luật" in " ".join(run_eval.score_optimize(TRIED, READY, unmeasured, 10)["problems"])
     blocked = {"status": "NEEDS_HUMAN", "llm_calls": 3, "optimizer": []}
     assert not run_eval.score_optimize(TRIED, blocked, unmeasured, 10)["matched"]
+
+
+def test_optimizer_case_can_require_the_candidate_to_be_kept():
+    must_keep = {
+        "group": "optimize",
+        "expected": {"uc3_status_in": ["READY_FOR_REVIEW"], "uc3_applied": ["table_to_incremental"]},
+    }
+    kept = {"status": "READY_FOR_REVIEW", "llm_calls": 0, "optimizer": [_step("table_to_incremental", True, 1.0, 0.6)]}
+    assert run_eval.score_optimize(must_keep, READY, kept, 10)["matched"]
+    dropped = {"status": "NO_IMPROVEMENT", "llm_calls": 0, "optimizer": [_step("table_to_incremental", False, 1, 0.98)]}
+    problems = run_eval.score_optimize(must_keep, READY, dropped, 10)["problems"]
+    assert any("không giữ table_to_incremental" in p for p in problems)
+
+
+def test_large_case_requires_uc3_to_keep_incremental_not_just_a_partition_filter_win():
+    """Ca 3 triệu dòng: P13 giữ missing_partition_filter không thay được việc UC-3 giữ table_to_incremental."""
+    case = json.loads((ROOT / "eval" / "cases" / "optimize_large_events_by_day.json").read_text(encoding="utf-8"))
+    p13_kept = {**READY, "optimizer": [_step("missing_partition_filter", True, 0.222, 0.155)]}
+    uc3_kept = {"status": "READY_FOR_REVIEW", "llm_calls": 0, "optimizer": [_step("table_to_incremental", True, 0.2235, 0.1382)]}  # fmt: skip
+    uc3_dropped = {"status": "NO_IMPROVEMENT", "llm_calls": 0, "optimizer": [_step("table_to_incremental", False, 0.2235, 0.1382)]}  # fmt: skip
+
+    assert run_eval.score_optimize(case, p13_kept, uc3_kept, 10)["matched"]
+    problems = run_eval.score_optimize(case, p13_kept, uc3_dropped, 10)["problems"]
+    assert any("không giữ table_to_incremental" in p for p in problems)
+    assert any("UC-3 ra NO_IMPROVEMENT" in p for p in problems)
+
+
+def _optimize_result(case_id, p13, uc3_steps):
+    return {
+        "id": case_id,
+        "group": "optimize",
+        "matched": True,
+        "mapping": {"p13": p13, "uc3": {"status": "NO_IMPROVEMENT", "llm_calls": 0, "optimizer": uc3_steps}},
+    }
+
+
+def test_before_after_table_lists_every_rule_of_every_run():
+    large = _optimize_result(
+        "optimize_large",
+        [_step("table_to_incremental", False, reason="model đang là `incremental`")],
+        [_step("table_to_incremental", True, 0.22, 0.145), _step("missing_partition_filter", False, 0.2, 0.25)],
+    )
+    small = _optimize_result("optimize_small", [], [_step("table_to_incremental", False, reason="dưới ngưỡng")])
+    lines = run_eval.before_after_lines([{"group": "valid", "id": "v"}, large, small])
+    assert lines[0] == "## Optimizer: trước → sau"
+    rows = [line for line in lines if line.startswith("| `")]
+    assert rows == [
+        "| `optimize_large` | P13 | `table_to_incremental` | — | — | — | không thử |",
+        "| `optimize_large` | UC-3 | `table_to_incremental` | 0.22 | 0.145 | 34.1% | giữ |",
+        "| `optimize_large` | UC-3 | `missing_partition_filter` | 0.2 | 0.25 | chậm hơn 25.0% | bỏ |",
+        "| `optimize_small` | UC-3 | `table_to_incremental` | — | — | — | không thử |",
+    ]
+    assert run_eval.before_after_lines([_result("valid", True)]) == []
+    assert run_eval.gain_text(1.0, None) == "—" and run_eval.gain_text(None, 0.5) == "—"
+
+
+def test_summary_counts_cases_with_a_kept_optimization():
+    large = _optimize_result("a", [], [_step("table_to_incremental", True, 0.22, 0.145)])
+    small = _optimize_result("b", [_step("missing_partition_filter", False, 0.2, 0.25)], [])
+    summary = run_eval.summarize_all([{**r, **_result("optimize", True)} for r in (large, small)])
+    assert summary["optimizer_kept"] == "1/2" and summary["optimized"] == "2/2"
+    assert "- **1/2 ca có bản tối ưu được giữ** (gold giống hệt, nhanh hơn đủ ngưỡng)" in run_eval.summary_lines(
+        summary
+    )
+    assert run_eval.summarize_all([_result("valid", True)])["optimizer_kept"] is None
+
+
+def test_write_report_appends_the_before_after_table(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_eval, "RESULTS_DIR", tmp_path)
+    result = {
+        **_result("optimize", True),
+        **_optimize_result("optimize_large", [], [_step("table_to_incremental", True, 0.22, 0.145)]),
+        "status": "READY_FOR_REVIEW",
+        "stage": "t_validate",
+        "problems": [],
+        "llm_calls": 2,
+        "expected": "đúng hành vi optimizer",
+    }
+    text = run_eval.write_report([result], run_eval.summarize_all([result]), "latest_optimize").read_text("utf-8")
+    assert "1/1 ca có bản tối ưu được giữ" in text
+    assert "| `optimize_large` | UC-3 | `table_to_incremental` | 0.22 | 0.145 | 34.1% | giữ |" in text
+
+
+def test_data_is_prepared_only_for_cases_that_need_it(monkeypatch):
+    from eval.bench import make_events
+
+    calls = []
+    monkeypatch.setattr(make_events, "ensure_events", lambda rows: calls.append(rows) or True)
+    assert run_eval.prepare_data({"id": "nho"}) is False and calls == []
+    assert run_eval.prepare_data({"id": "lon", "bench_rows": 5_000_000}) is True and calls == [5_000_000]
 
 
 def _result(group, matched, gate=None):
