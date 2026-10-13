@@ -5,7 +5,7 @@
  */
 import { cache } from 'react';
 import { cookies } from 'next/headers';
-import type { RunReport, User } from '../postgres-api.ts';
+import type { BatchBudget, RunReport, User } from '../postgres-api.ts';
 import type { ChatMessage } from '../studio.ts';
 import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live.ts';
 import { DATASETS, DOMAINS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE } from './mock.ts';
@@ -78,6 +78,21 @@ export const currentUser = cache(async (): Promise<Person | null> => {
     throw err;
   }
 });
+
+/** Số dư dùng để form batch hiển thị ước tính; POST vẫn khóa và kiểm tra lại trong một transaction. */
+export async function getBatchBudget(): Promise<BatchBudget | null> {
+  if (MOCK) {
+    const spent = MOCK_SNAPSHOT.runs.reduce((sum, run) => sum + run.usd + run.llmUsd, 0);
+    const max = 2;
+    return {
+      run_count: 0, reservation_usd_per_run: 0.05, estimated_usd: 0,
+      spent_today_usd: spent, remaining_usd: Math.max(0, max - spent), remaining_after_usd: Math.max(0, max - spent),
+      max_usd_per_day: max, max_batch_runs: 20, allowed: spent <= max,
+    };
+  }
+  try { return await backend<BatchBudget>('/agent/runs/batch/budget'); }
+  catch { return null; }
+}
 
 /** Nội dung các file agent sinh ra cho version hiện tại của run. */
 export async function runFiles(run: CatalogRun): Promise<Record<string, string>> {

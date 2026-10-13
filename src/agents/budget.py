@@ -21,7 +21,7 @@ from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report.models import GateResult
-from src.run_report.store import reserve_budget
+from src.run_report.store import reserve_budget, reserve_budget_batch
 from src.run_report.store import spent_today as ledger_spent_today
 from src.spec.models import Spec
 
@@ -104,6 +104,37 @@ def reserve_daily(
     daily_limit: float,
 ) -> tuple[bool, float]:
     return reserve_budget(settings.store_path, run_id, version, category, usd, daily_limit)
+
+
+def estimate_batch(run_count: int, policy: Policy, settings: PipelineSettings) -> dict:
+    """Ước tính và phần ngân sách phải giữ trước khi fan-out các lượt lập kế hoạch.
+
+    Mỗi run mới gọi planner một lần. `call_llm` đang giữ chỗ `per_run.max_usd` cho lần gọi đó, vì vậy cổng batch
+    dùng đúng cùng đơn vị để kết quả preflight và lúc job thật chạy không lệch nhau.
+    """
+    per_run = policy.budgets.per_run.max_usd
+    daily_limit = policy.budgets.per_day.max_usd
+    spent = spent_today(settings)
+    usd = run_count * per_run
+    return {
+        "run_count": run_count,
+        "reservation_usd_per_run": per_run,
+        "estimated_usd": usd,
+        "spent_today_usd": spent,
+        "remaining_usd": max(0.0, daily_limit - spent),
+        "remaining_after_usd": max(0.0, daily_limit - spent - usd),
+        "max_usd_per_day": daily_limit,
+        "max_batch_runs": policy.budgets.per_day.max_batch_runs,
+        "allowed": run_count <= policy.budgets.per_day.max_batch_runs and spent + usd <= daily_limit,
+    }
+
+
+def reserve_batch_daily(
+    settings: PipelineSettings,
+    reservations: list[tuple[str, int, str, float]],
+    daily_limit: float,
+) -> tuple[bool, float]:
+    return reserve_budget_batch(settings.store_path, reservations, daily_limit)
 
 
 def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, list[str]]:

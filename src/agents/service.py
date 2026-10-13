@@ -115,9 +115,15 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
     )
 
 
-def _initial(user_request: str, created_by: str, sources: list[dict] | None, parent_run_id: str | None) -> AgentState:
+def _initial(
+    user_request: str,
+    created_by: str,
+    sources: list[dict] | None,
+    parent_run_id: str | None,
+    run_id: str | None = None,
+) -> AgentState:
     return {
-        "run_id": str(uuid4()),
+        "run_id": run_id or str(uuid4()),
         "version": 1,
         "created_by": created_by,
         "trigger": "user_request",
@@ -302,9 +308,10 @@ def start_agent(
     store_path: str,
     sources: list[dict] | None = None,
     parent_run_id: str | None = None,
+    run_id: str | None = None,
 ) -> tuple[RunReport, Job]:
     """Ghi run mới (GENERATING) vào sổ bằng chứng ngay; việc chạy nền lập kế hoạch rồi dừng chờ xác nhận (P2)."""
-    initial, created_at = _initial(user_request, created_by, sources, parent_run_id), datetime.now(UTC)
+    initial, created_at = _initial(user_request, created_by, sources, parent_run_id, run_id), datetime.now(UTC)
     started = _save(initial, created_at, store_path)
     job = _guarded(
         lambda: _run(initial, created_at, deps, store_path, draft=False, plan_gate=True),

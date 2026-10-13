@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CircleAlert, GitBranch, RotateCcw, Sparkles } from 'lucide-react';
+import { CircleAlert, GitBranch, ListPlus, RotateCcw, Sparkles } from 'lucide-react';
 import { currentUser, getCatalog, getComparison, runFiles, runMessages } from '@/lib/catalog/source';
 import { STAGES, STAGE_IDS, canReview, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
@@ -29,8 +29,8 @@ const RULES: Partial<Record<string, string>> = {
 const RECONCILE_RULE = 'kết quả chạy thử phải khớp phép tính lại thẳng trên nguồn (metric_reconcile, src/codegen/reference.py); lệch thì không chuyển cho Reviewer.';
 const LEVEL_LABEL = { info: 'Thông tin', success: 'Đạt', warning: 'Cảnh báo', error: 'Lỗi' } as const;
 
-export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; base?: string }> }) {
-  const [{ id }, { tab: rawTab, base: compareBase }] = await Promise.all([params, searchParams]);
+export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; base?: string; batch?: string; estimated?: string }> }) {
+  const [{ id }, { tab: rawTab, base: compareBase, batch, estimated }] = await Promise.all([params, searchParams]);
   const [cat, user] = await Promise.all([getCatalog(), currentUser()]);
   const run = cat.run(id);
   if (!run || !user) notFound();
@@ -77,6 +77,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const canCancel = user.role === 'Engineer' && user.id === run.owner && ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'].includes(run.status);
   const canOptimize = user.role === 'Engineer' && run.status === 'DEPLOYED' && run.plan.model !== '—';
   const limits = policy.limits;
+  const batchCount = Number(batch);
+  const batchUsd = Number(estimated);
 
   return <>
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/runs">Hoạt động</Link><span>/</span><span className="mono">{shortId(run.id)}</span></nav>
@@ -84,6 +86,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
       actions={<div className="header-actions">{canOptimize && <OptimizeRunButton model={run.plan.model} />}{canCancel && <CancelRunButton runId={run.id} />}<Link href={retryHref} className="button"><RotateCcw size={15} aria-hidden /> Sửa & chạy lại</Link></div>}>
       <p className="muted"><Person name={cat.personName(run.owner)} /> tạo · cập nhật {fmtDate(run.updatedAt)} · <span className="mono">{run.id}</span></p>
     </PageHeader>
+
+    {Number.isInteger(batchCount) && batchCount >= 2 && <div className="callout good"><ListPlus size={16} aria-hidden /><span>Đã tạo trọn mẻ {batchCount} pipeline{Number.isFinite(batchUsd) ? ` · giữ chỗ ước tính $${batchUsd.toFixed(4)}` : ''}. Đây là run đầu tiên.</span></div>}
 
     {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>{run.status === 'DEPLOY_FAILED' ? 'Triển khai lỗi' : `Run dừng ở “${STAGES[run.stage]}”`}</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
     {run.status === 'CANCELLED' && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>Run đã được Engineer hủy ở phase “{STAGES[run.stage]}”. Bằng chứng đã ghi trước đó vẫn được giữ lại.</span></div>}

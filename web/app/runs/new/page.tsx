@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Sparkles, Workflow } from 'lucide-react';
-import { currentUser, getCatalog, listDeclaredSources, rememberedConnections } from '@/lib/catalog/source';
+import { currentUser, getBatchBudget, getCatalog, listDeclaredSources, rememberedConnections } from '@/lib/catalog/source';
 import { RequestForm } from '../../_components/run-client';
 import { LayerBadge, PageHeader, Panel } from '../../_components/ui';
 
@@ -15,6 +15,7 @@ const STEPS = ['Kết nối nguồn, liệt kê bảng đang có', 'Lập kế h
 export default async function NewRequestPage({ searchParams }: { searchParams: Promise<{ dataset?: string; request?: string; parent?: string; tables?: string }> }) {
   const { dataset: datasetId, request, parent: parentId, tables } = await searchParams;
   const [user, cat, sources, connected] = await Promise.all([currentUser(), getCatalog(), listDeclaredSources(), rememberedConnections()]);
+  const batchBudget = user?.role === 'Engineer' ? await getBatchBudget() : null;
   const dataset = datasetId ? cat.dataset(datasetId) : null;
   const parent = parentId ? cat.run(parentId) : null;
   const initial = request ?? (dataset ? `Từ ${dataset.name}: ` : '');
@@ -27,7 +28,7 @@ export default async function NewRequestPage({ searchParams }: { searchParams: P
       <p>Chọn nguồn dữ liệu rồi mô tả nhu cầu bằng lời. Agent chỉ dùng bảng và cột có thật trong các nguồn đã chọn, sinh code từ template và chạy thử trong sandbox.</p>
     </PageHeader>
     <div className="detail-grid wide-left">
-      <RequestForm key={initial} initial={initial} canRun={user?.role === 'Engineer'} examples={EXAMPLES} sources={sources} initialTables={initialTables} connected={connected} parent={parent?.id} />
+      <RequestForm key={initial} initial={initial} canRun={user?.role === 'Engineer'} examples={EXAMPLES} sources={sources} initialTables={initialTables} connected={connected} parent={parent?.id} batchBudget={batchBudget} />
       <div className="stack">
         {parent && <Panel title="Sửa từ run trước"><Link href={`/runs/${parent.id.slice(0, 8)}`} className="mono">{parent.id.slice(0, 8)}</Link><p className="muted small">“{parent.request}”. Run mới sẽ ghi lại run gốc này; tab <strong>So sánh</strong> của run mới cho thấy khác gì so với bản cũ.</p></Panel>}
         {dataset && <Panel title="Bắt đầu từ dataset"><Link href={`/datasets/${dataset.id}`} className="dataset-link"><LayerBadge layer={dataset.layer} /><span className="mono">{dataset.name}</span></Link><p className="muted small">{dataset.columns.length} cột · {dataset.description}</p></Panel>}

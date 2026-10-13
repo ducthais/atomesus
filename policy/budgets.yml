@@ -14,6 +14,7 @@ per_run:
   phase_timeout_sec: 300    # một phase chạy quá thời gian này thì dừng (NFR-05)
 per_day:
   max_usd: 2.00             # tổng chi phí mọi run trong ngày (quét dữ liệu + LLM); cổng budget cộng dồn
+  max_batch_runs: 20        # số pipeline tối đa trong một yêu cầu tạo theo lô
 rules:
   - require_partition_filter_on: [sales_pg.orders]
   - forbid_select_star_in: [gold]

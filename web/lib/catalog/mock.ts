@@ -452,6 +452,7 @@ per_run:
   phase_timeout_sec: 300
 per_day:
   max_usd: 2.00
+  max_batch_runs: 20
 rules:
   - require_partition_filter_on: [sales_pg.orders]
   - forbid_select_star_in: [gold]

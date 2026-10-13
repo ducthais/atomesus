@@ -3,7 +3,7 @@
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { refresh } from 'next/cache';
-import type { ColumnRule, RunReport, User } from '@/lib/postgres-api';
+import type { AgentBatchRunResponse, ColumnRule, RunReport, User } from '@/lib/postgres-api';
 import { chatPayload, type ChatResponse } from '@/lib/studio';
 import { APPROVAL_MESSAGE, requestDeployment } from '@/lib/deploy';
 import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, discoverObjects } from '@/lib/catalog/source';
@@ -159,6 +159,31 @@ export async function submitRequest(_: ActionState, form: FormData): Promise<Act
   try { report = await backend<RunReport>('/agent/runs', { method: 'POST', body: JSON.stringify({ request, sources, parent_run_id: parent }) }); }
   catch (err) { return failure(err); }
   redirect(`/runs/${report.run_id.slice(0, 8)}`);
+}
+
+/** Engineer tạo nhiều pipeline dùng chung phạm vi nguồn; backend preflight và giữ ngân sách toàn mẻ atomically. */
+export async function submitBatchRequests(_: ActionState, form: FormData): Promise<ActionState> {
+  const requests = form.getAll('request').map(String).map(value => value.trim()).filter(Boolean);
+  if (requests.length < 2) return { error: 'Nhập ít nhất hai yêu cầu pipeline.' };
+  if (requests.some(request => request.length > 2000)) return { error: 'Mỗi yêu cầu tối đa 2000 ký tự.' };
+  const bySource = new Map<string, string[]>();
+  for (const value of form.getAll('table').map(String)) {
+    const [ref, table] = value.split('.');
+    if (ref && table) bySource.set(ref, [...bySource.get(ref) ?? [], table]);
+  }
+  if (!bySource.size) return { error: 'Chọn ít nhất một bảng nguồn.' };
+  const sources = [...bySource].map(([source_ref, tables]) => ({ source_ref, tables }));
+  if (MOCK) return { message: `Mock: đã kiểm tra mẻ ${requests.length} pipeline trên ${sources.length} nguồn.` };
+  let result: AgentBatchRunResponse;
+  try {
+    result = await backend<AgentBatchRunResponse>('/agent/runs/batch', {
+      method: 'POST',
+      body: JSON.stringify({ requests: requests.map(request => ({ request, sources })) }),
+    });
+  } catch (err) { return failure(err); }
+  const first = result.runs[0];
+  if (!first) return { error: 'Backend không trả run nào cho mẻ vừa tạo.' };
+  redirect(`/runs/${first.run_id.slice(0, 8)}?batch=${result.runs.length}&estimated=${result.budget.estimated_usd.toFixed(4)}`);
 }
 
 /** Reviewer duyệt / từ chối đúng bộ file đã xem (files_hash); duyệt chỉ ghi chữ ký. */

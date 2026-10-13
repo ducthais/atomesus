@@ -117,6 +117,7 @@ class PerRun(_Policy):
 
 class PerDay(_Policy):
     max_usd: float = Field(gt=0)
+    max_batch_runs: int = Field(ge=2)
 
 
 class Rules(_Policy):

@@ -2,11 +2,11 @@
 
 import dynamic from 'next/dynamic';
 import { useActionState, useEffect, useState, useTransition } from 'react';
-import { Check, CircleAlert, Database, FileCode2, Info, LoaderCircle, Lock, LockKeyhole, Plug, RefreshCw, Search, Unplug } from 'lucide-react';
+import { Check, CircleAlert, Database, FileCode2, Info, ListPlus, LoaderCircle, Lock, LockKeyhole, Plus, Plug, RefreshCw, Search, Trash2, Unplug } from 'lucide-react';
 import { PLATFORM_LABEL } from '@/lib/catalog/query';
 import type { DeclaredSource, SourceObject } from '@/lib/catalog/types';
-import { discoverSource, forgetSource, requestRunChanges, reviewRun, submitRequest, type ActionState } from '../actions';
-import type { Approval } from '@/lib/postgres-api';
+import { discoverSource, forgetSource, requestRunChanges, reviewRun, submitBatchRequests, submitRequest, type ActionState } from '../actions';
+import type { Approval, BatchBudget } from '@/lib/postgres-api';
 
 const Editor = dynamic(() => import('@monaco-editor/react').then(m => m.Editor), { ssr: false });
 const LANGUAGE: Record<string, string> = { py: 'python', sql: 'sql', yml: 'yaml', yaml: 'yaml' };
@@ -127,24 +127,51 @@ function SourcePicker({ sources, selected, onChange, disabled, autoConnect }: { 
 }
 
 /** Engineer chọn nguồn và gửi yêu cầu bằng lời; backend ghi run ngay và chạy agent ở nền, trang run hiện tiến độ. */
-export function RequestForm({ initial, canRun, examples, sources, initialTables, connected, parent }: { initial: string; canRun: boolean; examples: { label: string; request: string }[]; sources: DeclaredSource[]; initialTables: string[]; connected: string[]; parent?: string }) {
+export function RequestForm({ initial, canRun, examples, sources, initialTables, connected, parent, batchBudget }: { initial: string; canRun: boolean; examples: { label: string; request: string }[]; sources: DeclaredSource[]; initialTables: string[]; connected: string[]; parent?: string; batchBudget: BatchBudget | null }) {
+  const [hydrated, setHydrated] = useState(false);
   const [request, setRequest] = useState(initial);
+  const [mode, setMode] = useState<'single' | 'batch'>('single');
+  const [batch, setBatch] = useState([initial, '']);
   const [tables, setTables] = useState(initialTables);
-  const [state, action, pending] = useActionState(submitRequest, null);
-  const valid = request.trim().length > 0 && request.length <= 2000 && tables.length > 0;
-  return <form className="panel request-form" action={action}>
-    {parent && <input type="hidden" name="parent" value={parent} />}
+  const [singleState, singleAction, singlePending] = useActionState(submitRequest, null);
+  const [batchState, batchAction, batchPending] = useActionState(submitBatchRequests, null);
+  const pending = mode === 'batch' ? batchPending : singlePending;
+  const state = mode === 'batch' ? batchState : singleState;
+  const estimated = batch.length * (batchBudget?.reservation_usd_per_run ?? 0);
+  const budgetAllowed = !batchBudget || estimated <= batchBudget.remaining_usd;
+  const batchValid = batch.length >= 2 && batch.every(value => value.trim().length > 0 && value.length <= 2000) && budgetAllowed;
+  const valid = (mode === 'single' ? request.trim().length > 0 && request.length <= 2000 : batchValid) && tables.length > 0;
+  const updateBatch = (index: number, value: string) => setBatch(current => current.map((item, i) => i === index ? value : item));
+  useEffect(() => setHydrated(true), []);
+  return <form className="panel request-form" data-hydrated={hydrated} action={mode === 'batch' ? batchAction : singleAction}>
+    {parent && mode === 'single' && <input type="hidden" name="parent" value={parent} />}
+    {!parent && <div className="request-modes" role="tablist" aria-label="Cách tạo pipeline">
+      <button type="button" role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'active' : ''} disabled={pending} onClick={() => setMode('single')}>Một pipeline</button>
+      <button type="button" role="tab" aria-selected={mode === 'batch'} className={mode === 'batch' ? 'active' : ''} disabled={pending} onClick={() => setMode('batch')}><ListPlus size={14} aria-hidden /> Nhiều pipeline</button>
+    </div>}
     <SourcePicker sources={sources} selected={tables} onChange={setTables} disabled={pending} autoConnect={[...new Set([...connected, ...initialTables.map(t => t.split('.')[0])])].filter(ref => sources.some(s => s.ref === ref && s.supported))} />
-    <label className="field">Mô tả nhu cầu dữ liệu<textarea name="request" rows={6} maxLength={2000} value={request} readOnly={pending} onChange={e => setRequest(e.target.value)} placeholder="Ví dụ: Tính doanh thu theo ngày từ bảng đơn hàng…" /></label>
+    {mode === 'single' ? <label className="field">Mô tả nhu cầu dữ liệu<textarea name="request" rows={6} maxLength={2000} value={request} readOnly={pending} onChange={e => setRequest(e.target.value)} placeholder="Ví dụ: Tính doanh thu theo ngày từ bảng đơn hàng…" /></label>
+      : <fieldset className="batch-requests" disabled={pending}><legend>Danh sách pipeline <span className="muted">· dùng chung các bảng đã chọn</span></legend>
+        {batch.map((value, index) => <div className="batch-request" key={index}>
+          <label className="field">Yêu cầu pipeline {index + 1}<textarea name="request" rows={3} maxLength={2000} value={value} onChange={event => updateBatch(index, event.target.value)} placeholder="Mô tả đầu ra cần tạo…" /></label>
+          <button type="button" className="icon-button" aria-label={`Xóa yêu cầu pipeline ${index + 1}`} title="Xóa yêu cầu" disabled={batch.length <= 2} onClick={() => setBatch(current => current.filter((_, i) => i !== index))}><Trash2 size={15} aria-hidden /></button>
+        </div>)}
+        <button type="button" className="button small" disabled={!!batchBudget && batch.length >= batchBudget.max_batch_runs} onClick={() => setBatch(current => [...current, ''])}><Plus size={14} aria-hidden /> Thêm pipeline</button>
+      </fieldset>}
     <p className="muted small">Agent lập kế hoạch rồi dừng để bạn xác nhận; chưa xác nhận thì chưa viết Spec, chưa chạy gì trên nguồn.</p>
-    <div className="examples"><span className="muted">Thử nhanh</span>{examples.map(x => <button type="button" key={x.label} className="chip" disabled={pending} onClick={() => setRequest(x.request)}>{x.label}</button>)}</div>
+    {mode === 'single' && <div className="examples"><span className="muted">Thử nhanh</span>{examples.map(x => <button type="button" key={x.label} className="chip" disabled={pending} onClick={() => setRequest(x.request)}>{x.label}</button>)}</div>}
+    {mode === 'batch' && batchBudget && <div className={`batch-budget ${budgetAllowed ? '' : 'over'}`} role="status">
+      <span>Ước tính giữ chỗ cho {batch.length} lượt lập kế hoạch</span><strong className="mono">${estimated.toFixed(4)}</strong>
+      <small>Còn ${batchBudget.remaining_usd.toFixed(4)} / ${batchBudget.max_usd_per_day.toFixed(2)} hôm nay · tối đa {batchBudget.max_batch_runs} pipeline/mẻ</small>
+      {!budgetAllowed && <small>Mẻ này vượt ngân sách còn lại và sẽ bị chặn toàn bộ.</small>}
+    </div>}
     <div className="form-actions">
       {!canRun ? <span className="muted">Chỉ Engineer gửi yêu cầu. Đổi người dùng ở góc trên bên phải.</span>
         : !tables.length && <span className="muted">Kết nối một nguồn và chọn ít nhất một bảng.</span>}
-      <span className="muted small">{request.length}/2000</span>
-      <button type="submit" className="button primary" disabled={!canRun || !valid || pending}>{pending ? <><LoaderCircle size={15} className="spin" aria-hidden /> Đang gửi…</> : 'Gửi cho agent'}</button>
+      <span className="muted small">{mode === 'single' ? `${request.length}/2000` : `${batch.length} pipeline`}</span>
+      <button type="submit" className="button primary" disabled={!canRun || !valid || pending}>{pending ? <><LoaderCircle size={15} className="spin" aria-hidden /> Đang gửi…</> : mode === 'batch' ? 'Tạo cả mẻ' : 'Gửi cho agent'}</button>
     </div>
-    {pending && <div className="callout info" role="status"><LoaderCircle size={16} className="spin" aria-hidden /><span>Đang gửi yêu cầu trên {tables.length} bảng đã chọn. Trang run sẽ mở ngay và hiện tiến độ từng bước của agent.</span></div>}
+    {pending && <div className="callout info" role="status"><LoaderCircle size={16} className="spin" aria-hidden /><span>{mode === 'batch' ? `Đang kiểm tra ngân sách và tạo ${batch.length} pipeline.` : `Đang gửi yêu cầu trên ${tables.length} bảng đã chọn.`} Trang run sẽ mở ngay và hiện tiến độ từng bước của agent.</span></div>}
     {state && !pending && <div className={`callout ${state.error ? 'bad' : 'info'}`} role="alert"><Info size={16} aria-hidden /><span>{state.error ?? state.message}</span></div>}
   </form>;
 }

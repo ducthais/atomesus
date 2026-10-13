@@ -321,12 +321,61 @@ def reserve_budget(
         return True, float(spent + reserved)
 
 
+def reserve_budget_batch(
+    path: str,
+    reservations: list[tuple[str, int, str, float]],
+    daily_limit: float,
+) -> tuple[bool, float]:
+    """Giữ chỗ cả mẻ trong một transaction; không đủ hạn mức thì không ghi khoản nào."""
+    if len({(run_id, version, category) for run_id, version, category, _usd in reservations}) != len(reservations):
+        raise ValueError("Khoản giữ chỗ trong mẻ không được trùng nhau.")
+    now = datetime.now(UTC)
+    day = now.date().isoformat()
+    with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        spent = conn.execute(
+            "SELECT coalesce(sum(usd), 0) FROM budget_ledger WHERE substr(spent_at, 1, 10) = ?", (day,)
+        ).fetchone()[0]
+        reserved = conn.execute(
+            "SELECT coalesce(sum(usd), 0) FROM budget_reservations WHERE substr(reserved_at, 1, 10) = ?", (day,)
+        ).fetchone()[0]
+        pending = []
+        for run_id, version, category, usd in reservations:
+            exists = conn.execute(
+                "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
+                (run_id, version, category),
+            ).fetchone()
+            if not exists:
+                pending.append((run_id, version, category, usd, now.isoformat()))
+        current = float(spent + reserved)
+        if current + sum(item[3] for item in pending) > daily_limit:
+            return False, current
+        conn.executemany("INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)", pending)
+        return True, current
+
+
 def release_budget(path: str, run_id: str, version: int, category: str) -> None:
     with _database(path) as conn:
         conn.execute(
             "DELETE FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
             (run_id, version, category),
         )
+
+
+def rollback_batch_start(path: str, run_ids: list[str]) -> None:
+    """Xóa atomically mọi dấu vết chưa chạy của một mẻ không khởi tạo đủ.
+
+    Endpoint chỉ gọi hàm này trước khi đăng ký background jobs, nên các run này chưa thể có chi phí thật trong ledger.
+    """
+    if not run_ids:
+        return
+    marks = ", ".join("?" for _ in run_ids)
+    with _database(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(f"DELETE FROM run_files WHERE run_id IN ({marks})", run_ids)
+        conn.execute(f"DELETE FROM run_reports WHERE run_id IN ({marks})", run_ids)
+        conn.execute(f"DELETE FROM budget_ledger WHERE run_id IN ({marks})", run_ids)
+        conn.execute(f"DELETE FROM budget_reservations WHERE run_id IN ({marks})", run_ids)
 
 
 def spent_today(path: str) -> float:
