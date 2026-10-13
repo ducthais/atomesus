@@ -28,9 +28,12 @@ from src.run_report.store import get_run_report, is_run_cancelled
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
-def _run_batch_jobs(jobs: list[Job]) -> None:
+def _run_batch_jobs(jobs: list[Job], config: PipelineSettings | None = None) -> None:
     """Fan-out các run sau khi response đã được gửi; mỗi job tự ghi trạng thái cuối vào sổ bằng chứng."""
-    with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="pipeline-batch") as executor:
+    if not jobs:
+        return
+    limit = (config or PipelineSettings()).max_parallel_planning
+    with ThreadPoolExecutor(max_workers=min(len(jobs), limit), thread_name_prefix="pipeline-batch") as executor:
         futures = [executor.submit(job) for job in jobs]
         for future in futures:
             future.result()
@@ -185,7 +188,7 @@ def create_agent_run_batch(
         rollback_batch_start(config.store_path, run_ids)
         raise
 
-    background.add_task(_run_batch_jobs, [job for _started, job in started_jobs])
+    background.add_task(_run_batch_jobs, [job for _started, job in started_jobs], config)
     estimate = {
         **estimate,
         "spent_today_usd": spent,

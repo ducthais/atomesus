@@ -7,6 +7,7 @@ viên bị loại, hay chính optimizer lỗi thì run giữ nguyên bản gốc
 from src.agents import optimizer
 from src.agents.nodes.common import AgentDeps
 from src.agents.state import AgentState
+from src.codegen.sandbox import call_sandbox
 from src.spec.models import Spec
 
 
@@ -18,7 +19,9 @@ def optimize_node(deps: AgentDeps):
         samples = deps.policy.budgets.optimizer.rerun_samples
 
         def baseline():  # chỉ đo lại bản gốc (thêm một lần chạy thử) khi có luật áp
-            return deps.sandbox(spec, state["generated_files"], deps.policy, deps.settings, rerun_model=samples)
+            return call_sandbox(
+                deps.sandbox, spec, state["generated_files"], deps.policy, deps.settings, rerun_model=samples
+            )
 
         try:
             outcome = optimizer.optimize(
