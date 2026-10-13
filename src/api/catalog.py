@@ -6,7 +6,7 @@ from src.codegen import reference
 from src.pipeline import connectors, postgres
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
-from src.policy.loader import PolicyError, load_policy
+from src.policy import PolicyError, effective_policy
 from src.policy.models import Policy
 from src.run_report.drift import detect, live_pipelines
 from src.run_report.store import list_run_reports
@@ -15,9 +15,9 @@ from src.spec.models import Spec
 router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(current_user)])
 
 
-def _policy() -> Policy:
+def _policy(config: PipelineSettings, user: dict | None = None) -> Policy:
     try:
-        return load_policy()
+        return effective_policy(config, owner_id=user["id"] if user and user["role"] == "Engineer" else None)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
 
@@ -26,14 +26,30 @@ def _location(decl) -> str | None:
     return decl.schema_ or decl.openapi or decl.root
 
 
+def _selected_objects(decl, found: dict) -> dict:
+    """Không trả metadata của bảng ngoài lựa chọn, kể cả bảng được khóa ngoại nhắc tới."""
+    if decl.tables is None:
+        return found
+    allowed = set(decl.tables)
+    return {
+        **found,
+        "objects": [obj for obj in found["objects"] if obj["name"] in allowed],
+        "foreign_keys": [
+            key
+            for key in found["foreign_keys"]
+            if key["table"] in allowed and key["ref_schema"] == decl.schema_ and key["ref_table"] in allowed
+        ],
+    }
+
+
 @router.get("")
-def read_catalog(config: PipelineSettings = Depends(settings)) -> dict:
+def read_catalog(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
     """Domain → nguồn → bảng/cột thật, kèm steward và thực thể từ domains.yml. Chỉ đọc, không gọi LLM.
 
     Nguồn có connector được kết nối để đọc schema; nguồn chưa hỗ trợ hoặc không kết nối được
     vẫn có mặt với `available: false` và lý do, để giao diện catalog hiện đủ những gì đã khai báo.
     """
-    policy = _policy()
+    policy = _policy(config, user)
     domains = {}
     for name, domain in policy.domains.domains.items():
         sources = {}
@@ -48,7 +64,7 @@ def read_catalog(config: PipelineSettings = Depends(settings)) -> dict:
                 "foreign_keys": [],
             }
             try:
-                found = connectors.discover(decl, config)
+                found = _selected_objects(decl, connectors.discover(decl, config))
                 entry["tables"] = {obj["name"]: obj["columns"] for obj in found["objects"]}
                 entry["primary_keys"] = {
                     obj["name"]: obj["primary_key"] for obj in found["objects"] if obj["primary_key"]
@@ -66,11 +82,13 @@ def read_catalog(config: PipelineSettings = Depends(settings)) -> dict:
             "sources": sources,
             "entities": {key: entity.model_dump() for key, entity in domain.entities.items()},
         }
+        if domain.label is not None:
+            domains[name]["label"] = domain.label
     return {"domains": domains, "conformed_dimensions": policy.domains.conformed_dimensions}
 
 
 @router.get("/sources")
-def list_sources() -> list[dict]:
+def list_sources(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> list[dict]:
     """Các kết nối khai báo trong domains.yml. Không kết nối tới nguồn; dùng để chọn nguồn trước khi khám phá."""
     return [
         {
@@ -81,22 +99,24 @@ def list_sources() -> list[dict]:
             "location": _location(decl),
             "supported": connectors.supported(decl.kind),
         }
-        for name, domain in _policy().domains.domains.items()
+        for name, domain in _policy(config, user).domains.domains.items()
         for ref, decl in domain.sources.items()
     ]
 
 
 @router.get("/sources/{ref}/objects")
-def source_objects(ref: str, config: PipelineSettings = Depends(settings)) -> dict:
+def source_objects(ref: str, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
     """Kết nối trực tiếp tới nguồn lúc được gọi và trả các bảng (hoặc collection) đang có, kèm cột và khóa."""
     declared = {
-        r: (name, decl) for name, domain in _policy().domains.domains.items() for r, decl in domain.sources.items()
+        r: (name, decl)
+        for name, domain in _policy(config, user).domains.domains.items()
+        for r, decl in domain.sources.items()
     }
     if ref not in declared:
         raise HTTPException(404, f"Nguồn '{ref}' không có trong domains.yml.")
     domain, decl = declared[ref]
     try:
-        found = connectors.discover(decl, config)
+        found = _selected_objects(decl, connectors.discover(decl, config))
     except connectors.UnsupportedSourceError as exc:
         raise HTTPException(422, str(exc)) from exc
     except postgres.SourceUnavailableError as exc:
@@ -112,12 +132,14 @@ def source_objects(ref: str, config: PipelineSettings = Depends(settings)) -> di
 
 
 @router.get("/drift")
-def schema_drift(config: PipelineSettings = Depends(settings)) -> dict:
+def schema_drift(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
     """Pipeline đang chạy nào bị ảnh hưởng vì schema nguồn đổi (bảng / cột bị xóa, đổi tên, đổi kiểu).
 
     Kết nối từng nguồn một lần lúc gọi; nguồn không đọc được thì pipeline dùng nó có trạng thái `unknown`.
     """
-    declared = {r: decl for domain in _policy().domains.domains.values() for r, decl in domain.sources.items()}
+    declared = {
+        r: decl for domain in _policy(config, user).domains.domains.values() for r, decl in domain.sources.items()
+    }
     cache: dict[str, dict | Exception] = {}
 
     def tables_of(ref: str) -> dict[str, dict[str, str]]:
@@ -125,7 +147,7 @@ def schema_drift(config: PipelineSettings = Depends(settings)) -> dict:
             try:
                 if ref not in declared:
                     raise connectors.UnsupportedSourceError(f"Nguồn '{ref}' không còn trong domains.yml.")
-                found = connectors.discover(declared[ref], config)
+                found = _selected_objects(declared[ref], connectors.discover(declared[ref], config))
                 cache[ref] = {o["name"]: {c["name"]: c["type"] for c in o["columns"]} for o in found["objects"]}
             except (connectors.UnsupportedSourceError, postgres.SourceUnavailableError) as exc:
                 cache[ref] = exc
@@ -170,7 +192,7 @@ def reconcile_deployed(
         reason = "Dagster đang ghi warehouse, thử lại sau ít giây." if "lock" in str(exc).lower() else str(exc)
         return {**base, "available": False, "reason": reason}
     try:
-        matched, observed = reference.reconcile(Spec.model_validate(report.spec), gold, _policy(), config)
+        matched, observed = reference.reconcile(Spec.model_validate(report.spec), gold, _policy(config, user), config)
     except reference.UnsupportedError as exc:
         return {**base, "available": False, "reason": f"Chưa đối chiếu được: {exc}."}
     except postgres.SourceUnavailableError as exc:

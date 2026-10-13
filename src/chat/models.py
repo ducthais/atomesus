@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.api.routes import SourceChoice
 from src.run_report.models import RunReport
 
 Intent = Literal["new_request", "ask", "revise"]
@@ -15,6 +16,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")  # không nhận trường danh tính từ client (FR-01)
     message: str = Field(min_length=1, max_length=2000)
     run_id: str | None = None
+    sources: list[SourceChoice] | None = Field(default=None, min_length=1, max_length=10)
 
 
 class ChatResponse(BaseModel):

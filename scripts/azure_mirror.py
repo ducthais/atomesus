@@ -29,7 +29,9 @@ def tables(policy, only: set[str] | None) -> list[tuple[str, str]]:
         (ref, decl.schema_)
         for domain in policy.domains.domains.values()
         for ref, decl in domain.sources.items()
-        if decl.kind == "postgres" and (not only or any(o.split(".")[0] == ref for o in only))
+        if decl.kind == "postgres"
+        and not decl.connection_ref.startswith("conn:")
+        and (not only or any(o.split(".")[0] == ref for o in only))
     ]
 
 

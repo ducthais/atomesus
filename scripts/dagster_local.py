@@ -34,7 +34,7 @@ from src.codegen.sandbox import credentials_env  # noqa: E402
 from src.deployer.install import write_workspace  # noqa: E402
 from src.deployer.manifest import MODEL_NAME  # noqa: E402
 from src.pipeline.settings import PipelineSettings  # noqa: E402
-from src.policy.loader import load_policy  # noqa: E402
+from src.policy import effective_policy  # noqa: E402
 
 HOST, PORT = os.environ.get("DAGSTER_HOST", "127.0.0.1"), os.environ.get("DAGSTER_PORT", "3070")
 READ_ONLY = os.environ.get("DAGSTER_CODE_READONLY") == "1"
@@ -96,7 +96,7 @@ def start() -> tuple[list[subprocess.Popen], Path]:
     scripts_dir = str(Path(sys.executable).parent)
     env = {
         **os.environ,
-        **credentials_env(load_policy(), settings),
+        **credentials_env(effective_policy(settings), settings),
         "PATH": scripts_dir + os.pathsep + os.environ.get("PATH", ""),
         "DAGSTER_HOME": str(HOME),
         "WAREHOUSE_PATH": str(warehouse),
@@ -155,7 +155,8 @@ def collect() -> None:
 
     settings = PipelineSettings()
     try:
-        policy = load_policy()  # đọc lại mỗi lần: sửa ngưỡng trong objectives.yml có hiệu lực ngay (NFR-04)
+        # Đọc lại mỗi lần: sửa ngưỡng trong objectives.yml có hiệu lực ngay (NFR-04).
+        policy = effective_policy(settings)
         written = collect_runs(day2_settings(settings) if READ_ONLY else settings, policy)
         deps = AgentDeps(llm=openai_llm(), policy=policy, settings=settings, reserve_daily=budget.reserve_daily)
         actions = day2.check(settings, policy, day2.launcher(deps, settings.store_path, _in_thread))

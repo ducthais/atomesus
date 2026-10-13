@@ -1,4 +1,8 @@
 # Domain, nguồn và thực thể (SPEC §8.4). Steward sở hữu file này; sửa qua pull request.
+user_defaults:
+  currency:
+    base: VND
+    rates: { VND: 1, USD: 25400 }
 domains:
   sales:
     datasets: [sales_raw]
