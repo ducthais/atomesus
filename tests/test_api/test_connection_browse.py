@@ -74,7 +74,7 @@ class FakePostgres:
         elif isinstance(query, psycopg.sql.Composed):
             assert query.as_string() == 'SELECT count(*) FROM (SELECT 1 FROM "sales"."orders" LIMIT %s) capped'
             assert params == (connectors.ROW_COUNT_CAP + 1,)
-            result.fetchone.return_value = connectors.ROW_COUNT_CAP + 1
+            result.fetchone.return_value = (connectors.ROW_COUNT_CAP + 1,)
         else:
             raise AssertionError(f"Truy vấn ngoài metadata: {query!r}")
         return result
