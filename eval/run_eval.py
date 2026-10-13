@@ -12,7 +12,7 @@ trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn
 
 Ca optimizer: tạo pipeline như ca hợp lệ (có P13), rồi chạy UC-3 (tối ưu thủ công) trên chính run đó. Không ép phải
 thắng: với dữ liệu nhỏ, bản incremental có thể không nhanh hơn và bị loại mới là đúng; ca chấm quyết định có khớp số đo.
-Ca có `bench_rows` cần bộ sự kiện lớn: sinh trước khi chạy nếu chưa có (eval/bench/make_events.py); ca này (5 triệu
+Ca có `bench_rows` cần bộ sự kiện lớn: sinh trước khi chạy nếu chưa có (eval/bench/make_events.py); ca này (3 triệu
 dòng, domain `bench`) mong bản incremental được đo VÀ giữ vì đủ lớn để thắng overhead dbt. Báo cáo có bảng
 trước → sau (giây trung vị chạy lại, % nhanh hơn, giữ / bỏ) cho từng luật của từng ca và số ca có bản tối ưu được giữ.
 

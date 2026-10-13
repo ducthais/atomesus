@@ -64,7 +64,7 @@ def test_large_case_reads_the_generated_folder_through_the_bench_domain():
     from src.policy.loader import load_policy
 
     case = json.loads((ROOT / "eval" / "cases" / "optimize_large_events_by_day.json").read_text(encoding="utf-8"))
-    assert case["bench_rows"] >= 5_000_000 and case["uc3_parent_patch"] == {"materialization": "table"}
+    assert case["bench_rows"] >= 3_000_000 and case["uc3_parent_patch"] == {"materialization": "table"}
     assert case["expected"]["uc3_measured"] == case["expected"]["uc3_applied"] == ["table_to_incremental"]
     assert case["expected"]["uc3_status_in"] == ["READY_FOR_REVIEW"]
     domains = load_policy().domains

@@ -11,8 +11,9 @@ cùng `--rows` luôn ra cùng một file, trên mọi máy và mọi bản Pytho
 | `amount`     | số tiền VND, bội của 1.000, từ 10.000 đến 999.000         |
 
 Vì sao cần lớn: với 1 triệu dòng, chạy lại model gold dạng table (0,151 s) và incremental (0,147 s) gần như bằng nhau vì
-overhead dbt lấn át; với 5 triệu dòng, incremental nhanh hơn ~35% và hai dải đo không chồng nhau (đo dbt-duckdb, group
-by ngày + count distinct + sum).
+overhead dbt lấn át; với 3 triệu dòng, incremental nhanh hơn ~26% (0,213 s vs 0,158 s), với 5 triệu dòng ~35%, hai dải
+đo không chồng nhau (đo dbt-duckdb, group by ngày + count distinct + sum). Ca eval dùng `--rows 3000000` để bước el_run
+nạp bronze xong trong giới hạn thời gian.
 
 Chạy lại khi file đã đủ đúng số dòng thì không sinh lại. Chạy: python eval/bench/make_events.py [--rows N] [--out DIR]
 """

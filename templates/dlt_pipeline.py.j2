@@ -23,6 +23,8 @@ from dlt.sources.filesystem import filesystem, read_csv_duckdb, read_jsonl, read
 [%- endif %]
 
 PIPELINE_NAME = [[ model_name | pystr ]]
+# Nạp DuckDB bằng parquet (cần pyarrow): nhanh hơn nhiều so với định dạng mặc định (insert_values) khi bảng lớn.
+LOADER_FILE_FORMAT = "parquet"
 [% for source in spec.sources %]
 
 [% if source.kind == "postgres" -%]
@@ -57,4 +59,4 @@ def pipeline() -> dlt.Pipeline:
 
 
 if __name__ == "__main__":
-    print(pipeline().run(source()))
+    print(pipeline().run(source(), loader_file_format=LOADER_FILE_FORMAT))

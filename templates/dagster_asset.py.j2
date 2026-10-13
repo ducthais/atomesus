@@ -39,7 +39,8 @@ class BronzeTranslator(DagsterDltTranslator):
     dagster_dlt_translator=BronzeTranslator(),
 )
 def [[ name ]]_ingestion(context: AssetExecutionContext, dlt: DagsterDltResource):
-    yield from dlt.run(context=context)
+    # Nạp DuckDB bằng parquet: nhanh hơn nhiều so với định dạng mặc định (insert_values) khi bảng lớn.
+    yield from dlt.run(context=context, loader_file_format="parquet")
 
 
 @dbt_assets(manifest=DBT_PROJECT.manifest_path, select=[[ ("+" ~ name) | pystr ]], name=[[ (name ~ "_transform") | pystr ]])
