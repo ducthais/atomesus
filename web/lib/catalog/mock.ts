@@ -4,6 +4,7 @@
  * bảng bronze/staging/gold và số đo từ RunReport. Thay bằng API thật trong `api.ts`.
  */
 import type { Check, Log, Plan } from '../studio.ts';
+import type { ConnectionSchema, ConnectionTable, UserConnection } from '../user-connections.ts';
 import type { CatalogRun, Dataset, Domain, GlossaryTerm, Orchestration, Person, PolicyFile, Relationship, Snapshot } from './types.ts';
 
 export const PEOPLE: Person[] = [
@@ -13,6 +14,22 @@ export const PEOPLE: Person[] = [
   { id: 'an', name: 'An Nguyễn', email: 'an@company.vn', role: 'Steward' },
   { id: 'binh', name: 'Bình Lê', email: 'binh@company.vn', role: 'Steward' },
 ];
+
+export const USER_CONNECTIONS: UserConnection[] = [
+  { id: 'a12bc34567894def901234567890abcd', owner_id: 'minh', name: 'Postgres bán hàng', host: 'sales.example.vn', port: 5432,
+    database: 'sales', user: 'reader', sslmode: 'require', created_at: 1790902800, selection: { schema: 'public', tables: ['orders', 'customers'] } },
+  { id: 'b98de76543214abc901234567890abcd', owner_id: 'minh', name: 'Kho dữ liệu báo cáo', host: 'reports.example.vn', port: 5432,
+    database: 'reports', user: 'readonly', sslmode: 'require', created_at: 1790989200, selection: null },
+];
+export const USER_CONNECTION_SCHEMAS: ConnectionSchema[] = [{ name: 'public', table_count: 2 }, { name: 'archive', table_count: 1 }];
+export const USER_CONNECTION_TABLES: Record<string, ConnectionTable[]> = {
+  public: [
+    { name: 'orders', columns: [{ name: 'order_id', type: 'integer' }, { name: 'customer_id', type: 'integer' },
+      { name: 'amount', type: 'numeric(18,2)' }, { name: 'ordered_at', type: 'timestamp' }], primary_key: ['order_id'], row_estimate: 12480 },
+    { name: 'customers', columns: [{ name: 'customer_id', type: 'integer' }, { name: 'full_name', type: 'text' }], primary_key: ['customer_id'], row_estimate: 3150 },
+  ],
+  archive: [{ name: 'orders_2025', columns: [{ name: 'order_id', type: 'integer' }, { name: 'amount', type: 'numeric(18,2)' }], primary_key: ['order_id'], row_estimate: null }],
+};
 
 export const DOMAINS: Domain[] = [
   {

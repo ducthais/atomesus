@@ -6,7 +6,8 @@ import { refresh } from 'next/cache';
 import type { ColumnRule, RunReport, User } from '@/lib/postgres-api';
 import { chatPayload, type ChatResponse } from '@/lib/studio';
 import { APPROVAL_MESSAGE, requestDeployment } from '@/lib/deploy';
-import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, discoverObjects } from '@/lib/catalog/source';
+import { BACKEND, BackendError, MOCK, MOCK_USER_COOKIE, SESSION_COOKIE, backend, currentUser, discoverObjects, mockUserConnections, saveMockUserConnections } from '@/lib/catalog/source';
+import type { ConnectionRequest, ConnectionResult, ConnectionSchema, ConnectionSelection, ConnectionSummary, ConnectionTable, UserConnection } from '@/lib/user-connections';
 import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections';
 import type { Discovery } from '@/lib/catalog/types';
 import { toReconcile, type Reconcile } from '@/lib/catalog/explain';
@@ -17,6 +18,115 @@ const failure = (err: unknown): ActionState => ({ error: err instanceof Error ? 
 const MAX_AGE = 28800; // = SESSION_SECONDS của backend
 // Bản build (deploy sau HTTPS) chỉ gửi cookie qua HTTPS; `next dev` chạy http nên để tắt.
 const SECURE = process.env.NODE_ENV === 'production';
+
+async function connectionEngineer() {
+  const actor = await currentUser();
+  if (actor?.role !== 'Engineer') throw new BackendError(403, 'Chỉ Engineer được thêm, kiểm tra, duyệt, chọn bảng hoặc xóa kết nối.');
+  return actor;
+}
+
+/** Danh sách riêng của người dùng; Reviewer chỉ nhận tên, không nhận metadata. */
+export async function listUserConnections(): Promise<ConnectionResult<(UserConnection | ConnectionSummary)[]>> {
+  try {
+    const actor = await currentUser();
+    if (!actor) return { error: 'Đăng nhập để xem kết nối.' };
+    const items = MOCK ? await mockUserConnections(actor.id) : await backend<(UserConnection | ConnectionSummary)[]>('/connections');
+    if (actor.role !== 'Engineer') return { data: items.map(({ id, name }) => ({ id, name })) };
+    return { data: await Promise.all(items.map(async item => {
+      if (!('host' in item) || MOCK) return item;
+      try { return { ...item, selection: await backend<ConnectionSelection | null>(`/connections/${encodeURIComponent(item.id)}/selection`) }; }
+      catch (err) { return { ...item, selection_error: failure(err)?.error }; }
+    })) };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+export async function submitUserConnection(form: FormData, operation: 'test' | 'save'): Promise<ActionState> {
+  let request: ConnectionRequest | undefined;
+  try {
+    const actor = await connectionEngineer();
+    const { validateConnectionForm } = await import('@/lib/user-connections');
+    const checked = validateConnectionForm(form);
+    if ('error' in checked) return checked;
+    request = checked.data;
+    if (operation !== 'test' && operation !== 'save') return { error: 'Thao tác kết nối không hợp lệ.' };
+    if (MOCK) {
+      if (operation === 'test') return { message: 'Mock: kết nối Postgres thành công; user có quyền SELECT.' };
+      const { password, ...metadata } = checked.data;
+      void password;
+      const items = await mockUserConnections(actor.id);
+      // Cookie có giới hạn kích thước; mẫu chỉ phục vụ kiểm tra giao diện.
+      if (items.length >= 5) return { error: 'Mock chỉ hỗ trợ tối đa 5 kết nối trong phiên.' };
+      await saveMockUserConnections(actor.id, [{ ...metadata, id: crypto.randomUUID().replaceAll('-', ''), owner_id: actor.id, created_at: Date.now() / 1000 }, ...items]);
+    } else {
+      const result = await backend<{ message?: string }>(operation === 'test' ? '/connections/test' : '/connections', {
+        method: 'POST', body: JSON.stringify(checked.data),
+      });
+      if (operation === 'test') return { message: result.message ?? 'Kết nối Postgres thành công.' };
+    }
+    refresh();
+    return { message: 'Đã lưu kết nối Postgres.' };
+  } catch (err) { return failure(err); }
+  finally {
+    form.delete('password');
+    if (request) request.password = '';
+  }
+}
+
+export async function deleteUserConnection(id: string): Promise<ActionState> {
+  try {
+    const actor = await connectionEngineer();
+    if (MOCK) {
+      const items = await mockUserConnections(actor.id);
+      if (!items.some(item => item.id === id)) throw new BackendError(404, 'Không tìm thấy kết nối.');
+      await saveMockUserConnections(actor.id, items.filter(item => item.id !== id));
+    } else await backend(`/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    refresh();
+    return { message: 'Đã xóa kết nối.' };
+  } catch (err) { return failure(err); }
+}
+
+export async function getUserConnectionSchemas(id: string): Promise<ConnectionResult<ConnectionSchema[]>> {
+  try {
+    const actor = await connectionEngineer();
+    if (!MOCK) return { data: await backend<ConnectionSchema[]>(`/connections/${encodeURIComponent(id)}/schemas`) };
+    if (!(await mockUserConnections(actor.id)).some(item => item.id === id)) throw new BackendError(404, 'Không tìm thấy kết nối.');
+    const { USER_CONNECTION_SCHEMAS } = await import('@/lib/catalog/mock');
+    return { data: USER_CONNECTION_SCHEMAS };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+export async function getUserConnectionTables(id: string, schema: string): Promise<ConnectionResult<ConnectionTable[]>> {
+  try {
+    const actor = await connectionEngineer();
+    if (!schema.trim() || schema.length > 128 || schema.includes('\0')) return { error: 'Cần cung cấp tên schema hợp lệ để duyệt bảng.' };
+    if (!MOCK) return { data: await backend<ConnectionTable[]>(`/connections/${encodeURIComponent(id)}/tables?schema=${encodeURIComponent(schema)}`) };
+    if (!(await mockUserConnections(actor.id)).some(item => item.id === id)) throw new BackendError(404, 'Không tìm thấy kết nối.');
+    const { USER_CONNECTION_SCHEMAS, USER_CONNECTION_TABLES } = await import('@/lib/catalog/mock');
+    if (!USER_CONNECTION_SCHEMAS.some(item => item.name === schema)) return { error: `Schema '${schema}' không tồn tại trong Postgres nguồn.` };
+    return { data: USER_CONNECTION_TABLES[schema] };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+export async function selectUserConnectionTables(id: string, selection: ConnectionSelection): Promise<ConnectionResult<string>> {
+  try {
+    const actor = await connectionEngineer();
+    const { connectionTablesLink, validateConnectionSelection } = await import('@/lib/user-connections');
+    const checked = validateConnectionSelection(selection);
+    if ('error' in checked) return checked;
+    selection = checked.data;
+    let saved: ConnectionSelection;
+    if (MOCK) {
+      const available = await getUserConnectionTables(id, selection.schema);
+      if ('error' in available) return available;
+      if (selection.tables.some(name => !available.data.some(table => table.name === name))) return { error: 'Bảng đã chọn không tồn tại trong schema.' };
+      saved = selection;
+      const items = await mockUserConnections(actor.id);
+      await saveMockUserConnections(actor.id, items.map(item => item.id === id ? { ...item, selection: saved } : item));
+    } else saved = await backend<ConnectionSelection>(`/connections/${encodeURIComponent(id)}/selection`, { method: 'PUT', body: JSON.stringify(selection) });
+    refresh();
+    return { data: connectionTablesLink(id, saved.tables) };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
 
 /** Đăng nhập bằng tài khoản local. Backend đặt cookie Path=/api/v1; lưu lại token với Path=/ cho các Server Component. */
 export async function signIn(_: ActionState, form: FormData): Promise<ActionState> {

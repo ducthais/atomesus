@@ -8,7 +8,8 @@ import { cookies } from 'next/headers';
 import type { RunReport, User } from '../postgres-api.ts';
 import type { ChatMessage } from '../studio.ts';
 import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live.ts';
-import { DATASETS, DOMAINS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE } from './mock.ts';
+import { DATASETS, DOMAINS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE, USER_CONNECTIONS } from './mock.ts';
+import type { UserConnection } from '../user-connections.ts';
 import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
 import { Catalog } from './query.ts';
 import type { AssetRunStatus, CatalogRun, Comparison, DeclaredSource, Discovery, Drift, Orchestration, Person, Platform } from './types.ts';
@@ -18,6 +19,25 @@ export const MOCK = process.env.CATALOG_MOCK === '1';
 export const BACKEND = (process.env.PIPELINE_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 export const SESSION_COOKIE = 'pipeline_session';
 export const MOCK_USER_COOKIE = 'catalog_user';
+const USER_CONNECTIONS_COOKIE = 'catalog_user_connections';
+
+/** Mock chỉ giữ metadata công khai trong phiên; không lưu mật khẩu. */
+export async function mockUserConnections(ownerId: string): Promise<UserConnection[]> {
+  const value = (await cookies()).get(USER_CONNECTIONS_COOKIE)?.value;
+  if (value) {
+    try {
+      const saved = JSON.parse(value) as { owner: string; items: UserConnection[] };
+      if (saved.owner === ownerId && Array.isArray(saved.items)) return saved.items;
+    } catch { /* Cookie mock không hợp lệ: dùng lại ví dụ. */ }
+  }
+  return USER_CONNECTIONS.map(item => ({ ...item, owner_id: ownerId }));
+}
+
+export async function saveMockUserConnections(ownerId: string, items: UserConnection[]): Promise<void> {
+  (await cookies()).set(USER_CONNECTIONS_COOKIE, JSON.stringify({ owner: ownerId, items }), {
+    path: '/', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 28800,
+  });
+}
 
 export async function rememberedConnections(): Promise<string[]> {
   return parseConnections((await cookies()).get(CONNECTIONS_COOKIE)?.value);

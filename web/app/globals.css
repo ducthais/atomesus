@@ -697,4 +697,23 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 .admin-role-control select { min-width: 130px; }
 .admin-role-control small { display: inline-flex; align-items: center; gap: 4px; }
 .success-text { color: var(--good); }
+.user-connections { min-width: 0; overflow-wrap: anywhere; }
+.user-connections .success-text { color: var(--ink-2); }
+.user-connections .button { max-width: 100%; white-space: normal; }
+.connection-fields { border: 0; padding: 0; min-width: 0; }
+.connection-fields .form-grid { margin-bottom: 14px; }
+.connection-fields input, .connection-fields select { width: 100%; }
+.connection-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+.connection-head a { min-width: 0; flex: 1; }
+.connection-list > li { padding: 14px 0; border-bottom: 1px solid var(--rule-soft); }
+.connection-list > li:first-child { padding-top: 0; }
+.connection-list > li:last-child { border-bottom: 0; padding-bottom: 0; }
+.connection-objects > li { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.connection-objects label span { min-width: 0; }
+.connection-objects label input { width: 24px; height: 24px; }
+.connection-objects label small { display: block; }
+.connection-objects .object-columns { margin-left: 0; grid-template-columns: minmax(0, 1fr); }
+.connection-objects .object-columns li { flex-wrap: wrap; }
+.user-connections .callout { flex-wrap: wrap; }
+.user-connections .callout > div { min-width: 0; }
 .row-muted td { color: var(--ink-3, #888); }
