@@ -27,6 +27,8 @@ PHASES = {
     "render": ("render", 1),
     "test_run": ("t_validate", 4),
     "repair": ("propose", 1),
+    # P13: đo lại bản gốc + tối đa 2 bản ứng viên, mỗi lần một lượt chạy thử P9–P12 cộng các lần chạy lại model gold.
+    "optimize": ("optimize", 12),
 }
 
 

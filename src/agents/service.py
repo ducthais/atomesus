@@ -23,13 +23,24 @@ from src.agents.graph import build_graph
 from src.agents.nodes.arbitrate import arbitrate_node
 from src.agents.nodes.budget import budget_node
 from src.agents.nodes.common import RUNNING, AgentDeps, CancellationRequestedError
+from src.agents.nodes.optimize import optimize_node
 from src.agents.nodes.planner import validate_plan_edit
 from src.agents.nodes.render import render_node
 from src.agents.nodes.sandbox_run import sandbox_run_node
 from src.agents.state import AgentState
 from src.agents.timeout import timed
 from src.agents.validate import validate_spec
-from src.run_report.models import Approval, Attempts, Check, Cost, GateResult, LlmCall, RunReport, Timing
+from src.run_report.models import (
+    Approval,
+    Attempts,
+    Check,
+    Cost,
+    GateResult,
+    LlmCall,
+    OptimizerStep,
+    RunReport,
+    Timing,
+)
 from src.run_report.store import (
     get_run_report,
     is_run_cancelled,
@@ -106,7 +117,8 @@ def _report(state: AgentState, created_at: datetime) -> RunReport:
             }
         ),
         llm_usage=[LlmCall.model_validate(call) for call in state.get("llm_usage", [])],
-        timing=Timing(baseline_sec=state.get("duration_sec")),
+        timing=Timing(baseline_sec=state.get("duration_sec"), optimized_sec=state.get("optimized_sec")),
+        optimizer=[OptimizerStep.model_validate(step) for step in state.get("optimizer", [])],
         attempts=Attempts.model_validate(state.get("attempts") or {}),
         llm_calls=state.get("llm_calls", 0),
         error_trace=state.get("error_trace", []),
@@ -459,6 +471,7 @@ def start_continue(
             "arbitrate": arbitrate_node(deps),
             "render": render_node(deps),
             "test_run": sandbox_run_node(deps),
+            "optimize": optimize_node(deps),
         }
         for node in (timed(deps, name, step) for name, step in steps.items()):
             _raise_if_cancelled(store_path, draft.run_id)

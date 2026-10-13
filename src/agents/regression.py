@@ -25,19 +25,13 @@ from src.spec.models import Spec
 SYSTEM = "system"
 
 
-def initial_state(
-    parent: RunReport,
-    evidence: dict,
-    *,
-    trigger: str = "regression",
-    created_by: str = SYSTEM,
-) -> AgentState:
+def initial_state(parent: RunReport, evidence: dict) -> AgentState:
     """State của run sửa: Spec và kế hoạch của run đã deploy, bằng chứng suy giảm, bắt đầu ở GENERATING."""
     return {
         "run_id": str(uuid4()),
         "version": 1,
-        "created_by": created_by,
-        "trigger": trigger,
+        "created_by": SYSTEM,
+        "trigger": "regression",
         "parent_run_id": parent.run_id,
         "source_scope": parent.source_scope,
         "user_request": parent.user_request,
@@ -51,7 +45,7 @@ def initial_state(
         "error_trace": [],
         "status": "GENERATING",
         "stage_reached": "propose",
-        "timeline": [_event("submitted", created_by)],
+        "timeline": [_event("submitted", SYSTEM)],
     }
 
 
@@ -145,18 +139,12 @@ def judge(report: RunReport, parent: RunReport, deps: AgentDeps, store_path: str
     )
 
 
-def _start(
-    parent: RunReport,
-    evidence: dict,
-    deps: AgentDeps,
-    store_path: str,
-    *,
-    trigger: str,
-    created_by: str,
-) -> tuple[RunReport, Job]:
-    """Dùng chung luồng Người 3: codegen → chạy thử → so với bản đang deploy."""
-    initial = initial_state(parent, evidence, trigger=trigger, created_by=created_by)
-    created_at = datetime.now(UTC)
+def start_regression(parent: RunReport, evidence: dict, deps: AgentDeps, store_path: str) -> tuple[RunReport, Job]:
+    """Ghi run sửa tự động (GENERATING) ngay; việc chạy nền: codegen → chạy thử → so với bản đang deploy.
+
+    Tối ưu thủ công (UC-3) không đi đường này vì không được gọi LLM: xem src/agents/manual_optimize.py.
+    """
+    initial, created_at = initial_state(parent, evidence), datetime.now(UTC)
     started = _save(initial, created_at, store_path)
 
     def job() -> RunReport:
@@ -167,31 +155,3 @@ def _start(
         return report
 
     return started, _guarded(job, initial, created_at, store_path)
-
-
-def start_regression(parent: RunReport, evidence: dict, deps: AgentDeps, store_path: str) -> tuple[RunReport, Job]:
-    """Ghi run sửa tự động (GENERATING) ngay; phần còn lại chạy nền theo luồng Người 3."""
-    return _start(parent, evidence, deps, store_path, trigger="regression", created_by=SYSTEM)
-
-
-def start_manual_optimize(parent: RunReport, actor: str, deps: AgentDeps, store_path: str) -> tuple[RunReport, Job]:
-    """Engineer bấm Tối ưu: gọi cùng luồng Người 3 nhưng lưu đúng người yêu cầu và trigger thủ công."""
-    model = ((parent.spec or {}).get("transform") or {}).get("model_name", "pipeline")
-    baseline = parent.timing.baseline_sec
-    evidence = {
-        "model": model,
-        "detected_at": datetime.now(UTC).isoformat(),
-        "requested_by": actor,
-        "kind": "manual_optimize",
-        "rules": [
-            {
-                "rule": "runtime_regression",
-                "observed": baseline,
-                "threshold": baseline,
-                "baseline": baseline,
-                "detail": "Engineer yêu cầu tối ưu hiệu năng thủ công.",
-                "stalled_sources": [],
-            }
-        ],
-    }
-    return _start(parent, evidence, deps, store_path, trigger="manual_optimize", created_by=actor)

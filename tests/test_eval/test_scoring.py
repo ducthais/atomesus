@@ -86,10 +86,11 @@ def test_fifteen_cases_follow_the_spec_split():
     cases = run_eval.load_cases()
     groups = [c["group"] for c in cases]
     gates = sorted(c["gate"] for c in cases if c["group"] == "violation")
-    assert (len(cases), groups.count("valid"), groups.count("violation"), groups.count("ambiguous")) == (15, 6, 6, 3)
+    counts = tuple(groups.count(g) for g in ("valid", "violation", "ambiguous", "optimize"))
+    assert counts == (6, 6, 3, 3), "15 ca của SPEC §18.2 cộng 3 ca optimizer"
     assert gates == ["ast_guard", "ast_guard", "budget", "budget", "semantic", "semantic"]
     assert all(c["expected"]["status"].startswith("BLOCKED_") for c in cases if c["group"] == "violation")
-    assert len({c["id"] for c in cases}) == 15
+    assert len({c["id"] for c in cases}) == len(cases) == 18
 
 
 def test_violation_passes_only_with_the_expected_block_code():
@@ -117,6 +118,42 @@ def test_case_policy_lowers_only_the_named_ceiling():
     assert lowered.budgets.per_run.max_llm_calls == policy.budgets.per_run.max_llm_calls
     assert lowered.budgets.per_day == policy.budgets.per_day
     assert run_eval.with_policy(policy, None) == policy
+
+
+def _step(rule, applied, before=None, after=None, reason="lý do"):
+    return {"rule": rule, "applied": applied, "before_sec": before, "after_sec": after, "reason": reason}
+
+
+SMALL = {
+    "group": "optimize",
+    "expected": {"uc3_status_in": ["NO_IMPROVEMENT"], "uc3_skipped": {"table_to_incremental": "dưới ngưỡng"}},
+}
+TRIED = {
+    "group": "optimize",
+    "expected": {"uc3_status_in": ["READY_FOR_REVIEW", "NO_IMPROVEMENT"], "uc3_measured": ["table_to_incremental"]},
+}
+READY = {"status": "READY_FOR_REVIEW", "llm_calls": 2, "optimizer": []}
+
+
+def test_optimizer_case_passes_when_behaviour_matches_the_measurements():
+    below = _step("table_to_incremental", False, reason="30 dòng, dưới ngưỡng")
+    skipped = {"status": "NO_IMPROVEMENT", "llm_calls": 0, "optimizer": [below]}
+    assert run_eval.score_optimize(SMALL, READY, skipped, 10)["matched"]
+    kept = {"status": "READY_FOR_REVIEW", "llm_calls": 0, "optimizer": [_step("table_to_incremental", True, 1.0, 0.5)]}
+    assert run_eval.score_optimize(TRIED, READY, kept, 10)["matched"]
+    dropped = {"status": "NO_IMPROVEMENT", "llm_calls": 0, "optimizer": [_step("table_to_incremental", False, 1, 0.98)]}
+    assert run_eval.score_optimize(TRIED, READY, dropped, 10)["matched"], "bị loại vì không nhanh hơn cũng là đúng"
+
+
+def test_optimizer_case_fails_on_llm_calls_or_a_kept_candidate_that_is_not_faster():
+    called = {"status": "NO_IMPROVEMENT", "llm_calls": 1, "optimizer": [_step("table_to_incremental", False, 1, 1)]}
+    assert "SPEC FR-14" in " ".join(run_eval.score_optimize(TRIED, READY, called, 10)["problems"])
+    slow = {"status": "READY_FOR_REVIEW", "llm_calls": 0, "optimizer": [_step("table_to_incremental", True, 1.0, 0.95)]}
+    assert "không nhanh hơn đủ" in " ".join(run_eval.score_optimize(TRIED, READY, slow, 10)["problems"])
+    unmeasured = {"status": "NO_IMPROVEMENT", "llm_calls": 0, "optimizer": [_step("table_to_incremental", False)]}
+    assert "không đo luật" in " ".join(run_eval.score_optimize(TRIED, READY, unmeasured, 10)["problems"])
+    blocked = {"status": "NEEDS_HUMAN", "llm_calls": 3, "optimizer": []}
+    assert not run_eval.score_optimize(TRIED, blocked, unmeasured, 10)["matched"]
 
 
 def _result(group, matched, gate=None):

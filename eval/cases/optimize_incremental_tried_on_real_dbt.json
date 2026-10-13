@@ -1,0 +1,13 @@
+{
+  "id": "optimize_incremental_tried_on_real_dbt",
+  "group": "optimize",
+  "request": "Doanh thu theo ngày",
+  "sources": [{ "source_ref": "sales_pg", "tables": ["orders"] }],
+  "uc3_parent_patch": { "materialization": "table" },
+  "uc3_policy": { "optimizer": { "incremental_min_rows": 0 } },
+  "expected": {
+    "uc3_status_in": ["READY_FOR_REVIEW", "NO_IMPROVEMENT"],
+    "uc3_measured": ["table_to_incremental"]
+  },
+  "note": "pipeline đã deploy dạng table; hạ ngưỡng cho riêng UC-3 để bản incremental chạy thật trên dbt + DuckDB và được đo. Giữ hay bỏ phải khớp số đo: gold giống hệt, trung vị nhanh hơn ít nhất min_gain_pct và hai dải đo không chồng nhau"
+}

@@ -109,18 +109,3 @@ def test_fix_that_hits_the_spec_ceiling_stays_needs_human(parent):
 
     assert done.status == "NEEDS_HUMAN" and "max_spec_attempts" in json.dumps(done.error_trace, ensure_ascii=False)
     assert "verdict" not in done.regression
-
-
-def test_manual_optimize_uses_person_three_flow_and_records_requester(parent):
-    report, store = parent
-    started, job = regression.start_manual_optimize(report, "minh", deps(FakeLLM(SPEC)), store)
-
-    assert started.trigger == "manual_optimize"
-    assert started.created_by == "minh"
-    assert started.parent_run_id == report.run_id
-    assert started.regression["kind"] == "manual_optimize"
-    assert started.regression["rules"][0]["rule"] == "runtime_regression"
-
-    done = job()
-    assert done.status == "NO_IMPROVEMENT"
-    assert done.regression["verdict"]["improved"] is False
