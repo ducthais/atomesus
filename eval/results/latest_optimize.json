@@ -1,5 +1,5 @@
 {
-  "at": "2026-10-13 16:02 UTC",
+  "at": "2026-10-13 16:50 UTC",
   "summary": {
     "valid": null,
     "blocked": null,
@@ -9,8 +9,8 @@
     "optimizer_kept": "1/4",
     "avg_spec_repairs": null,
     "total": "4/4",
-    "llm_usd": 0.005139,
-    "seconds": 1313.1
+    "llm_usd": 0.00444,
+    "seconds": 1385.6
   },
   "results": [
     {
@@ -18,7 +18,7 @@
       "group": "optimize",
       "gate": null,
       "source_kinds": [],
-      "run_id": "e441ff8d-cb15-4daf-8b36-6e301132c2db",
+      "run_id": "02572127-c904-41b8-9dfe-4d512398caba",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -34,9 +34,9 @@
           {
             "rule": "missing_partition_filter",
             "applied": false,
-            "before_sec": 0.1155,
-            "after_sec": 0.1255,
-            "reason": "không nhanh hơn đủ: chạy lại 0.1255s so với bản gốc 0.1155s (cần ≤ 0.104s, budgets.yml optimizer.min_gain_pct = 10)"
+            "before_sec": 0.1178,
+            "after_sec": 0.1298,
+            "reason": "không nhanh hơn đủ: chạy lại 0.1298s so với bản gốc 0.1178s (cần ≤ 0.106s, budgets.yml optimizer.min_gain_pct = 10)"
           }
         ],
         "uc3": {
@@ -46,9 +46,9 @@
             {
               "rule": "table_to_incremental",
               "applied": false,
-              "before_sec": 0.116,
-              "after_sec": 0.1216,
-              "reason": "không nhanh hơn đủ: chạy lại 0.1216s so với bản gốc 0.116s (cần ≤ 0.1044s, budgets.yml optimizer.min_gain_pct = 10)"
+              "before_sec": 0.1054,
+              "after_sec": 0.1213,
+              "reason": "không nhanh hơn đủ: chạy lại 0.1213s so với bản gốc 0.1054s (cần ≤ 0.09486s, budgets.yml optimizer.min_gain_pct = 10)"
             },
             {
               "rule": "missing_partition_filter",
@@ -59,7 +59,7 @@
             }
           ],
           "timing": {
-            "baseline_sec": 24.989,
+            "baseline_sec": 24.687,
             "optimized_sec": null
           }
         }
@@ -68,8 +68,8 @@
       "evidence": "",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.00109545,
-      "seconds": 124.0,
+      "llm_usd": 0.0010896,
+      "seconds": 124.5,
       "expected": "đúng hành vi optimizer"
     },
     {
@@ -77,7 +77,7 @@
       "group": "optimize",
       "gate": null,
       "source_kinds": [],
-      "run_id": "7170a1d1-8205-4ef6-9ae3-4f7ab6d26e59",
+      "run_id": "dbdb723a-f3fb-4118-bd1a-3dba02b24e69",
       "status": "READY_FOR_REVIEW",
       "stage": "optimize",
       "matched": true,
@@ -93,21 +93,21 @@
           {
             "rule": "missing_partition_filter",
             "applied": true,
-            "before_sec": 0.2258,
-            "after_sec": 0.1435,
-            "reason": "nhanh hơn 36.4%, bảng gold giống hệt bản gốc"
+            "before_sec": 0.2348,
+            "after_sec": 0.2103,
+            "reason": "nhanh hơn 10.4%, bảng gold giống hệt bản gốc"
           }
         ],
         "uc3": {
-          "status": "NO_IMPROVEMENT",
+          "status": "READY_FOR_REVIEW",
           "llm_calls": 0,
           "optimizer": [
             {
               "rule": "table_to_incremental",
-              "applied": false,
-              "before_sec": 0.2159,
-              "after_sec": 0.1512,
-              "reason": "chênh lệch nằm trong nhiễu đo: các lần chạy lại của bản ứng viên [0.2543, 0.1512, 0.2523, 0.1345, 0.1376] chồng lên bản gốc [0.2612, 0.2159, 0.2202, 0.2122, 0.2152] (mọi lần của bản ứng viên phải nhanh hơn mọi lần của bản gốc)"
+              "applied": true,
+              "before_sec": 0.2155,
+              "after_sec": 0.1405,
+              "reason": "nhanh hơn 34.8%, bảng gold giống hệt bản gốc"
             },
             {
               "rule": "missing_partition_filter",
@@ -118,8 +118,8 @@
             }
           ],
           "timing": {
-            "baseline_sec": 201.111,
-            "optimized_sec": null
+            "baseline_sec": 203.462,
+            "optimized_sec": 210.832
           }
         }
       },
@@ -128,7 +128,7 @@
       "spec_attempts": 0,
       "llm_calls": 2,
       "llm_usd": 0.0011487,
-      "seconds": 998.6,
+      "seconds": 1020.9,
       "expected": "đúng hành vi optimizer"
     },
     {
@@ -136,7 +136,7 @@
       "group": "optimize",
       "gate": null,
       "source_kinds": [],
-      "run_id": "74bc7d3a-34b0-4113-9a00-f310043adba6",
+      "run_id": "6ea3c682-db35-4fa7-a88b-3e8e4ae73705",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -152,9 +152,9 @@
           {
             "rule": "missing_partition_filter",
             "applied": false,
-            "before_sec": 0.1168,
-            "after_sec": 0.1319,
-            "reason": "không nhanh hơn đủ: chạy lại 0.1319s so với bản gốc 0.1168s (cần ≤ 0.1051s, budgets.yml optimizer.min_gain_pct = 10)"
+            "before_sec": 0.1201,
+            "after_sec": 0.1264,
+            "reason": "không nhanh hơn đủ: chạy lại 0.1264s so với bản gốc 0.1201s (cần ≤ 0.1081s, budgets.yml optimizer.min_gain_pct = 10)"
           }
         ],
         "uc3": {
@@ -171,23 +171,23 @@
             {
               "rule": "missing_partition_filter",
               "applied": false,
-              "before_sec": 0.122,
-              "after_sec": 0.1245,
-              "reason": "không nhanh hơn đủ: chạy lại 0.1245s so với bản gốc 0.122s (cần ≤ 0.1098s, budgets.yml optimizer.min_gain_pct = 10)"
+              "before_sec": 0.1285,
+              "after_sec": 0.1459,
+              "reason": "không nhanh hơn đủ: chạy lại 0.1459s so với bản gốc 0.1285s (cần ≤ 0.1157s, budgets.yml optimizer.min_gain_pct = 10)"
             }
           ],
           "timing": {
-            "baseline_sec": 28.057,
+            "baseline_sec": 28.401,
             "optimized_sec": null
           }
         }
       },
       "problems": [],
       "evidence": "",
-      "spec_attempts": 1,
-      "llm_calls": 3,
-      "llm_usd": 0.0018013499999999997,
-      "seconds": 142.5,
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00111375,
+      "seconds": 140.8,
       "expected": "đúng hành vi optimizer"
     },
     {
@@ -195,7 +195,7 @@
       "group": "optimize",
       "gate": null,
       "source_kinds": [],
-      "run_id": "c43a4f04-ca3c-4aaa-ac07-d888e68e59cd",
+      "run_id": "d1dc80ad-2ac1-44d7-a7f8-0e277daf9c0b",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -211,9 +211,9 @@
           {
             "rule": "missing_partition_filter",
             "applied": false,
-            "before_sec": null,
-            "after_sec": null,
-            "reason": "đã có điều kiện trên `order_date`"
+            "before_sec": 0.1147,
+            "after_sec": 0.12,
+            "reason": "không nhanh hơn đủ: chạy lại 0.12s so với bản gốc 0.1147s (cần ≤ 0.1032s, budgets.yml optimizer.min_gain_pct = 10)"
           }
         ],
         "uc3": {
@@ -236,7 +236,7 @@
             }
           ],
           "timing": {
-            "baseline_sec": 24.98,
+            "baseline_sec": 24.383,
             "optimized_sec": null
           }
         }
@@ -245,8 +245,8 @@
       "evidence": "",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.0010936499999999998,
-      "seconds": 48.0,
+      "llm_usd": 0.00108825,
+      "seconds": 99.4,
       "expected": "đúng hành vi optimizer"
     }
   ]
