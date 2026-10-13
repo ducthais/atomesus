@@ -53,9 +53,7 @@ async def test_batch_api_creates_every_run_after_one_budget_preflight(client, tm
     app.dependency_overrides[routes.agent_deps] = lambda: deps(tiered_llm)
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
-        await client.post(
-            "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
-        )
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         available = await client.get("/api/v1/agent/runs/batch/budget")
         assert available.status_code == 200
         assert available.json()["max_batch_runs"] >= 2
@@ -101,9 +99,7 @@ async def test_batch_api_blocks_the_whole_batch_when_daily_balance_is_too_low(cl
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     assert budget.reserve_daily(config, "existing", 1, "scan", 1.95, 2.0)[0]
     try:
-        await client.post(
-            "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
-        )
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         response = await client.post(
             "/api/v1/agent/runs/batch",
             json={"requests": [{"request": "Pipeline A"}, {"request": "Pipeline B"}]},
@@ -133,9 +129,7 @@ async def test_batch_api_uses_existing_reservations_at_exact_daily_limit(client,
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     assert budget.reserve_daily(config, "existing", 1, "scan", 1.9, 2.0)[0]
     try:
-        await client.post(
-            "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
-        )
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         response = await client.post(
             "/api/v1/agent/runs/batch",
             json={"requests": [{"request": "Pipeline A"}, {"request": "Pipeline B"}]},
@@ -171,9 +165,7 @@ async def test_batch_api_rolls_back_started_runs_when_initialization_fails(clien
 
     monkeypatch.setattr(routes, "start_agent", fail_second_start)
     try:
-        await client.post(
-            "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
-        )
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         with pytest.raises(RuntimeError, match="run thứ hai"):
             await client.post(
                 "/api/v1/agent/runs/batch",
@@ -210,9 +202,7 @@ async def test_batch_api_fans_out_jobs_concurrently(client, tmp_path, monkeypatc
 
     monkeypatch.setattr(routes, "start_agent", concurrent_start)
     try:
-        await client.post(
-            "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
-        )
+        await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
         response = await client.post(
             "/api/v1/agent/runs/batch",
             json={"requests": [{"request": "Pipeline A"}, {"request": "Pipeline B"}]},
