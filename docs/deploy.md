@@ -135,6 +135,44 @@ docker compose --env-file .env -f deploy/compose.yml restart dagster
 **Bảo mật của bản demo:** đăng nhập vẫn là hai tài khoản local (`APP_ENV=staging`, backend từ chối mật khẩu mặc định).
 Chưa có SSO, nên chỉ đưa mật khẩu cho người cần dùng; ai đăng nhập được Engineer là tiêu được tiền LLM (trong trần ở mục 4).
 
+### Kết nối Postgres của người dùng
+
+Trước khi cập nhật backend, tạo một khóa Fernet và đặt `PIPELINE_CONNECTION_KEY` trong `~/atomesus/.env`:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Backend đọc biến này qua `env_file` của Compose. Ở `APP_ENV=staging` hoặc `production`, thiếu khóa hoặc khóa sai
+định dạng sẽ làm backend từ chối khởi động với thông báo nêu rõ `PIPELINE_CONNECTION_KEY`. Development/test cho phép
+khởi động không có khóa và kiểm tra kết nối, nhưng vẫn từ chối lưu kết nối cho đến khi có khóa. Dependency
+`cryptography` nằm trong `requirements.txt`.
+
+Giữ nguyên khóa qua các lần cập nhật; sao lưu khóa riêng, an toàn cùng bản sao SQLite tại `PIPELINE_STORE_PATH`.
+Không tự thay khóa khi đã có kết nối: mật khẩu cũ không giải mã được bằng khóa mới. Không đưa khóa vào Git hoặc log.
+
+API dưới `/api/v1/connections` dùng cookie phiên đăng nhập:
+
+| API | Hành vi |
+|---|---|
+| `POST /test` | Engineer kiểm tra kết nối, không lưu; lỗi trả 422 với lý do tiếng Việt |
+| `POST /` | Engineer lưu sau khi kiểm tra thành công; trả 201, mật khẩu được mã hóa Fernet |
+| `GET /` | Chỉ liệt kê kết nối thuộc người gọi; không trả mật khẩu hoặc ciphertext. Reviewer chỉ nhận id và tên |
+| `DELETE /{id}` | Engineer xóa kết nối của mình; trả 204, kết nối người khác trả 404, pipeline đã deploy đang dùng trả 409 |
+
+Body của hai API POST gồm `name` (mặc định `Postgres`), `host`, `port` (mặc định 5432), `database`, `user`,
+`password`, `sslmode` (mặc định `require`; cho phép `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`).
+Chủ sở hữu luôn lấy từ session, không nhận từ body. Reviewer không được POST hoặc DELETE (403).
+
+User nguồn cần quyền `USAGE` trên schema và `SELECT` trên ít nhất một bảng/view dữ liệu; database chưa có bảng đọc
+được cũng trả 422. Kết nối thử dùng `connect_timeout=5`, `default_transaction_read_only=on`, `statement_timeout=5000`
+và `lock_timeout=2000`. Nên dùng `verify-full` với chứng chỉ CA tin cậy và tài khoản nguồn chỉ đọc.
+
+Backend kiểm mọi địa chỉ DNS rồi kết nối bằng IP đã kiểm tra, giữ tên host cho xác minh SSL. Host loopback, private,
+link-local, reserved, multicast và service nội bộ (`postgres`, `backend`, `dagster`, `deployer`, `mock-api`, `web`,
+`caddy`) bị chặn. `PIPELINE_CONNECTION_ALLOW_PRIVATE=1` chỉ có hiệu lực ở `development`/`test`; staging/production
+luôn bỏ qua biến này. Sổ kết nối này chưa bao gồm chọn schema/bảng hoặc chạy pipeline bằng `conn:<id>`.
+
 ## 6. Bật deployer: đưa pipeline đã merge lên Dagster production
 
 Pipeline chỉ lên Dagster production qua repo pipeline (SPEC §9.5): Reviewer bấm Deploy → backend mở pull request → CI

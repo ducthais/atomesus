@@ -15,6 +15,7 @@ from src.api.webhooks import router as webhooks_router
 from src.chat import router as chat_router
 from src.config import get_settings
 from src.pipeline.api import router as pipeline_router
+from src.pipeline.connections import router as connections_router
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import load_policy
 from src.run_report import router as run_reports_router
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
     # Agent chạy nền trong tiến trình này; run dở dang từ lần chạy trước không còn ai hoàn tất.
     pipeline = PipelineSettings()
+    pipeline.validate_connection_key(settings.app_env)
     stale_seconds = load_policy().budgets.per_run.phase_timeout_sec * 5
     stale_before = datetime.now(UTC) - timedelta(seconds=stale_seconds)
     if abandoned := abandon_unfinished(pipeline.store_path, stale_before=stale_before):
@@ -73,6 +75,7 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(pipeline_router, prefix="/api/v1")
+app.include_router(connections_router, prefix="/api/v1")
 app.include_router(run_reports_router, prefix="/api/v1")
 app.include_router(policy_router, prefix="/api/v1")
 app.include_router(catalog_router, prefix="/api/v1")

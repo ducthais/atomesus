@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any
 
 
+class ConnectionInUseError(Exception):
+    pass
+
+
 @contextmanager
 def database(path: str):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -35,6 +39,13 @@ def database(path: str):
             )
             # Lần đăng ký gần nhất của mỗi IP (giới hạn 1 tài khoản / IP / cửa sổ, xem api.register).
             conn.execute("CREATE TABLE IF NOT EXISTS registration_ips (ip TEXT PRIMARY KEY, at REAL NOT NULL)")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS connections ("
+                " id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, host TEXT NOT NULL,"
+                " port INTEGER NOT NULL, database_name TEXT NOT NULL, database_user TEXT NOT NULL,"
+                " password_encrypted TEXT NOT NULL, sslmode TEXT NOT NULL, created_at REAL NOT NULL)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS connections_owner ON connections(owner_id)")
             yield conn
     finally:
         conn.close()
@@ -161,3 +172,48 @@ def release_registration_slot(path: str, ip: str) -> None:
     """Trả lại lượt khi yêu cầu không gửi được mã (lỗi SMTP), để người dùng thử lại ngay."""
     with database(path) as conn:
         conn.execute("DELETE FROM registration_ips WHERE ip = ?", (ip,))
+
+
+def save_connection(path: str, metadata: dict[str, Any], password_encrypted: str) -> None:
+    """Chỉ nhận mật khẩu đã mã hóa; metadata công khai không chứa credential."""
+    with database(path) as conn:
+        conn.execute(
+            "INSERT INTO connections"
+            " (id, owner_id, name, host, port, database_name, database_user, password_encrypted, sslmode, created_at)"
+            " VALUES (:id, :owner_id, :name, :host, :port, :database, :user, :password_encrypted, :sslmode, :created_at)",
+            {**metadata, "password_encrypted": password_encrypted},
+        )
+
+
+def list_connections(path: str, owner_id: str) -> list[dict[str, Any]]:
+    with database(path) as conn:
+        rows = conn.execute(
+            "SELECT id, owner_id, name, host, port, database_name, database_user, sslmode, created_at"
+            " FROM connections WHERE owner_id = ? ORDER BY created_at DESC, id",
+            (owner_id,),
+        ).fetchall()
+    fields = ("id", "owner_id", "name", "host", "port", "database", "user", "sslmode", "created_at")
+    return [dict(zip(fields, row, strict=True)) for row in rows]
+
+
+def delete_connection(path: str, connection_id: str, owner_id: str) -> bool:
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute(
+            "SELECT 1 FROM connections WHERE id = ? AND owner_id = ?", (connection_id, owner_id)
+        ).fetchone():
+            return False
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_reports'").fetchone():
+            used = conn.execute(
+                "SELECT 1 FROM run_reports r, json_each(r.report, '$.spec.sources') source"
+                " WHERE (r.status = 'DEPLOYED' OR json_extract(r.report, '$.deployment.deployed_at') IS NOT NULL)"
+                " AND json_extract(source.value, '$.connection_ref') = ? LIMIT 1",
+                (f"conn:{connection_id}",),
+            ).fetchone()
+            if used:
+                raise ConnectionInUseError("Kết nối đang được pipeline đã deploy sử dụng; chưa thể xóa.")
+        return bool(
+            conn.execute("DELETE FROM connections WHERE id = ? AND owner_id = ?", (connection_id, owner_id)).rowcount
+        )
