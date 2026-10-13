@@ -154,7 +154,7 @@ async def test_alert_api(client, env, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_manual_optimize_api_is_engineer_only_and_starts_person_three_flow(client, env, monkeypatch):
+async def test_manual_optimize_api_is_engineer_only_and_never_calls_the_llm(client, env, monkeypatch):
     from src.api import routes
     from src.main import app
     from src.pipeline import auth
@@ -176,9 +176,9 @@ async def test_manual_optimize_api_is_engineer_only_and_starts_person_three_flow
         assert started["trigger"] == "manual_optimize" and started["created_by"] == "minh"
         saved = get_run_report(env.settings.store_path, started["run_id"])
         assert saved is not None and saved.status in {"READY_FOR_REVIEW", "NO_IMPROVEMENT"}
-        assert saved.parent_run_id == env.report.run_id
-        assert saved.regression["kind"] == "manual_optimize"
-        assert saved.regression["verdict"]["improved"] is (saved.status == "READY_FOR_REVIEW")
+        assert saved.parent_run_id == env.report.run_id and saved.llm_calls == 0  # SPEC FR-14
+        assert {step.rule for step in saved.optimizer} == {"table_to_incremental", "missing_partition_filter"}
+        assert any(step.applied for step in saved.optimizer) is (saved.status == "READY_FOR_REVIEW")
     finally:
         app.dependency_overrides.pop(auth.settings, None)
         app.dependency_overrides.pop(routes.agent_deps, None)

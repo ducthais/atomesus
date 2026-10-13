@@ -33,6 +33,8 @@ class AgentState(TypedDict, total=False):
     llm_usage: list[dict]  # mỗi lần gọi LLM: {stage, tier, model, input_tokens, output_tokens, usd}
     cost: dict  # {estimated_bytes, actual_bytes, usd} từ cổng budget (P8)
     duration_sec: float
+    optimized_sec: float | None  # thời gian chạy thử bản optimizer giữ lại (P13); None nếu giữ bản gốc
+    optimizer: list[dict]  # mỗi luật P13: {rule, applied, before_sec, after_sec, reason} (RunReport.optimizer)
     error_trace: list[dict]
     review_history: list[dict]  # quyết định review của các version trước (đặc biệt changes_requested)
     timeline: list[dict]  # mốc thời gian {event, at, actor} để đo công sức (RunReport.timeline)

@@ -119,6 +119,14 @@ class PerDay(_Policy):
     max_usd: float = Field(gt=0)
 
 
+class OptimizerPolicy(_Policy):
+    """Ngưỡng của optimizer P13 (SPEC §9.3): khi nào thử luật, đo bao nhiêu lần, nhanh hơn bao nhiêu mới giữ."""
+
+    incremental_min_rows: int = Field(default=10_000, ge=0)
+    rerun_samples: int = Field(default=5, ge=1, le=10)
+    min_gain_pct: float = Field(default=10, ge=0, lt=100)
+
+
 class Rules(_Policy):
     require_partition_filter_on: list[str] = Field(default_factory=list)
     forbid_select_star_in: list[Literal["bronze", "staging", "gold"]] = Field(default_factory=list)
@@ -130,6 +138,7 @@ class Budgets(_Policy):
     per_run: PerRun
     per_day: PerDay
     rules: Rules
+    optimizer: OptimizerPolicy = Field(default_factory=OptimizerPolicy)
 
     @field_validator("rules", mode="before")
     @classmethod

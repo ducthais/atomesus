@@ -11,6 +11,7 @@ Tiến trình con chỉ nhận các biến môi trường cần thiết, không 
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -49,6 +50,12 @@ class SandboxResult:
     checks: list[Check] = field(default_factory=list)
     error_trace: list[dict] = field(default_factory=list)
     duration_sec: float = 0.0
+    # Chỉ có khi gọi với `rerun_model` (optimizer P13): thời gian chạy lại model gold như một lần chạy theo lịch.
+    model_rerun_sec: float | None = None
+    rerun_samples: list[float] = field(default_factory=list)
+    gold_profile: list[dict] | None = None  # hồ sơ gold sau lần build đầu
+    rerun_profile: list[dict] | None = None  # hồ sơ gold sau các lần chạy lại: phải giống lần build đầu
+    rerun_error: str | None = None
 
 
 class _StopError(Exception):
@@ -250,6 +257,29 @@ def _t_run(sandbox: Path, env: dict[str, str], timeout: int) -> tuple[list[dict]
     return _dbt_results(sandbox), None
 
 
+def _rerun_model(sandbox: Path, env: dict[str, str], timeout: int, model_name: str, samples: int) -> list[float]:
+    """Chạy lại riêng model gold `samples` lần khi bảng đã có (như các lần chạy theo lịch sau lần đầu).
+
+    Đo `execution_time` của chính model trong run_results.json, không tính thời gian khởi động dbt (vài giây, như nhau
+    ở mọi bản) để so được bản `table` (tính lại toàn bộ) với bản `incremental` (chỉ tính lại phân vùng mới).
+    """
+    project = str(sandbox / "dbt_project")
+    command = [sys.executable, "-m", "dbt.cli.main", "run", "--select", model_name]
+    command += ["--project-dir", project, "--profiles-dir", project]
+    timings = []
+    for _ in range(samples):
+        _run(command, sandbox, env, timeout, "optimize")
+        found = [
+            r
+            for r in _dbt_results(sandbox)
+            if r["unique_id"].startswith("model.") and r["unique_id"].endswith(f".{model_name}")
+        ]
+        if not found:
+            raise _StopError("NEEDS_HUMAN", "optimize", f"Chạy lại không thấy kết quả của model {model_name}.")
+        timings.append(round(float(found[0]["execution_time"]), 4))
+    return timings
+
+
 def _staging_reconcile(db, spec: Spec, max_reject_pct: float) -> list[Check]:
     name = spec.transform.model_name
     checks = []
@@ -376,8 +406,14 @@ def _post_run(checks: list[Check], preview: dict) -> tuple[GateResult, list[str]
     return gate, errors
 
 
-def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: PipelineSettings) -> SandboxResult:
-    """Chạy P9–P12 cho bộ file đã render. Không ném lỗi: mọi kết cục đều thành SandboxResult."""
+def run_in_sandbox(
+    spec: Spec, files: dict[str, str], policy: Policy, settings: PipelineSettings, rerun_model: int = 0
+) -> SandboxResult:
+    """Chạy P9–P12 cho bộ file đã render. Không ném lỗi: mọi kết cục đều thành SandboxResult.
+
+    `rerun_model` > 0 (optimizer P13): P12 đạt thì chạy lại model gold ngần ấy lần, ghi trung vị thời gian và hồ sơ
+    gold sau khi chạy lại. Lỗi ở bước đo này không đổi trạng thái run, chỉ ghi `rerun_error`.
+    """
     unsupported = sorted({s.kind for s in spec.sources} - SUPPORTED_KINDS)
     if unsupported:
         return SandboxResult(
@@ -415,9 +451,18 @@ def run_in_sandbox(spec: Spec, files: dict[str, str], policy: Policy, settings: 
                 result.error_trace.append({"stage": "t_validate", "error": test_error[-1000:]})
             gate, errors = _post_run(result.checks, preview)
             result.gates.append(gate)
+            result.gold_profile = preview.get("gold_profile")
             if errors:
                 result.status = "NEEDS_HUMAN"
                 result.error_trace += [{"stage": "t_validate", "error": error} for error in errors]
+            elif rerun_model:
+                try:
+                    samples = _rerun_model(sandbox, env, timeout, spec.transform.model_name, rerun_model)
+                    with duckdb.connect(env["WAREHOUSE_PATH"], read_only=True) as db:
+                        result.rerun_profile = _gold_profile(db, f'gold."{spec.transform.model_name}"')
+                    result.rerun_samples, result.model_rerun_sec = samples, statistics.median(samples)
+                except _StopError as stop:
+                    result.rerun_error = str(stop)[-1000:]
         except _StopError as stop:
             result.status, result.stage_reached = stop.status, stop.stage
             result.error_trace.append(stop.trace)

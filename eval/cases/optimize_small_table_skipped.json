@@ -1,0 +1,15 @@
+{
+  "id": "optimize_small_table_skipped",
+  "group": "optimize",
+  "request": "Doanh thu theo ngày",
+  "sources": [{ "source_ref": "sales_pg", "tables": ["orders"] }],
+  "uc3_parent_patch": { "materialization": "table" },
+  "expected": {
+    "uc3_status_in": ["NO_IMPROVEMENT"],
+    "uc3_skipped": {
+      "table_to_incremental": "dưới ngưỡng",
+      "missing_partition_filter": "chỉ áp cho model `incremental`"
+    }
+  },
+  "note": "pipeline đã deploy dạng table trên sales_raw.orders (30 dòng): UC-3 không thử bản ứng viên nào, kết thúc NO_IMPROVEMENT kèm lý do từng luật, llm_calls = 0"
+}
