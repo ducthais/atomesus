@@ -221,7 +221,13 @@ def _record_sandbox_queue(state: AgentState, store_path: str, position: int) -> 
         **_event("sandbox_queued" if position else "sandbox_started"),
         "detail": f"Đang xếp hàng chạy thử (vị trí {position})" if position else "Bắt đầu chạy thử",
     }
-    updated = RunReport.model_validate({**report.model_dump(), "timeline": [*report.timeline, event]})
+    timeline = [item.model_dump(mode="json") for item in report.timeline]
+    last_queue = next((item for item in reversed(timeline) if item["event"].startswith("sandbox_")), None)
+    if position and last_queue and last_queue["event"] == "sandbox_queued":
+        last_queue["detail"] = event["detail"]  # đổi vị trí tại mốc cũ, không làm phình timeline
+    else:
+        timeline.append(event)
+    updated = RunReport.model_validate({**report.model_dump(), "timeline": timeline})
     save_run_report(store_path, updated)
 
 
@@ -231,12 +237,14 @@ def _with_queue_timeline(state: AgentState, store_path: str) -> AgentState:
     if current is None or current.version != state["version"]:
         return state
     timeline = list(state.get("timeline", []))
-    known = {datetime.fromisoformat(event["at"]) for event in timeline}
-    timeline.extend(
-        event.model_dump(mode="json")
-        for event in current.timeline
-        if event.event in {"sandbox_queued", "sandbox_started"} and event.at not in known
-    )
+    known = {datetime.fromisoformat(event["at"]): index for index, event in enumerate(timeline)}
+    for event in current.timeline:
+        if event.event not in {"sandbox_queued", "sandbox_started"}:
+            continue
+        if event.at in known:
+            timeline[known[event.at]] = event.model_dump(mode="json")
+        else:
+            timeline.append(event.model_dump(mode="json"))
     return {**state, "timeline": sorted(timeline, key=lambda event: datetime.fromisoformat(event["at"]))}
 
 

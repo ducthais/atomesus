@@ -9,6 +9,7 @@ Tiến trình con chỉ nhận các biến môi trường cần thiết, không 
 """
 
 import json
+import logging
 import os
 import shutil
 import statistics
@@ -45,6 +46,8 @@ CONNECTION_ERRORS = (
     "Max retries exceeded",
 )
 PASSTHROUGH_ENV = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA")
+log = logging.getLogger(__name__)
+SANDBOX_CANCEL_POLL_SEC = 1.0
 
 
 class SandboxWaitClock:
@@ -55,6 +58,19 @@ class SandboxWaitClock:
         self._started = time.monotonic()
         self._waiting: float | None = None
         self._waited = 0.0
+        self.ticket: object | None = None  # bảo vệ bởi _sandbox_condition
+        self.stopped = False
+
+    def stop(self, run_id: str) -> None:
+        """Thu hồi token của phase bị bỏ lại; lần trả chỗ muộn của luồng cũ là no-op."""
+        with _sandbox_condition:
+            self.stopped = True
+            if self.ticket in _sandbox_active:
+                _sandbox_active.remove(self.ticket)
+                log.warning("Run %s: phase đã dừng, trả chỗ sandbox của luồng bị bỏ lại", run_id)
+            if self.ticket in _sandbox_waiters:
+                _sandbox_waiters.remove(self.ticket)
+            _sandbox_condition.notify_all()
 
     def wait(self, waiting: bool) -> None:
         with self._lock:
@@ -74,12 +90,14 @@ class SandboxWaitClock:
 _sandbox_local = threading.local()
 _sandbox_condition = threading.Condition()
 _sandbox_waiters: deque[object] = deque()
-_sandbox_active = 0
+_sandbox_active: set[object] = set()
 
 
 @contextmanager
-def sandbox_wait_context(clock: SandboxWaitClock, check_cancelled: Callable, progress: Callable):
-    _sandbox_local.wait_context = (clock, check_cancelled, progress)
+def sandbox_wait_context(
+    clock: SandboxWaitClock, check_cancelled: Callable, progress: Callable, before_start: Callable | None = None
+):
+    _sandbox_local.wait_context = (clock, check_cancelled, progress, before_start or check_cancelled)
     try:
         yield
     finally:
@@ -88,28 +106,44 @@ def sandbox_wait_context(clock: SandboxWaitClock, check_cancelled: Callable, pro
 
 @contextmanager
 def sandbox_slot(settings: PipelineSettings):
-    """Một hàng FIFO toàn tiến trình; chỗ chỉ được trả khi công việc đã thoát, kể cả timeout."""
-    global _sandbox_active
+    """Một hàng FIFO toàn tiến trình; token sở hữu ngăn luồng bị bỏ lại trả chỗ hai lần."""
     if getattr(_sandbox_local, "has_slot", False):
         raise_if_phase_cancelled()
         yield
         return
     context = getattr(_sandbox_local, "wait_context", None)
-    clock, check_cancelled, progress = context or (None, raise_if_phase_cancelled, lambda _position: None)
-    ticket, acquired, position = object(), False, None
+    clock, check_cancelled, progress, before_start = context or (
+        None,
+        raise_if_phase_cancelled,
+        lambda _position: None,
+        raise_if_phase_cancelled,
+    )
+    ticket, position = object(), None
+    next_cancel_check = time.monotonic()
     if clock:
         clock.wait(True)
     try:
         with _sandbox_condition:
+            if clock:
+                if clock.stopped:
+                    raise_if_phase_cancelled()
+                    raise TimeoutError("Phase đã bị dừng; không vào hàng chạy thử.")
+                clock.ticket = ticket
             _sandbox_waiters.append(ticket)
         while True:
             raise_if_phase_cancelled()
-            check_cancelled()
+            now = time.monotonic()
+            if now >= next_cancel_check:
+                check_cancelled()
+                next_cancel_check = now + SANDBOX_CANCEL_POLL_SEC
             with _sandbox_condition:
-                if _sandbox_waiters[0] is ticket and _sandbox_active < getattr(settings, "max_parallel_sandbox", 1):
+                if clock and clock.stopped:
+                    raise TimeoutError("Phase đã bị dừng; bỏ hàng chạy thử.")
+                if _sandbox_waiters[0] is ticket and len(_sandbox_active) < getattr(
+                    settings, "max_parallel_sandbox", 1
+                ):
                     _sandbox_waiters.popleft()
-                    _sandbox_active += 1
-                    acquired = True
+                    _sandbox_active.add(ticket)
                     _sandbox_condition.notify_all()
                     break
                 current = _sandbox_waiters.index(ticket) + 1
@@ -118,12 +152,23 @@ def sandbox_slot(settings: PipelineSettings):
                 progress(current)
                 position = current
             with _sandbox_condition:
-                _sandbox_condition.wait(timeout=0.05)
+                # Kiểm tra lại sau khi ghi tiến độ để không bỏ lỡ một lần trả chỗ.
+                _sandbox_condition.wait_for(
+                    lambda: (
+                        ticket not in _sandbox_waiters
+                        or _sandbox_waiters.index(ticket) + 1 != current
+                        or (
+                            _sandbox_waiters[0] is ticket
+                            and len(_sandbox_active) < getattr(settings, "max_parallel_sandbox", 1)
+                        )
+                    ),
+                    timeout=max(0.0, next_cancel_check - time.monotonic()),
+                )
         if clock:
             clock.wait(False)
         _sandbox_local.has_slot = True
         raise_if_phase_cancelled()
-        check_cancelled()
+        before_start()  # luôn đọc lại cờ hủy trước khi chạy, dù vừa hết một chu kỳ chờ
         if position is not None:
             progress(0)
         yield
@@ -132,9 +177,8 @@ def sandbox_slot(settings: PipelineSettings):
             clock.wait(False)
         _sandbox_local.has_slot = False
         with _sandbox_condition:
-            if acquired:
-                _sandbox_active -= 1
-            elif ticket in _sandbox_waiters:
+            _sandbox_active.discard(ticket)
+            if ticket in _sandbox_waiters:
                 _sandbox_waiters.remove(ticket)
             _sandbox_condition.notify_all()
 

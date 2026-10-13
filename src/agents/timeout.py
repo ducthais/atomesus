@@ -7,6 +7,7 @@ phase bị treo vào error_trace. Dùng cho graph (src/agents/graph.py), luồng
 
 import queue
 import threading
+import time
 from collections.abc import Callable
 
 from src.agents.cancellation import bind_phase_cancel, raise_if_phase_cancelled
@@ -51,10 +52,17 @@ def with_timeout(
         box: queue.Queue = queue.Queue(maxsize=1)
         stop = threading.Event()
         clock = SandboxWaitClock()
+        cancel_lock = threading.Lock()
+        next_cancel_check = 0.0
 
-        def check_cancelled() -> None:
-            if cancelled is not None and cancelled(state):
-                raise CancellationRequestedError
+        def check_cancelled(force: bool = False) -> None:
+            nonlocal next_cancel_check
+            with cancel_lock:
+                now = time.monotonic()
+                if force or now >= next_cancel_check:
+                    next_cancel_check = now + CANCEL_POLL_SEC
+                    if cancelled is not None and cancelled(state):
+                        raise CancellationRequestedError
 
         def progress(position: int) -> None:
             if queue_progress:
@@ -63,10 +71,10 @@ def with_timeout(
         def target() -> None:
             bind_phase_cancel(stop)
             try:
-                with sandbox_wait_context(clock, check_cancelled, progress):
+                with sandbox_wait_context(clock, check_cancelled, progress, lambda: check_cancelled(force=True)):
                     check_cancelled()
                     value = node(state)
-                    check_cancelled()
+                    check_cancelled(force=True)
                     box.put((True, value))
             except BaseException as exc:  # chuyển lỗi về luồng của graph
                 box.put((False, exc))
@@ -79,11 +87,15 @@ def with_timeout(
                 break
             except queue.Empty:
                 pass
-            if cancelled is not None and cancelled(state):
+            try:
+                check_cancelled()
+            except CancellationRequestedError:
                 stop.set()
+                clock.stop(state.get("run_id", ""))
                 raise CancellationRequestedError
             if clock.remaining(seconds) <= 0:
                 stop.set()
+                clock.stop(state.get("run_id", ""))
                 message = f"Phase {label or stage} chạy quá {seconds:g} giây (budgets.yml phase_timeout_sec), đã dừng."
                 return StopError("INFRA_ERROR", stage, message).update(state)
         if not ok:

@@ -9,6 +9,7 @@ import yaml
 from pydantic import ValidationError
 
 from src.agents import manual_optimize, regression, service, timeout
+from src.agents.nodes.common import CancellationRequestedError
 from src.agents.nodes.optimize import optimize_node
 from src.agents.nodes.sandbox_run import sandbox_run_node
 from src.codegen import sandbox
@@ -142,37 +143,73 @@ def test_sandbox_errors_release_the_slot(config, monkeypatch, error):
         assert after.result(5) == {} and calls == ["second"]
 
 
-def test_phase_timeout_keeps_slot_until_sandbox_cleanup_finishes(config, monkeypatch, fake_clock):
-    entered, cleanup, release = threading.Event(), threading.Event(), threading.Event()
+def test_cancelled_waiter_never_starts_when_slot_is_released_before_next_poll(config, monkeypatch):
+    queued, cancelled = threading.Event(), threading.Event()
+    calls = []
+    monkeypatch.setattr(timeout, "CANCEL_POLL_SEC", 60)
+    phase = timeout.with_timeout(
+        lambda s: _in_slot(config, lambda _s: calls.append("sandbox") or {}, s),
+        "t_validate",
+        600,
+        cancelled=lambda _s: cancelled.is_set(),
+        queue_progress=lambda _s, _k: queued.set(),
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with sandbox.sandbox_slot(config):
+            future = pool.submit(phase, _state("cancelled"))
+            assert queued.wait(5)
+            cancelled.set()
+        with pytest.raises(CancellationRequestedError):
+            future.result(5)
+    assert not calls and not sandbox._sandbox_waiters and not sandbox._sandbox_active
+
+
+def test_phase_timeout_releases_slot_before_hanging_thread_exits(config, monkeypatch, fake_clock, caplog):
+    entered, exited, release = threading.Event(), threading.Event(), threading.Event()
+    second_entered, second_release = threading.Event(), threading.Event()
     queued, _positions = _queued(monkeypatch)
     calls = []
 
     def running(_state):
         entered.set()
+        assert release.wait(5)  # mô phỏng luồng treo, không hợp tác với tín hiệu dừng
+        return {}
+
+    def second(_state):
+        calls.append("second")
+        second_entered.set()
+        assert second_release.wait(5)
+        return {}
+
+    def hanging(state):
         try:
-            while True:
-                sandbox.raise_if_phase_cancelled()
-                release.wait(0.01)
+            return _in_slot(config, running, state)
         finally:
-            cleanup.set()
-            assert release.wait(5)
+            exited.set()
 
     agent = _agent(config, passing_sandbox)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        failed = pool.submit(timeout.timed(agent, "test_run", running), {})
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        failed = pool.submit(timeout.with_timeout(hanging, "t_validate", 1), _state("hanging"))
         try:
             assert entered.wait(5)
-            fake_clock[0] = 10_000.0
-            assert failed.result(5)["status"] == "INFRA_ERROR"
-            assert cleanup.wait(5)
-            after = pool.submit(
-                timeout.timed(agent, "test_run", lambda _s: calls.append("second") or {}), _state("second")
-            )
+            after = pool.submit(timeout.timed(agent, "test_run", second), _state("second"))
             assert queued["second"].wait(5)
-            assert calls == []
+            fake_clock[0] = 100.0
+            assert failed.result(5)["status"] == "INFRA_ERROR"
+            assert second_entered.wait(5) and not exited.is_set()
+            assert "hanging" in caplog.text and "luồng bị bỏ lại" in caplog.text
+            release.set()
+            assert exited.wait(5)  # trả token muộn không được lấy mất chỗ của run thứ hai
+            third = pool.submit(
+                timeout.timed(agent, "test_run", lambda _s: calls.append("third") or {}), _state("third")
+            )
+            assert queued["third"].wait(5)
+            assert calls == ["second"]
         finally:
             release.set()
-        assert after.result(5) == {} and calls == ["second"]
+            second_release.set()
+        assert after.result(5) == third.result(5) == {}
+    assert calls == ["second", "third"]
 
 
 @pytest.mark.parametrize("kind", ["optimizer", "manual_optimize", "regression"])

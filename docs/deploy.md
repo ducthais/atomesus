@@ -128,7 +128,9 @@ VM Azure B2s có 4 GB RAM: giữ backend ở **một tiến trình uvicorn** và
 | `PIPELINE_MAX_PARALLEL_PLANNING` | `3` | Số luồng lập kế hoạch đồng thời trong mỗi batch, tránh mở tới 20 luồng trên VM 4 GB. |
 
 Cả hai phải là số nguyên từ 1. Run vượt số chỗ sandbox chờ theo FIFO, timeline ghi
-`Đang xếp hàng chạy thử (vị trí k)`; thời gian chờ không tính vào `phase_timeout_sec` và vẫn hủy được.
+`Đang xếp hàng chạy thử (vị trí k)`; đổi vị trí cập nhật mốc cũ, đọc qua `GET /api/v1/runs/{id}`.
+Thời gian chờ không tính vào `phase_timeout_sec` và vẫn hủy được; kiểm tra hủy tối đa mỗi giây.
+Phase timeout trả chỗ ngay và ghi cảnh báo kèm run_id; luồng Python bị treo có thể còn sống tới khi công việc thoát.
 Không tăng số sandbox trên VM 4 GB khi chưa đo RAM thực tế. Bộ giới hạn dùng chung trong một tiến trình;
 nhiều worker uvicorn sẽ có các bộ giới hạn riêng.
 

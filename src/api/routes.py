@@ -273,14 +273,6 @@ def continue_draft(
     return started
 
 
-@router.get("/runs/{run_id}", response_model=RunReport, dependencies=[Depends(current_user)])
-async def get_agent_run(run_id: str, config: PipelineSettings = Depends(settings)) -> RunReport:
-    """Đọc cùng sổ bằng chứng với GET /runs/{id}, gồm tiến độ hàng đợi chạy thử."""
-    from src.run_report.router import get_run
-
-    return await get_run(run_id, config)
-
-
 @router.get("/status")
 async def agent_status():
     return {
