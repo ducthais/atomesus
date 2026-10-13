@@ -136,14 +136,14 @@ def test_connection(body: ConnectionRequest, config: PipelineSettings) -> None:
                 )
     except psycopg.Error as exc:
         message = str(exc).lower()
-        if "ssl" in message or "no encryption" in message:
-            detail = "Máy chủ yêu cầu SSL hoặc không hỗ trợ chế độ SSL đã chọn. Kiểm tra sslmode."
-        elif exc.sqlstate in ("28P01", "28000") or "password authentication failed" in message:
+        if exc.sqlstate in ("28P01", "28000") or "password authentication failed" in message:
             detail = "Tên user hoặc mật khẩu Postgres không đúng, hoặc user chưa được phép đăng nhập."
         elif exc.sqlstate == "42501":
             detail = "User chưa có quyền SELECT. Hãy cấp quyền đọc bảng và schema."
         elif exc.sqlstate == "3D000":
             detail = "Database không tồn tại. Kiểm tra tên database."
+        elif "ssl" in message or "no encryption" in message:
+            detail = "Máy chủ yêu cầu SSL hoặc không hỗ trợ chế độ SSL đã chọn. Kiểm tra sslmode."
         else:
             detail = "Không kết nối được Postgres. Kiểm tra host, cổng, firewall và trạng thái máy chủ."
         raise HTTPException(422, detail) from exc

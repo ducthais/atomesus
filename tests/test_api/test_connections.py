@@ -277,10 +277,14 @@ async def test_private_override_is_limited_to_local_environments(registry, app_e
     ("error", "reason"),
     [
         (psycopg.errors.InvalidPassword(f"password authentication failed {PAYLOAD['password']}"), "mật khẩu"),
+        (psycopg.errors.InvalidPassword('password authentication failed for user "ssl_reader"'), "mật khẩu"),
+        (psycopg.OperationalError('password authentication failed for user "ssl_reader"'), "mật khẩu"),
         (psycopg.OperationalError(f"connection timed out {PAYLOAD['password']}"), "host"),
         (psycopg.OperationalError(f"server requires SSL {PAYLOAD['password']}"), "SSL"),
         (psycopg.errors.InsufficientPrivilege(f"permission denied {PAYLOAD['password']}"), "SELECT"),
+        (psycopg.errors.InsufficientPrivilege("permission denied for table ssl_events"), "SELECT"),
         (psycopg.errors.InvalidCatalogName("database does not exist"), "Database"),
+        (psycopg.errors.InvalidCatalogName('database "ssl_analytics" does not exist'), "Database"),
     ],
 )
 async def test_postgres_errors_are_safe_explained_and_never_saved(registry, error, reason):
