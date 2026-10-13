@@ -336,7 +336,7 @@ async def test_unresolvable_dns_has_a_safe_reason(registry, answers):
 
 
 @pytest.mark.asyncio
-async def test_dns_timeout_returns_without_waiting_for_getaddrinfo(registry):
+async def test_dns_timeout_returns_without_waiting_for_getaddrinfo(registry, monkeypatch):
     finished = Event()
     started = Event()
 
@@ -346,13 +346,11 @@ async def test_dns_timeout_returns_without_waiting_for_getaddrinfo(registry):
         return dns_rows("8.8.8.8")
 
     registry.dns.side_effect = slow_dns
-    before = time.monotonic()
+    monkeypatch.setattr(connections, "DNS_TIMEOUT", 0.1)
     try:
         response = await registry.client.post("/api/v1/connections/test", json=PAYLOAD)
-        elapsed = time.monotonic() - before
-        assert started.is_set() and not finished.is_set()
+        assert started.wait(5) and not finished.is_set()
         assert response.status_code == 422 and "Không phân giải được host" in response.json()["detail"]
-        assert 2.5 <= elapsed < 4.5
         registry.connect.assert_not_called()
     finally:
         finished.set()

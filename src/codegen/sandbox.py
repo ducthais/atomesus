@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.parse import unquote, urlsplit
 
 from src.agents.cancellation import raise_if_phase_cancelled
 from src.codegen import el_checks, reference
@@ -58,7 +59,9 @@ class _StopError(Exception):
 
 
 def _connection_url(connection_ref: str, settings: PipelineSettings) -> str:
-    """connection_ref trong domains.yml → URL. Sprint 1 chỉ có Postgres sandbox của B."""
+    """connection_ref trong domains.yml → URL Postgres cho dlt."""
+    if connection_ref.startswith("conn:"):
+        return postgres.connection_url(settings, connection_ref)
     urls = {"sandbox_pg": settings.database_url.get_secret_value()}
     url = urls.get(connection_ref)
     if not url:
@@ -80,7 +83,10 @@ def _source_env(ref: str, decl, settings: PipelineSettings) -> dict[str, str]:
             return {f"SOURCES__{ref.upper()}__BASE_URL": rest_api.base_url(decl, settings)}
         except rest_api.ApiUnavailableError as exc:
             raise _StopError("INFRA_ERROR", "el_run", str(exc)) from exc
-    return {f"SOURCES__{ref.upper()}__CREDENTIALS": _connection_url(decl.connection_ref, settings)}
+    try:
+        return {f"SOURCES__{ref.upper()}__CREDENTIALS": _connection_url(decl.connection_ref, settings)}
+    except postgres.SourceUnavailableError as exc:
+        raise _StopError("INFRA_ERROR", "el_run", str(exc)) from None
 
 
 def credentials_env(policy: Policy, settings: PipelineSettings) -> dict[str, str]:
@@ -108,8 +114,26 @@ def _env(sandbox: Path, spec: Spec, policy: Policy, settings: PipelineSettings) 
     )
     declared = policy.domains.domains[spec.domain].sources
     for source in spec.sources:
-        env.update(_source_env(source.source_ref, declared[source.source_ref], settings))
+        try:
+            env.update(_source_env(source.source_ref, declared[source.source_ref], settings))
+        except _StopError as stop:
+            stop.trace["source_id"] = source.id
+            raise
     return env
+
+
+def _safe_output(output: str, env: dict[str, str]) -> str:
+    """Tiến trình dlt có thể in credential trong traceback; xóa trước khi ghi bằng chứng."""
+    secrets = set()
+    for key, value in env.items():
+        if key.endswith("__CREDENTIALS"):
+            secrets.add(value)
+            password = urlsplit(value).password
+            if password:
+                secrets.update((password, unquote(password)))
+    for secret in sorted(secrets, key=len, reverse=True):
+        output = output.replace(secret, "[đã ẩn]")
+    return output
 
 
 def _run(command: list[str], sandbox: Path, env: dict[str, str], timeout: int, stage: str) -> str:
@@ -144,9 +168,9 @@ def _run(command: list[str], sandbox: Path, env: dict[str, str], timeout: int, s
                 _terminate_process_tree(process)
                 raise
     if process.returncode != 0:
-        output = (stderr or stdout).strip()
+        output = _safe_output((stderr or stdout).strip(), env)
         raise _StopError("NEEDS_HUMAN", stage, output[-2000:] or f"{stage} thất bại (mã {process.returncode}).")
-    return stdout
+    return _safe_output(stdout, env)
 
 
 def _terminate_process_tree(process: subprocess.Popen) -> None:
@@ -195,7 +219,7 @@ def _el_run(
             elif source.kind == "filesystem":
                 files.root(declared[source.source_ref])
             else:
-                with postgres.connection(settings):
+                with postgres.connection(settings, declared[source.source_ref]):
                     pass
         except postgres.SourceUnavailableError as exc:
             raise _StopError("INFRA_ERROR", "el_run", str(exc), source_id=source.id) from exc

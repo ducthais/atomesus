@@ -364,11 +364,17 @@ def source_rows(spec: Spec, policy: Policy, settings) -> tuple[str, list[dict]]:
     from src.codegen.el_checks import source_records
     from src.pipeline import connectors, files, postgres, rest_api
 
+    declared = policy.domains.domains[spec.domain].sources
+    postgres_decls = [declared[source.source_ref] for source in spec.sources if source.kind == "postgres"]
+    if len({decl.connection_ref for decl in postgres_decls}) > 1:
+        raise UnsupportedError("các nguồn Postgres nằm ở nhiều database, chưa đối chiếu độc lập được")
+    postgres_decl = postgres_decls[0] if postgres_decls else None
+
     def columns_of(schema: str) -> dict[str, dict[str, str]]:
-        tables = connectors.postgres_columns(settings, schema)
+        options = {"decl": postgres_decl} if postgres_decl and postgres_decl.connection_ref.startswith("conn:") else {}
+        tables = connectors.postgres_columns(settings, schema, **options)
         return {table: {c["name"]: c["type"] for c in columns} for table, columns in tables.items()}
 
-    declared = policy.domains.domains[spec.domain].sources
     inline = {}
     for source in spec.sources:
         if source.kind == "rest_api":
@@ -398,13 +404,17 @@ def source_rows(spec: Spec, policy: Policy, settings) -> tuple[str, list[dict]]:
                 pass
         except postgres.SourceUnavailableError as exc:
             raise UnsupportedError(f"cần Postgres để tính lại nhưng không mở được: {exc}") from exc
-    with postgres.connection(settings) as conn:
+    with postgres.connection(settings, postgres_decl) as conn:
         try:
             cursor = conn.execute(f"SELECT * FROM ({query}) AS reference LIMIT {MAX_GROUPS + 1}")  # noqa: S608
             names = [column.name for column in cursor.description]
             rows = [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
         except psycopg.Error as exc:
             conn.rollback()
+            if postgres_decl and postgres_decl.connection_ref.startswith("conn:"):
+                raise UnsupportedError(
+                    "Postgres báo lỗi khi tính lại. Kiểm tra SQL và quyền SELECT của nguồn."
+                ) from None
             raise UnsupportedError(f"Postgres báo lỗi khi tính lại: {str(exc).splitlines()[0]}") from exc
     if len(rows) > MAX_GROUPS:
         raise UnsupportedError(f"kết quả hơn {MAX_GROUPS:,} dòng, chỉ đối chiếu bảng nhỏ hơn")

@@ -4,8 +4,9 @@ import ipaddress
 import re
 import socket
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
 from contextlib import contextmanager
+from threading import BoundedSemaphore, Thread
 from typing import Annotated, Literal
 from uuid import uuid4
 
@@ -24,7 +25,7 @@ from src.pipeline.settings import PipelineSettings
 INTERNAL_HOSTS = {"localhost", "postgres", "backend", "dagster", "deployer", "mock-api", "web", "caddy"}
 READ_ONLY_OPTIONS = "-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=2000"
 DNS_TIMEOUT = 3
-DNS_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+DNS_SLOTS = BoundedSemaphore(32)
 
 SCHEMAS_SQL = """
 SELECT n.nspname, count(c.oid)
@@ -130,6 +131,31 @@ def engineer(user: dict = Depends(current_user)) -> dict:
     return user
 
 
+def _resolve_dns(host: str, port: int):
+    # Lookup treo giữ một slot, không giữ worker mà lookup khác đang cần.
+    if not DNS_SLOTS.acquire(blocking=False):
+        raise HTTPException(422, "Hệ thống đang bận phân giải DNS. Hãy thử lại sau.")
+    pending = Future()
+    slots = DNS_SLOTS
+
+    def lookup():
+        try:
+            rows = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except Exception as exc:
+            slots.release()
+            pending.set_exception(exc)
+        else:
+            slots.release()
+            pending.set_result(rows)
+
+    try:
+        Thread(target=lookup, daemon=True).start()
+    except RuntimeError:
+        slots.release()
+        raise HTTPException(422, "Hệ thống đang bận phân giải DNS. Hãy thử lại sau.") from None
+    return pending.result(timeout=DNS_TIMEOUT)
+
+
 def resolve_host(host: str, port: int, config: PipelineSettings) -> str:
     """Kiểm mọi địa chỉ DNS, rồi ghim IP khi kết nối để chặn DNS rebinding."""
     allow_private = config.connection_allow_private and get_settings().app_env in ("development", "test")
@@ -139,12 +165,7 @@ def resolve_host(host: str, port: int, config: PipelineSettings) -> str:
         try:
             addresses = [ipaddress.ip_address(host)]
         except ValueError:
-            pending = DNS_EXECUTOR.submit(socket.getaddrinfo, host, port, type=socket.SOCK_STREAM)
-            try:
-                rows = pending.result(timeout=DNS_TIMEOUT)
-            except TimeoutError:
-                pending.cancel()
-                raise
+            rows = _resolve_dns(host, port)
             addresses = [ipaddress.ip_address(item[4][0]) for item in rows]
     except (OSError, ValueError, TimeoutError):
         raise HTTPException(422, "Không phân giải được host. Kiểm tra tên miền và DNS.") from None
@@ -191,9 +212,8 @@ def owned_connection(config: PipelineSettings, connection_id: str, owner_id: str
     return record
 
 
-@contextmanager
-def open_connection(config: PipelineSettings, metadata: dict, password_encrypted: str):
-    """Chỗ duy nhất giải mã và mở kết nối đã lưu; bên gọi chịu trách nhiệm kiểm quyền."""
+def connection_parameters(config: PipelineSettings, metadata: dict, password_encrypted: str) -> dict:
+    """Giải mã và kiểm SSRF dùng chung cho mở kết nối và URL dlt; chỉ dùng nội bộ."""
     try:
         config.validate_connection_key(get_settings().app_env)
         key = config.connection_key.get_secret_value()
@@ -203,18 +223,25 @@ def open_connection(config: PipelineSettings, metadata: dict, password_encrypted
         password = Fernet(key.encode()).decrypt(password_encrypted.encode()).decode()
     except (RuntimeError, InvalidToken, ValueError, UnicodeError):
         raise HTTPException(503, "Không giải mã được kết nối đã lưu. Kiểm tra PIPELINE_CONNECTION_KEY.") from None
+    return {
+        "host": metadata["host"],
+        "hostaddr": address,
+        "port": metadata["port"],
+        "dbname": metadata["database"],
+        "user": metadata["user"],
+        "password": password,
+        "sslmode": metadata["sslmode"],
+        "connect_timeout": 5,
+        "options": READ_ONLY_OPTIONS,
+    }
+
+
+@contextmanager
+def open_connection(config: PipelineSettings, metadata: dict, password_encrypted: str):
+    """Mở kết nối đã lưu; bên gọi chịu trách nhiệm kiểm quyền."""
+    parameters = connection_parameters(config, metadata, password_encrypted)
     try:
-        with psycopg.connect(
-            host=metadata["host"],
-            hostaddr=address,
-            port=metadata["port"],
-            dbname=metadata["database"],
-            user=metadata["user"],
-            password=password,
-            sslmode=metadata["sslmode"],
-            connect_timeout=5,
-            options=READ_ONLY_OPTIONS,
-        ) as conn:
+        with psycopg.connect(**parameters) as conn:
             yield conn
     except psycopg.Error as exc:
         raise _postgres_error(exc) from None

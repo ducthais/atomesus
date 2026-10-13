@@ -59,7 +59,7 @@ def read_source(source, decl, settings: PipelineSettings) -> Side:
     from psycopg import sql
 
     table = sql.Identifier(decl.schema_, source.table)
-    with postgres.connection(settings) as conn:
+    with postgres.connection(settings, decl) as conn:
         count = conn.execute(sql.SQL("SELECT count(*) FROM {}").format(table)).fetchone()[0]
         query = sql.SQL("SELECT {} FROM {}").format(sql.SQL(", ").join(map(sql.Identifier, columns)), table)
         keys = {tuple(_text(v) for v in row) for row in conn.execute(query).fetchall()}
