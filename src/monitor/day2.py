@@ -30,7 +30,7 @@ RECENT_RUNS = 1000
 
 def pipeline_owner(store_path: str, parent: RunReport) -> str:
     """Chủ pipeline ghi vào cảnh báo: bản đang deploy có thể là run sửa (`system`), nên lần về chủ của run gốc."""
-    return run_owner(store_path, parent.run_id) or parent.created_by
+    return run_owner(store_path, parent.run_id)
 
 
 def deployed_at(report: RunReport) -> datetime:

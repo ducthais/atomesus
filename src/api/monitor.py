@@ -11,7 +11,7 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.run_report import RunReport
-from src.run_report.access import SYSTEM, is_account, model_visible, run_owner, scope
+from src.run_report.access import SYSTEM, model_visible, owner_of, run_owner, scope
 
 router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(current_user)])
 pipelines_router = APIRouter(prefix="/pipelines", tags=["pipelines"])
@@ -128,7 +128,7 @@ def _alert_filter(user: dict, store_path: str) -> Callable[[dict], bool]:
             return access.allows(run_owner(store_path, alert["run_id"]))
         if alert["owner"] == SYSTEM:
             return bool(visible_models(user, store_path, {alert["model"]}))
-        return access.allows(alert["owner"] if is_account(store_path, alert["owner"]) else None)
+        return access.allows(owner_of(store_path, alert["owner"]))
 
     return visible
 

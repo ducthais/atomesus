@@ -14,8 +14,14 @@ from src.policy import PolicyError, effective_policy
 from src.run_report.access import claim_model, is_own_run, run_owner, run_visible, viewable_run, visible_run_ids
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, Deployment, RunReport, RunStatus
-from src.run_report.store import LEGACY_OWNER, get_run_files, list_run_reports, save_run_report, transition_run_report
 from src.run_report.store import _database as run_report_database
+from src.run_report.store import (
+    get_run_files,
+    list_run_reports,
+    parse_run_report,
+    save_run_report,
+    transition_run_report,
+)
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
 
@@ -78,8 +84,8 @@ def request_change_deps(config: PipelineSettings = Depends(settings), run_id: st
     """Phụ thuộc của agent cho "Yêu cầu sửa".
 
     Có `run_id` (Reviewer yêu cầu sửa): agent chỉ nhận domain của chủ run như lúc Engineer tạo run, không gộp domain
-    riêng của người khác; run không rõ chủ chỉ nhận domain YAML. Không có (vòng sửa nội bộ P16 → P4): chính sách hệ
-    thống đầy đủ.
+    riêng của người khác; run cũ không rõ chủ là của tài khoản demo Engineer (LEGACY_OWNER). Không có (vòng sửa nội bộ
+    P16 → P4): chính sách hệ thống đầy đủ.
 
     Import muộn: src.agents.* import gói src.run_report (models, store), nên import agent ở đầu file này tạo vòng
     run_report → router → agents → run_report và làm hỏng mọi chỗ import src.run_report trước src.main
@@ -90,7 +96,7 @@ def request_change_deps(config: PipelineSettings = Depends(settings), run_id: st
     from src.agents.nodes.common import AgentDeps
     from src.run_report.store import is_run_cancelled
 
-    owner = (run_owner(config.store_path, run_id) or LEGACY_OWNER) if run_id else None
+    owner = run_owner(config.store_path, run_id) if run_id else None
     try:
         policy = effective_policy(config, owner_id=owner)
     except PolicyError as exc:
@@ -140,11 +146,13 @@ async def compare_run(
     run người dùng được thấy: bản của người khác không bao giờ làm base.
     """
     report = viewable_run(config.store_path, run_id, user)
+    # Xét quyền `base` trước mọi nhánh trả sớm: không thấy thì 404, kể cả khi run này chưa có Spec.
+    chosen = viewable_run(config.store_path, base, user) if base else None
     if not (report.spec or {}).get("sources"):
         return {"available": False, "reason": "Run chưa có Spec nên chưa có gì để so sánh."}
     reports = list_run_reports(config.store_path, run_ids=visible_run_ids(user, config.store_path))
-    if base:
-        chosen, reason = viewable_run(config.store_path, base, user), "bản được chọn để so"
+    if chosen is not None:
+        reason = "bản được chọn để so"
     else:
         chosen, reason = pick_base(report, reports)
     if chosen is None:
@@ -245,7 +253,7 @@ def _record_deploy(store_path: str, signed: RunReport, change: Callable[[RunRepo
         if row is None or row[0] != "APPROVED":
             return None
         try:
-            current = RunReport.model_validate_json(row[1])
+            current = parse_run_report(row[1])
         except ValidationError:
             return None
         if current.version != signed.version or current.files_hash != signed.files_hash:

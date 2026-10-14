@@ -2,6 +2,7 @@
 
 import sqlite3
 import time
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -168,6 +169,22 @@ async def test_engineer_sees_only_own_runs_and_every_endpoint_hides_others(env):
     b_alert = alerts.list_alerts(env.config.store_path, "b_model")[0]["id"]
     assert (await client.post(f"/api/v1/monitor/alerts/{b_alert}/resolve")).status_code == 404
     assert alerts.get_alert(env.config.store_path, b_alert)["resolved_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_compare_checks_base_before_returning_early_for_runs_without_spec(env):
+    draft = _fixture("blocked_semantic.json").model_copy(
+        update={"run_id": "run-a-draft", "created_by": env.ids["eng.a"], "status": "DRAFT"}
+    )
+    save_run_report(env.config.store_path, draft)
+    await _login(env, "eng.a")
+
+    for hidden in ("run-b", "run-sys", READY, "khong-co-run-nay"):
+        response = await env.client.get("/api/v1/runs/run-a-draft/compare", params={"base": hidden})
+        assert response.status_code == 404, hidden
+        assert response.json()["detail"] == f"Không tìm thấy run {hidden}"
+    own = await env.client.get("/api/v1/runs/run-a-draft/compare", params={"base": "run-a"})
+    assert own.status_code == 200 and own.json()["available"] is False
 
 
 @pytest.mark.asyncio
@@ -565,6 +582,102 @@ def test_concurrent_model_claims_by_two_owners_have_one_winner(env, monkeypatch)
     assert store.get_model_owner(store_path, "race_model") == winner
     with store.database(store_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM model_owners WHERE model_name = 'race_model'").fetchone()[0] == 1
+
+
+def _legacy_approved(env, run_id: str, model: str) -> RunReport:
+    """Run cũ đã duyệt, chờ deploy, bản lưu thiếu `created_by`."""
+    _approved(env, run_id, model)
+    with sqlite3.connect(env.config.store_path) as conn:
+        conn.execute("UPDATE run_reports SET report = json_remove(report, '$.created_by') WHERE run_id = ?", (run_id,))
+    return get_run_report(env.config.store_path, run_id)
+
+
+def _fake_pull_request(opened: list[str], hold: Callable[[], None] = lambda: None):
+    """Thay open_pull_request: ghi run đã mở pull request; lần mở đầu tiên gọi `hold` (đang chờ GitHub)."""
+    from datetime import UTC, datetime
+
+    from src.run_report.models import Deployment
+
+    def open_pull_request(report, files, github):
+        opened.append(report.run_id)
+        if len(opened) == 1:
+            hold()
+        return Deployment(
+            repo="org/pipelines",
+            branch=f"atomesus/{report.run_id}",
+            pr_number=len(opened),
+            pr_url=f"https://github.com/org/pipelines/pull/{len(opened)}",
+            head_sha="abc123",
+            opened_at=datetime.now(UTC),
+        )
+
+    return open_pull_request
+
+
+@pytest.mark.asyncio
+async def test_legacy_run_without_created_by_deploys_and_keeps_deployment(env, monkeypatch):
+    from src.run_report.access import model_owner
+
+    store_path = env.config.store_path
+    opened = []
+    monkeypatch.setattr("src.codegen.deploy.open_pull_request", _fake_pull_request(opened))
+    legacy = _legacy_approved(env, "run-old-approved", "old_model")
+    assert legacy.created_by == LEGACY_OWNER
+    await _login(env, "reviewer", "Reviewer@123")
+
+    response = await env.client.post(f"/api/v1/runs/{legacy.run_id}/deploy")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["deployment"]["pr_number"] == 1 and opened == [legacy.run_id]
+    stored = get_run_report(store_path, legacy.run_id)
+    assert stored.deployment is not None and stored.deployment.pr_number == 1
+    assert stored.created_by == LEGACY_OWNER
+    assert model_owner(store_path, "old_model") == LEGACY_OWNER == store.get_model_owner(store_path, "old_model")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_first", [True, False], ids=["legacy-first", "owner-first"])
+async def test_concurrent_deploys_of_legacy_and_owned_run_open_one_pull_request(env, monkeypatch, legacy_first):
+    """Run cũ đang chờ GitHub thì run của chủ khác cùng tên model bị 409 (và ngược lại): chỉ một pull request."""
+    import asyncio
+    import threading
+
+    from httpx import ASGITransport, AsyncClient
+
+    from src.run_report.access import model_owner
+
+    store_path = env.config.store_path
+    legacy = _legacy_approved(env, "run-old-shared", "shared_model")
+    owned = _approved(env, "run-a-shared", "shared_model")
+    await _link(env, "eng.a")  # env.client: rev.one, đã liên kết với A
+    entered, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        entered.set()
+        assert release.wait(10), "request thứ hai không xong"
+
+    opened = []
+    monkeypatch.setattr("src.codegen.deploy.open_pull_request", _fake_pull_request(opened, hold))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as demo:
+        login = await demo.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
+        assert login.status_code == 200
+        pairs = [(demo, legacy), (env.client, owned)]
+        (first_client, first), (second_client, second) = pairs if legacy_first else pairs[::-1]
+        pending = asyncio.create_task(first_client.post(f"/api/v1/runs/{first.run_id}/deploy"))
+        assert await asyncio.to_thread(entered.wait, 10), "request đầu chưa tới bước mở pull request"
+        try:
+            loser = await second_client.post(f"/api/v1/runs/{second.run_id}/deploy")
+        finally:
+            release.set()
+        winner = await pending
+
+    assert winner.status_code == 200, winner.text
+    assert loser.status_code == 409, loser.text
+    assert loser.json()["detail"] == "Tên pipeline shared_model đã có người dùng khác dùng, hãy đổi tên model."
+    assert opened == [first.run_id], "chỉ một pull request được mở"
+    assert get_run_report(store_path, first.run_id).deployment is not None
+    assert get_run_report(store_path, second.run_id).deployment is None
+    assert model_owner(store_path, "shared_model") == (LEGACY_OWNER if legacy_first else env.ids["eng.a"])
 
 
 @pytest.mark.asyncio
