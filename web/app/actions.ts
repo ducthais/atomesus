@@ -12,6 +12,7 @@ import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections'
 import type { Discovery } from '@/lib/catalog/types';
 import { toReconcile, type Reconcile } from '@/lib/catalog/explain';
 import { INVITE_ENGINEER, INVITE_INVALID, INVITE_OTHER_ROLE, REVIEW_PATH, inviteErrorMessage, isInviteToken, safeNext, type CreatedInvite } from '@/lib/invite';
+import type { UploadFileInfo, UploadLimits, UserUpload } from '@/lib/uploads';
 
 export type ActionState = { error?: string; message?: string } | null;
 export type RegistrationState = { error?: string; email?: string; developmentCode?: string } | null;
@@ -127,6 +128,92 @@ export async function selectUserConnectionTables(id: string, selection: Connecti
     refresh();
     return { data: connectionTablesLink(id, saved.tables) };
   } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+async function uploadEngineer() {
+  const actor = await currentUser();
+  if (actor?.role !== 'Engineer') throw new BackendError(403, 'Chỉ Engineer được tải file, chọn bảng hoặc xóa file nguồn.');
+  return actor;
+}
+
+export async function listUserUploads(): Promise<ConnectionResult<UserUpload[]>> {
+  try {
+    const actor = await uploadEngineer();
+    if (!MOCK) return { data: await backend<UserUpload[]>('/uploads') };
+    const { mockUserUploads } = await import('@/lib/upload-source');
+    return { data: await mockUserUploads(actor.id) };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+export async function getUploadLimits(): Promise<ConnectionResult<UploadLimits>> {
+  try {
+    await uploadEngineer();
+    if (!MOCK) return { data: await backend<UploadLimits>('/uploads/limits') };
+    const { MOCK_UPLOAD_LIMITS } = await import('@/lib/uploads');
+    const items = await listUserUploads();
+    if ('error' in items) return items;
+    return { data: { ...MOCK_UPLOAD_LIMITS, used_bytes: items.data.reduce((sum, item) => sum + item.size_bytes, 0) } };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+/** Chỉ metadata cho mock; file thật đi qua stream multipart của Route Handler. */
+export async function submitMockUpload(files: UploadFileInfo[]): Promise<ConnectionResult<UserUpload>> {
+  try {
+    const actor = await uploadEngineer();
+    if (!MOCK) return { error: 'Chế độ mô phỏng chưa được bật.' };
+    const { makeMockUpload, validateUploadFiles } = await import('@/lib/uploads');
+    const { mockUserUploads, saveMockUserUploads } = await import('@/lib/upload-source');
+    const limits = await getUploadLimits();
+    if ('error' in limits) return limits;
+    const error = validateUploadFiles(files, limits.data);
+    if (error) return { error };
+    const items = await mockUserUploads(actor.id);
+    if (items.length >= 3 || files.length > 3) return { error: 'Mock hỗ trợ tối đa 3 lượt tải và 3 file mỗi lượt trong phiên.' };
+    const upload = makeMockUpload(files, actor.id, crypto.randomUUID().replaceAll('-', ''));
+    await saveMockUserUploads(actor.id, [upload, ...items]);
+    refresh();
+    return { data: upload };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+export async function selectUploadTables(id: string, tables: string[]): Promise<ConnectionResult<string>> {
+  try {
+    const actor = await uploadEngineer();
+    const { uploadTablesLink, validateUploadSelection } = await import('@/lib/uploads');
+    const checked = validateUploadSelection(tables);
+    if ('error' in checked) return checked;
+    let sourceRef: string;
+    if (MOCK) {
+      const { mockUserUploads, saveMockUserUploads } = await import('@/lib/upload-source');
+      const items = await mockUserUploads(actor.id);
+      const item = items.find(item => item.id === id);
+      if (!item) return { error: 'Không tìm thấy file nguồn.' };
+      if (tables.some(name => !item.tables.some(table => table.name === name))) return { error: 'Bảng đã chọn không tồn tại trong file nguồn.' };
+      await saveMockUserUploads(actor.id, items.map(item => item.id === id ? { ...item, selected_tables: tables } : item));
+      sourceRef = `f_${id.slice(0, 8)}`;
+    } else {
+      const saved = await backend<{ source_ref: string }>(`/uploads/${encodeURIComponent(id)}/selection`, {
+        method: 'PUT', body: JSON.stringify({ tables: checked.data }),
+      });
+      sourceRef = saved.source_ref;
+    }
+    refresh();
+    return { data: uploadTablesLink(sourceRef, tables) };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+export async function deleteUserUpload(id: string): Promise<ActionState> {
+  try {
+    const actor = await uploadEngineer();
+    if (MOCK) {
+      const { mockUserUploads, saveMockUserUploads } = await import('@/lib/upload-source');
+      const items = await mockUserUploads(actor.id);
+      if (!items.some(item => item.id === id)) return { error: 'Không tìm thấy file nguồn.' };
+      await saveMockUserUploads(actor.id, items.filter(item => item.id !== id));
+    } else await backend(`/uploads/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    refresh();
+    return { message: 'Đã xóa file nguồn.' };
+  } catch (err) { return failure(err); }
 }
 
 /**

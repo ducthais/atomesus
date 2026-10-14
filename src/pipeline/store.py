@@ -6,12 +6,17 @@ RunReport nằm cùng file SQLite nhưng do `src.run_report.store` quản lý.
 import json
 import sqlite3
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 
 class ConnectionInUseError(Exception):
+    pass
+
+
+class UploadQuotaError(Exception):
     pass
 
 
@@ -78,6 +83,12 @@ def database(path: str):
                 " password_encrypted TEXT NOT NULL, sslmode TEXT NOT NULL, created_at REAL NOT NULL)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS connections_owner ON connections(owner_id)")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS uploads ("
+                " id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, metadata TEXT NOT NULL,"
+                " size_bytes INTEGER NOT NULL, selected_json TEXT NOT NULL DEFAULT '[]')"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS uploads_owner ON uploads(owner_id)")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS connection_selections ("
                 " connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,"
@@ -453,3 +464,70 @@ def delete_connection(path: str, connection_id: str, owner_id: str) -> bool:
         return bool(
             conn.execute("DELETE FROM connections WHERE id = ? AND owner_id = ?", (connection_id, owner_id)).rowcount
         )
+
+
+def save_upload(path: str, metadata: dict, max_total_bytes: int) -> None:
+    """Kiểm tổng dung lượng và lưu trong cùng giao dịch ghi; hai upload không cùng vượt quota."""
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        used = conn.execute(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM uploads WHERE owner_id = ?", (metadata["owner_id"],)
+        ).fetchone()[0]
+        if used + metadata["size_bytes"] > max_total_bytes:
+            raise UploadQuotaError(
+                "Tổng dung lượng file của bạn vượt giới hạn trong budgets.yml. Xóa file cũ rồi thử lại."
+            )
+        conn.execute(
+            "INSERT INTO uploads (id, owner_id, metadata, size_bytes) VALUES (?, ?, ?, ?)",
+            (metadata["id"], metadata["owner_id"], json.dumps(metadata, ensure_ascii=False), metadata["size_bytes"]),
+        )
+
+
+def list_uploads(path: str, owner_id: str) -> list[dict]:
+    with database(path) as conn:
+        rows = conn.execute(
+            "SELECT metadata, selected_json FROM uploads WHERE owner_id = ? ORDER BY rowid DESC", (owner_id,)
+        ).fetchall()
+    return [{**json.loads(row[0]), "selected_tables": json.loads(row[1])} for row in rows]
+
+
+def get_upload(path: str, upload_id: str, owner_id: str) -> dict | None:
+    with database(path) as conn:
+        row = conn.execute(
+            "SELECT metadata, selected_json FROM uploads WHERE id = ? AND owner_id = ?", (upload_id, owner_id)
+        ).fetchone()
+    return {**json.loads(row[0]), "selected_tables": json.loads(row[1])} if row else None
+
+
+def select_upload_tables(path: str, upload_id: str, owner_id: str, tables: list[str]) -> bool:
+    with database(path) as conn:
+        return bool(
+            conn.execute(
+                "UPDATE uploads SET selected_json = ? WHERE id = ? AND owner_id = ?",
+                (json.dumps(tables), upload_id, owner_id),
+            ).rowcount
+        )
+
+
+def delete_upload(path: str, upload_id: str, owner_id: str, remove_files: Callable[[], None] | None = None) -> bool:
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute("SELECT 1 FROM uploads WHERE id = ? AND owner_id = ?", (upload_id, owner_id)).fetchone():
+            return False
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_reports'").fetchone():
+            used = conn.execute(
+                "SELECT 1 FROM run_reports r, json_each(r.report, '$.spec.sources') source"
+                " WHERE (r.status = 'DEPLOYED' OR json_extract(r.report, '$.deployment.deployed_at') IS NOT NULL)"
+                " AND (json_extract(source.value, '$.connection_ref') = ?"
+                " OR json_extract(source.value, '$.source_ref') IN (?, ?, ?)) LIMIT 1",
+                (f"upload:{upload_id}", *(f"f_{upload_id[:length]}" for length in (8, 12, len(upload_id)))),
+            ).fetchone()
+            if used:
+                raise ConnectionInUseError("File đang được pipeline đã deploy sử dụng; chưa thể xóa.")
+        if remove_files is not None:
+            remove_files()
+        return bool(conn.execute("DELETE FROM uploads WHERE id = ? AND owner_id = ?", (upload_id, owner_id)).rowcount)
