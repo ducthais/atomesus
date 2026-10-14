@@ -23,6 +23,8 @@ optimizer:                  # P13 (SPEC §9.3): luật tối ưu tất định, 
   incremental_min_rows: 10000   # table_to_incremental chỉ thử khi bảng nguồn chính có ít nhất ngần này dòng
   rerun_samples: 5              # chạy lại model gold ngần này lần sau lần build đầu (trung vị; hai dải đo không chồng nhau)
   min_gain_pct: 10              # bản ứng viên phải nhanh hơn bản gốc ít nhất ngần này % mới được giữ
+results:                    # xem và tải bảng gold (ADR-0001 D9)
+  max_export_rows: 100000   # tải CSV/XLSX tối đa ngần này dòng; bảng lớn hơn thì API trả 413, vẫn xem từng trang được
 rules:
   - require_partition_filter_on: [sales_pg.orders]
   - forbid_select_star_in: [gold]

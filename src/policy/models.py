@@ -146,6 +146,12 @@ class OptimizerPolicy(_Policy):
     min_gain_pct: float = Field(default=10, ge=0, lt=100)
 
 
+class ResultsPolicy(_Policy):
+    """Xem và tải bảng gold (ADR-0001 D9): bảng lớn hơn trần thì không xuất file, chỉ xem từng trang."""
+
+    max_export_rows: int = Field(default=100_000, ge=1)
+
+
 class Rules(_Policy):
     require_partition_filter_on: list[str] = Field(default_factory=list)
     forbid_select_star_in: list[Literal["bronze", "staging", "gold"]] = Field(default_factory=list)
@@ -159,6 +165,7 @@ class Budgets(_Policy):
     per_user: PerUser = Field(default_factory=PerUser)
     rules: Rules
     optimizer: OptimizerPolicy = Field(default_factory=OptimizerPolicy)
+    results: ResultsPolicy = Field(default_factory=ResultsPolicy)
 
     @field_validator("rules", mode="before")
     @classmethod
