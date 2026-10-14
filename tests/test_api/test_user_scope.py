@@ -19,7 +19,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy import load_policy
 from src.run_report import FIXTURES_DIR, RunReport, save_run_report
 from src.run_report.router import pipeline_github, request_change_deps
-from src.run_report.store import LEGACY_OWNER, get_run_report, save_run_files
+from src.run_report.store import LEGACY_OWNER, get_run_files, get_run_report, save_run_files
 
 READY = "3f6c1a2e-8b4d-4c7a-9e21-0d5b7a1c9f10"
 PASSWORD = "StrongPass9"
@@ -150,6 +150,7 @@ async def test_engineer_sees_only_own_runs_and_every_endpoint_hides_others(env):
     assert await _run_ids(env) == {"run-a"}
     for run_id in ("run-b", "run-sys", "run-b-dep", READY):
         await _blocked_reads(env, run_id)
+        await _blocked_reviews(env, run_id)  # 404 trước khi xét vai, không phải 403
     client = env.client
     assert (await client.get("/api/v1/runs/run-a/compare", params={"base": "run-b"})).status_code == 404
     assert (await client.post("/api/v1/runs/run-b/cancel")).status_code == 404
@@ -298,7 +299,8 @@ def _deploy(env, model: str, owner: str, run_id: str, days_later: int = 1) -> Ru
 
 @pytest.mark.asyncio
 async def test_alert_permission_follows_its_run_and_owner_not_model_name(env):
-    """A deploy pipeline trùng tên `b_model` với B: cảnh báo cũ của B (gắn run, hoặc ghi chủ B) vẫn chỉ của B."""
+    """Dữ liệu cũ: A đã deploy trùng tên `b_model` với B. Cảnh báo cũ của B (gắn run, hoặc ghi chủ B) vẫn chỉ của B;
+    tên model lẫn hai chủ thì không ai ngoài Admin thấy pipeline đó."""
     _deploy(env, "b_model", "eng.a", "run-a-dep")
     store_path = env.config.store_path
     owned = alerts.raise_alert(store_path, "b_model", "source_stalled", "Nguồn của B", owner=env.ids["eng.b"])
@@ -306,7 +308,7 @@ async def test_alert_permission_follows_its_run_and_owner_not_model_name(env):
     assert b_run["run_id"] == "run-sys"
 
     await _login(env, "eng.a")
-    assert [row["model"] for row in (await env.client.get("/api/v1/monitor/pipelines")).json()] == ["b_model"]
+    assert (await env.client.get("/api/v1/monitor/pipelines")).json() == []
     listed = (await env.client.get("/api/v1/monitor/alerts", params={"model": "b_model"})).json()
     assert listed == []
     for alert in (owned, b_run):
@@ -448,3 +450,123 @@ async def test_demo_pair_keeps_working_and_admin_sees_everything(env):
         "a_model",
         "b_model",
     }
+
+
+async def _link(env, engineer: str, reviewer: str = "rev.one") -> None:
+    await _login(env, engineer)
+    token = await _invite(env)
+    await _login(env, reviewer)
+    assert (await env.client.post("/api/v1/pipeline/invites/accept", json={"token": token})).status_code == 200
+
+
+def _approved(env, run_id: str, model: str) -> RunReport:
+    """Run của A đã được duyệt, chờ deploy, tạo `model`."""
+    from src.run_report.models import Approval
+
+    report = _with_model(get_run_report(env.config.store_path, "run-a"), model, run_id=run_id, status="APPROVED")
+    approval = Approval(
+        decision="approved",
+        reviewer=env.ids["rev.one"],
+        files_hash=report.files_hash,
+        version=report.version,
+        at=report.created_at,
+        comment="",
+    )
+    report = RunReport.model_validate({**report.model_dump(), "approval": approval.model_dump()})
+    save_run_report(env.config.store_path, report)
+    files = get_run_files(env.config.store_path, "run-a", report.version)
+    save_run_files(env.config.store_path, run_id, report.version, files)
+    return report
+
+
+@pytest.mark.asyncio
+async def test_deploy_refuses_model_name_owned_by_another_user(env):
+    from src.run_report.access import model_owner, model_taken
+
+    store_path = env.config.store_path
+    taken = _approved(env, "run-a-taken", "b_model")
+    own = _approved(env, "run-a-own", "a_model")
+    assert model_owner(store_path, "b_model") == env.ids["eng.b"] and model_owner(store_path, "a_model") is None
+    assert model_taken(store_path, own) is None
+    # Bản sửa do hệ thống tạo trên pipeline của B vẫn là của B, không bị coi là trùng tên.
+    assert model_taken(store_path, get_run_report(store_path, "run-sys")) is None
+    await _link(env, "eng.a")
+
+    response = await env.client.post(f"/api/v1/runs/{taken.run_id}/deploy")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Tên pipeline b_model đã có người dùng khác dùng, hãy đổi tên model."
+    assert get_run_report(store_path, taken.run_id).deployment is None
+
+
+def _measure(env, model: str, run_id: str) -> None:
+    """Một lần chạy theo lịch đã thu số đo của `model` (bảng pipeline_runs của monitor)."""
+    row = {column: None for column in runs.COLUMNS}
+    row.update(
+        run_id=run_id,
+        model=model,
+        status="SUCCESS",
+        started_at="2026-10-01T02:00:00+00:00",
+        source_records='{"orders": 1234}',
+        collected_at="2026-10-01T02:05:00+00:00",
+    )
+    with runs._database(env.config.store_path) as conn:
+        conn.execute(f"INSERT INTO pipeline_runs VALUES ({', '.join('?' for _ in runs.COLUMNS)})", list(row.values()))
+
+
+async def _model_data(env, model: str) -> tuple[int, int]:
+    """(status lịch sử chạy, status đối soát bảng gold) của `model` với người đang đăng nhập."""
+    series = await env.client.get(f"/api/v1/monitor/pipelines/{model}")
+    reconcile = await env.client.post(f"/api/v1/catalog/datasets/sales/{model}/reconcile")
+    return series.status_code, reconcile.status_code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("a_first", [False, True], ids=["b-old-a-current", "a-old-b-current"])
+async def test_history_and_gold_table_of_model_owned_by_others_stay_hidden(env, a_first):
+    """Tên model là không gian tên chung: A không nhận lịch sử chạy, số đo hay bảng gold của B, kể cả khi dữ liệu cũ
+    có A deploy trùng tên (trước hay sau B). Tên lẫn hai chủ thì chỉ Admin thấy."""
+    store_path = env.config.store_path
+    full_spec = get_run_report(store_path, "run-b").spec  # đủ Spec để thành bản đang chạy (live_pipelines)
+    save_run_report(store_path, get_run_report(store_path, "run-b-dep").model_copy(update={"spec": full_spec}))
+    _measure(env, "b_model", "dg-b")
+
+    await _login(env, "eng.a")
+    assert await _model_data(env, "b_model") == (404, 404)
+    await _login(env, "eng.b")
+    assert (await env.client.get("/api/v1/monitor/pipelines/b_model")).json()["runs"][0]["run_id"] == "dg-b"
+    assert (await env.client.post("/api/v1/catalog/datasets/sales/b_model/reconcile")).json()["run_id"] == "run-b-dep"
+
+    report = _deploy(env, "b_model", "eng.a", "run-a-dep", days_later=-1 if a_first else 1)
+    save_run_report(store_path, report.model_copy(update={"spec": full_spec}))
+    for username in ("eng.a", "eng.b"):
+        await _login(env, username)
+        assert await _model_data(env, "b_model") == (404, 404), username
+        assert (await env.client.get("/api/v1/monitor/pipelines")).json() == []
+    await _login(env, "admin", "Admin@123")
+    assert (await env.client.get("/api/v1/monitor/pipelines/b_model")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_owner_cannot_review_own_system_runs_after_becoming_reviewer(env):
+    """Run hệ thống tạo (`system`) thuộc chủ pipeline gốc: B đổi sang vai Reviewer vẫn không tự duyệt được."""
+    await _login(env, "admin", "Admin@123")
+    changed = await env.client.patch(f"/api/v1/pipeline/users/{env.ids['eng.b']}/role", json={"role": "Reviewer"})
+    assert changed.status_code == 200, changed.text
+
+    await _login(env, "eng.b")
+    client, review = env.client, {"files_hash": env.files_hash, "comment": "ok"}
+    assert (await client.get("/api/v1/runs/run-sys")).status_code == 200
+    for action in ("approve", "reject"):
+        response = await client.post(f"/api/v1/runs/run-sys/{action}", json=review)
+        assert response.status_code == 403 and "tự duyệt" in response.json()["detail"], action
+    changes = await client.post("/api/v1/runs/run-sys/request-changes", json={"feedback": "Sửa cột"})
+    assert changes.status_code == 403
+    batch = await client.post(
+        "/api/v1/runs/batch-review",
+        json={"decision": "approve", "items": [{"run_id": "run-sys", "files_hash": env.files_hash}]},
+    )
+    assert batch.json()["results"] == [
+        {"run_id": "run-sys", "ok": False, "status": None, "message": "Không được tự duyệt run của mình."}
+    ]
+    assert get_run_report(env.config.store_path, "run-sys").status == "READY_FOR_REVIEW"

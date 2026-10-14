@@ -11,7 +11,7 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.run_report import RunReport
-from src.run_report.access import SYSTEM, is_account, run_owner, scope
+from src.run_report.access import SYSTEM, is_account, model_visible, run_owner, scope
 
 router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(current_user)])
 pipelines_router = APIRouter(prefix="/pipelines", tags=["pipelines"])
@@ -27,15 +27,9 @@ def monitor_deps(config: PipelineSettings = Depends(settings), deps: AgentDeps =
         raise HTTPException(500, str(exc)) from exc
 
 
-def _pipelines_of(user: dict, store_path: str) -> Callable[[RunReport | None], bool]:
-    """Pipeline người dùng được thấy, xét theo run đang deploy (cùng luật với run, xem src.run_report.access)."""
-    access = scope(user, store_path)
-    return lambda parent: access.allows(run_owner(store_path, parent.run_id) if parent else None)
-
-
 def visible_models(user: dict, store_path: str, models: Iterable[str]) -> set[str]:
-    allowed = _pipelines_of(user, store_path)
-    return {model for model in models if allowed(runs.deployed_report(store_path, model))}
+    """Pipeline người dùng được thấy, xét theo chủ của tên model (xem src.run_report.access.model_owner)."""
+    return {model for model in models if model_visible(user, store_path, model)}
 
 
 @pipelines_router.post("/{model}/optimize", status_code=202, response_model=RunReport)
@@ -50,7 +44,7 @@ def optimize_pipeline(
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được yêu cầu tối ưu pipeline.")
     parent = runs.deployed_report(config.store_path, model)
-    if parent is None or not _pipelines_of(user, config.store_path)(parent):
+    if parent is None or not model_visible(user, config.store_path, model):
         raise HTTPException(404, f"Pipeline '{model}' chưa được deploy.")
     started, job = start_manual_optimize(parent, user["id"], deps, config.store_path)
     background.add_task(job)

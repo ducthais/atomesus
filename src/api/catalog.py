@@ -8,7 +8,8 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.policy.models import Policy
-from src.run_report.access import visible_run_ids
+from src.run_report.access import model_visible, run_visible, visible_run_ids
+from src.run_report.compare import model_of
 from src.run_report.drift import detect, live_pipelines
 from src.run_report.store import list_run_reports
 from src.spec.models import Spec
@@ -156,9 +157,14 @@ def schema_drift(user: dict = Depends(current_user), config: PipelineSettings = 
             raise cache[ref]
         return cache[ref]
 
+    # Xét bản đang chạy trên mọi run rồi mới lọc quyền: bản cũ của mình không được coi là đang chạy khi đã bị thay.
     visible = visible_run_ids(user, config.store_path)
-    reports = list_run_reports(config.store_path, run_ids=visible)
-    pipelines = [detect(report, tables_of) for report in live_pipelines(reports)]
+    live = [
+        report
+        for report in live_pipelines(list_run_reports(config.store_path))
+        if (visible is None or report.run_id in visible) and model_visible(user, config.store_path, model_of(report))
+    ]
+    pipelines = [detect(report, tables_of) for report in live]
     return {"checked_at": datetime.now(UTC).isoformat(), "pipelines": pipelines}
 
 
@@ -177,14 +183,16 @@ def reconcile_deployed(
         raise HTTPException(403, "Chỉ Engineer được đối soát pipeline đã deploy.")
     import duckdb
 
-    visible = visible_run_ids(user, config.store_path)
-    live = [
-        r
-        for r in live_pipelines(list_run_reports(config.store_path, limit=1000, run_ids=visible))
-        if r.domain == domain
-    ]
-    report = next((r for r in live if r.spec and r.spec.get("transform", {}).get("model_name") == model), None)
-    if report is None:
+    # gold.<model> là một bảng chung cho mọi domain: bản đang ghi bảng là bản deploy duyệt sau cùng của tên model. Chỉ
+    # đọc bảng khi người gọi được thấy đúng bản đó và tên model (xem src.run_report.access.model_owner).
+    live = [r for r in live_pipelines(list_run_reports(config.store_path, limit=1000)) if model_of(r) == model]
+    report = max(live, key=lambda r: r.approval.at, default=None)
+    if (
+        report is None
+        or report.domain != domain
+        or not run_visible(user, config.store_path, report.run_id)
+        or not model_visible(user, config.store_path, model)
+    ):
         raise HTTPException(404, f"Không có pipeline đã duyệt nào tạo gold.{model} trong domain {domain}.")
     base = {"run_id": report.run_id, "model": model, "checked_at": datetime.now(UTC).isoformat()}
     try:

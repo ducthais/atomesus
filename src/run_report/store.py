@@ -471,6 +471,19 @@ def list_run_lineage(path: str) -> dict[str, tuple[str | None, str | None]]:
     return {row[0]: (row[1], row[2]) for row in rows}
 
 
+def model_deployments(path: str, model: str) -> list[str]:
+    """run_id của các run đã đưa `model` lên production (đã deploy, deploy lỗi, hoặc đã mở pull request deploy), cũ
+    trước theo lúc tạo run."""
+    with _database(path) as conn:
+        rows = conn.execute(
+            "SELECT run_id FROM run_reports WHERE json_extract(report, '$.spec.transform.model_name') = ?"
+            " AND (status IN ('DEPLOYED', 'DEPLOY_FAILED') OR json_extract(report, '$.deployment') IS NOT NULL)"
+            " ORDER BY created_at, rowid",
+            (model,),
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
 def get_run_lineage(path: str, run_id: str) -> tuple[str | None, str | None] | None:
     """(created_by, parent_run_id) của một run, đọc thẳng JSON để xét quyền trước khi dựng RunReport; None nếu không có."""
     with _database(path) as conn:

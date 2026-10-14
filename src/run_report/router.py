@@ -11,7 +11,7 @@ from src.deployer.manifest import ManifestError
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
-from src.run_report.access import viewable_run, visible_run_ids
+from src.run_report.access import is_own_run, model_taken, run_visible, viewable_run, visible_run_ids
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, Deployment, RunReport, RunStatus
 from src.run_report.store import _database as run_report_database
@@ -169,11 +169,11 @@ async def get_files(
 
 def _reviewable(run_id: str, body: ReviewRequest, user: dict, store_path: str) -> RunReport:
     """Điều kiện chung của mọi quyết định review (bất biến 3, SPEC §11.1)."""
+    # Xét quyền thấy trước vai: run không được thấy là 404 với mọi vai. Reviewer chỉ thấy run của Engineer đã mời mình.
+    report = viewable_run(store_path, run_id, user)
     if user["role"] != "Reviewer":
         raise HTTPException(403, "Chỉ Reviewer được duyệt hoặc từ chối run.")
-    # Reviewer chỉ thấy (và duyệt) run của Engineer đã mời mình.
-    report = viewable_run(store_path, run_id, user)
-    if report.created_by == user["id"]:
+    if is_own_run(store_path, report, user):
         raise HTTPException(403, "Không được tự duyệt run của mình.")
     if report.status != "READY_FOR_REVIEW":
         raise HTTPException(409, f"Run đang ở trạng thái {report.status}, chỉ run chờ duyệt mới review được.")
@@ -288,6 +288,8 @@ def deploy_run(
     from src.api.webhooks import replay_pending
     from src.codegen.deploy import open_pull_request
 
+    if not run_visible(user, config.store_path, run_id):
+        raise HTTPException(404, f"Không tìm thấy run {run_id}")
     if user["role"] != "Reviewer":
         raise HTTPException(403, "Chỉ Reviewer được deploy run.")
     try:
@@ -297,6 +299,8 @@ def deploy_run(
         raise HTTPException(
             409, "Chữ ký duyệt không khớp bộ file hoặc version hiện tại nên không deploy được."
         ) from None
+    if taken := model_taken(config.store_path, report):
+        raise HTTPException(409, f"Tên pipeline {taken} đã có người dùng khác dùng, hãy đổi tên model.")
     if report.status != "APPROVED":
         raise HTTPException(409, f"Run đang ở trạng thái {report.status}, chỉ run đã duyệt mới deploy được.")
     approval = report.approval
@@ -365,7 +369,8 @@ def batch_review_runs(
     config: PipelineSettings = Depends(settings),
 ) -> BatchReviewResponse:
     """Duyệt hoặc từ chối tối đa 50 run trong một request; lỗi của một run không chặn các run còn lại."""
-    if user["role"] != "Reviewer":
+    # Vai xét sau quyền thấy: mục không được thấy báo không tìm thấy như run không tồn tại (xem _reviewable).
+    if user["role"] != "Reviewer" and any(run_visible(user, config.store_path, item.run_id) for item in body.items):
         raise HTTPException(403, "Chỉ Reviewer được duyệt hoặc từ chối run.")
     results = []
     for item in body.items:
@@ -396,10 +401,10 @@ def request_changes(
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
     """Reviewer yêu cầu sửa đúng bản đang xem; version mới chạy lại từ bước viết Spec với feedback."""
+    report = viewable_run(config.store_path, run_id, user)
     if user["role"] != "Reviewer":
         raise HTTPException(403, "Chỉ Reviewer được yêu cầu sửa run.")
-    report = viewable_run(config.store_path, run_id, user)
-    if report.created_by == user["id"]:
+    if is_own_run(config.store_path, report, user):
         raise HTTPException(403, "Không được review run của mình.")
     if report.status != "READY_FOR_REVIEW":
         raise HTTPException(409, f"Run đang ở trạng thái {report.status}, chỉ run chờ duyệt mới yêu cầu sửa được.")
