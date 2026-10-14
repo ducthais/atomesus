@@ -17,18 +17,21 @@ from src.agents.nodes.common import AgentDeps
 from src.agents.service import Job, _event, _guarded, _run, _save
 from src.agents.state import AgentState
 from src.agents.timeout import timed
+from src.monitor import alerts
 from src.pipeline.postgres import SourceUnavailableError
 from src.run_report import RunReport, save_run_report
+from src.run_report.access import run_owner
+from src.run_report.quota import RunQuotaExceeded, claim_system_run, release_runs
 from src.run_report.store import get_run_files
 from src.spec.models import Spec
 
 SYSTEM = "system"
 
 
-def initial_state(parent: RunReport, evidence: dict) -> AgentState:
+def initial_state(parent: RunReport, evidence: dict, run_id: str | None = None) -> AgentState:
     """State của run sửa: Spec và kế hoạch của run đã deploy, bằng chứng suy giảm, bắt đầu ở GENERATING."""
     return {
-        "run_id": str(uuid4()),
+        "run_id": run_id or str(uuid4()),
         "version": 1,
         "created_by": SYSTEM,
         "trigger": "regression",
@@ -143,9 +146,28 @@ def start_regression(parent: RunReport, evidence: dict, deps: AgentDeps, store_p
     """Ghi run sửa tự động (GENERATING) ngay; việc chạy nền: codegen → chạy thử → so với bản đang deploy.
 
     Tối ưu thủ công (UC-3) không đi đường này vì không được gọi LLM: xem src/agents/manual_optimize.py.
+    Run sửa tính vào lượt run trong ngày của chủ pipeline (budgets.yml per_user.max_runs_per_day): chủ đã hết lượt thì
+    không tạo run, ghi cảnh báo `needs_human` nêu lý do rồi ném RunQuotaExceeded (API trả 429, lịch Day 2 hoãn).
     """
-    initial, created_at = initial_state(parent, evidence), datetime.now(UTC)
-    started = _save(initial, created_at, store_path)
+    try:
+        run_id = claim_system_run(store_path, parent.run_id, deps.policy.budgets, "run sửa tự động")
+    except RunQuotaExceeded as exc:
+        model = evidence.get("model") or "unknown"
+        alerts.raise_alert(
+            store_path,
+            model,
+            "needs_human",
+            f"Pipeline `{model}` đang suy giảm nhưng hết hạn mức run hôm nay của chủ pipeline: {exc.detail}",
+            {"rules": evidence.get("rules", []), "reason": "run_quota_exhausted"},
+            owner=run_owner(store_path, parent.run_id),
+            quiet_hours=24,
+        )
+        raise
+    initial, created_at = initial_state(parent, evidence, run_id), datetime.now(UTC)
+    try:
+        started = _save(initial, created_at, store_path)
+    finally:
+        release_runs(store_path, [run_id])  # run đã vào sổ thì lượt vẫn tính; ghi lỗi thì trả lượt
 
     def job() -> RunReport:
         report = judge(

@@ -411,3 +411,189 @@ async def test_changing_budgets_yml_changes_the_limits(quota_env, tmp_path, monk
     assert _reserve(quota_env.config, "a1", 0.05, edited)[0] is False
     assert _reserve(quota_env.config, "a1", 0.05, load_policy())[0] is True
     assert len(quota.claim_runs(quota_env.config.store_path, auth.USERS["minh"], edited.budgets, 2)) == 2
+
+
+class PricedLLM:
+    """LLM giả khai báo model như openai_llm; trả đủ trần token đầu ra (trường hợp tốn nhất), chờ nhau ở `barrier`."""
+
+    def __init__(self, model: str = "gpt-4o", barrier: threading.Barrier | None = None):
+        self.models = {"cheap": model, "strong": model}
+        self.barrier, self.limits = barrier, []
+
+    def __call__(self, tier, system, user, max_output_tokens=None):
+        from src.agents.llm import LLMReply
+
+        self.limits.append(max_output_tokens)
+        if self.barrier:
+            self.barrier.wait(timeout=5)
+        text = '{"ok": true}'
+        return LLMReply(text, self.models[tier], len(system) + len(user), max_output_tokens)
+
+
+def _settle(store_path: str, report: RunReport, reply, policy: Policy) -> None:
+    """Ghi run sau lần gọi LLM: chi phí thật vào sổ, khoản giữ chỗ của lần gọi được nhả (như agent lưu báo cáo)."""
+    from src.agents.nodes.common import llm_usage
+    from src.run_report.models import LlmCall
+
+    usage = llm_usage(reply, "plan", "cheap", policy)
+    save_run_report(
+        store_path,
+        report.model_copy(
+            update={
+                "llm_calls": 1,
+                "llm_usage": [LlmCall.model_validate(usage)],
+                "cost": report.cost.model_copy(update={"llm_usd": usage["usd"]}),
+            }
+        ),
+    )
+
+
+def test_overlapping_llm_calls_settle_within_the_personal_cap(tmp_path):
+    from src.agents.nodes.common import StopError, call_llm, llm_bound
+
+    config, policy = _settings(tmp_path), load_policy()
+    _run(config.store_path, "a0", "minh", usd=0.20)
+    reports = {run_id: _run(config.store_path, run_id, "minh") for run_id in ("a1", "a2")}
+    llm = PricedLLM()
+    deps = AgentDeps(llm=llm, policy=policy, settings=config, reserve_daily=budget.reserve_daily)
+    bound, _kwargs = llm_bound(deps, "plan", "cheap", "system", "user")
+    assert 0.05 < bound <= 0.10, "cận trên một lần gọi gpt-4o vượt per_run.max_usd; còn 0.10 USD chỉ đủ một lần"
+    start, replies = threading.Barrier(3), {}
+
+    def call(run_id):
+        start.wait(timeout=5)
+        try:
+            state = {"run_id": run_id, "version": reports[run_id].version}
+            replies[run_id] = call_llm(state, deps, "plan", "cheap", "system", "user")
+        except StopError as exc:
+            replies[run_id] = exc
+
+    threads = [threading.Thread(target=call, args=(run_id,)) for run_id in reports]
+    for thread in threads:
+        thread.start()
+    start.wait(timeout=5)
+    for thread in threads:
+        thread.join()
+
+    called = {run_id: reply for run_id, reply in replies.items() if not isinstance(reply, StopError)}
+    stopped = [reply for reply in replies.values() if isinstance(reply, StopError)]
+    assert len(called) == 1 and len(stopped) == 1
+    assert stopped[0].status == "BLOCKED_BUDGET" and "per_user.max_usd_per_day" in stopped[0].trace["error"]
+    assert llm.limits == [policy.budgets.per_run.max_output_tokens], "mọi lần gọi nhà cung cấp đều kèm trần token ra"
+    for run_id, reply in called.items():
+        _settle(config.store_path, reports[run_id], reply, policy)
+    settled = quota.spent_today(config.store_path, "minh")
+    assert 0.20 < settled <= 0.20 + bound <= policy.budgets.per_user.max_usd_per_day
+
+
+def test_llm_call_tops_up_a_smaller_batch_reservation_and_refuses_unpriced_models(tmp_path):
+    from src.agents.nodes.common import StopError, call_llm, llm_bound
+
+    config, policy = _settings(tmp_path), load_policy()
+    _run(config.store_path, "a1", "minh")
+    assert budget.reserve_batch_daily(config, [("a1", 1, "llm:plan:1", 0.05)], 2.0, "minh", 0.30)[0]
+    deps = AgentDeps(llm=PricedLLM(), policy=policy, settings=config, reserve_daily=budget.reserve_daily)
+
+    call_llm({"run_id": "a1", "version": 1}, deps, "plan", "cheap", "system", "user")
+
+    bound, _kwargs = llm_bound(deps, "plan", "cheap", "system", "user")
+    assert quota.spent_today(config.store_path, "minh") == pytest.approx(bound), (
+        "giữ thêm phần chênh, không giữ hai lần"
+    )
+
+    unpriced = AgentDeps(llm=PricedLLM("model-chua-co-gia"), policy=policy, settings=config)
+    with pytest.raises(StopError) as stopped:
+        call_llm({"run_id": "a1", "version": 1, "llm_calls": 1}, unpriced, "plan", "cheap", "system", "user")
+    assert stopped.value.status == "BLOCKED_BUDGET" and "pricing.llm" in stopped.value.trace["error"]
+    assert unpriced.llm.limits == []
+
+
+def _regression_runs(store_path: str) -> list[str]:
+    with _database(store_path) as conn:
+        query = "SELECT run_id FROM run_reports WHERE json_extract(report, '$.trigger') = 'regression'"
+        return [row[0] for row in conn.execute(query)]
+
+
+def test_scheduled_regression_fix_claims_the_pipeline_owners_run_slot(tmp_path):
+    from src.monitor import alerts, day2
+    from tests.test_agents.test_graph import FakeLLM, deps
+
+    config = _settings(tmp_path)
+    parent = _run(config.store_path, "a-dep", "minh")
+    evidence = {"model": "orders_model", "rules": [{"rule": "runtime_regression", "detail": "chậm"}]}
+    launch = day2.launcher(
+        deps(FakeLLM(), policy=_with_per_user(load_policy(), max_runs_per_day=2)), config.store_path, lambda job: None
+    )
+
+    started = launch(parent, evidence)
+
+    assert _slots(config.store_path) == [started.run_id], "run sửa dùng đúng lượt đã giữ cho chủ pipeline"
+    assert quota.usage(config.store_path, auth.USERS["minh"], load_policy().budgets)["runs"]["used"] == 2
+    with pytest.raises(quota.RunQuotaExceeded, match="Chủ pipeline đã dùng hết 2 run hôm nay"):
+        launch(parent, evidence)
+    assert _regression_runs(config.store_path) == [started.run_id], "hết lượt thì không tạo run sửa"
+    (alert,) = alerts.list_alerts(config.store_path, "orders_model")
+    assert alert["kind"] == "needs_human" and alert["owner"] == "minh" and "hết hạn mức run" in alert["message"]
+
+
+@pytest.mark.asyncio
+async def test_monitor_check_returns_429_when_the_pipeline_owner_has_no_run_left(quota_env, monkeypatch):
+    from src.monitor import alerts
+
+    parent = RunReport.model_validate_json(
+        (FIXTURES_DIR / "ready_for_review.json").read_text(encoding="utf-8")
+    ).model_copy(update={"run_id": "a1"})
+    rules = [{"rule": "runtime_regression", "detail": "chậm"}]
+
+    def check(config, policy, launch, models=None):
+        # Như day2.check: mỗi pipeline suy giảm gọi launch rồi ghi dòng fix_started.
+        actions = []
+        for model in sorted(models):
+            started = launch(parent, {"model": model, "rules": rules})
+            actions.append({"model": model, "action": "fix_started", "run_id": started.run_id, "rules": ["r"]})
+        return actions
+
+    monkeypatch.setattr(monitor.day2, "check", check)
+    monkeypatch.setattr(monitor, "_own_pipelines", lambda user, config: {"orders_model"})
+    app.dependency_overrides[monitor.monitor_deps] = lambda: app.dependency_overrides[routes.agent_deps]()
+    try:
+        await _login(quota_env.client, "engineer", "Engineer@123")
+        response = await quota_env.client.post("/api/v1/monitor/check")
+    finally:
+        app.dependency_overrides.pop(monitor.monitor_deps, None)
+
+    assert response.status_code == 429, response.text
+    body = response.json()
+    assert body["detail"].startswith("Chủ pipeline đã dùng hết 1 run hôm nay")
+    assert [(a["model"], a["action"]) for a in body["actions"]] == [("orders_model", "quota_exhausted")]
+    assert _regression_runs(quota_env.config.store_path) == [] and _slots(quota_env.config.store_path) == []
+    assert [a["kind"] for a in alerts.list_alerts(quota_env.config.store_path, "orders_model")] == ["needs_human"]
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_reservation_returns_the_claimed_run_slots(open_env, monkeypatch):
+    import sqlite3
+
+    from tests.test_agents.test_graph import FakeLLM, deps
+
+    store_path, minh = open_env.config.store_path, auth.USERS["minh"]
+    app.dependency_overrides[routes.agent_deps] = lambda: deps(FakeLLM(), policy=open_env.policy)
+
+    def locked(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(budget, "reserve_batch_daily", locked)
+    await _login(open_env.client, "engineer", "Engineer@123")
+    before = quota.usage(store_path, minh, open_env.policy.budgets)
+
+    try:
+        response = await open_env.client.post(
+            "/api/v1/agent/runs/batch", json={"requests": [{"request": "A"}, {"request": "B"}]}
+        )
+        assert response.status_code == 500
+    except sqlite3.OperationalError:
+        pass
+
+    assert _slots(store_path) == []
+    assert quota.usage(store_path, minh, open_env.policy.budgets) == before
+    assert before["runs"]["used"] == 0

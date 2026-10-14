@@ -18,6 +18,8 @@ from src.policy.models import Policy
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 # Trạng thái còn đang chạy; mọi trạng thái khác là kết thúc, graph đi thẳng tới END.
 RUNNING = frozenset({"DRAFT", "GENERATING", "VALIDATING"})
+# Token định dạng tin nhắn nhà cung cấp cộng thêm ngoài nội dung prompt (vài token mỗi tin nhắn), lấy dư.
+MESSAGE_OVERHEAD_TOKENS = 64
 
 
 @dataclass
@@ -81,6 +83,32 @@ def llm_usage(reply: str, stage: str, tier: str, policy: Policy) -> dict:
     }
 
 
+def llm_bound(deps: AgentDeps, stage: str, tier: str, system: str, user: str) -> tuple[float, dict]:
+    """Khoản giữ chỗ cho một lần gọi LLM và tham số gọi đi kèm, sao cho chi phí thật không vượt khoản giữ chỗ.
+
+    LLM gọi nhà cung cấp thật (có `models`): giá input của cận trên số token prompt cộng giá trần token đầu ra
+    `per_run.max_output_tokens`, và gọi kèm đúng trần đó. Model không có giá trong `pricing.llm` thì không gọi, vì
+    không chặn được chi phí. LLM giả trong test (không có `models`, không tốn tiền) giữ `per_run.max_usd` như trước.
+    """
+    budgets = deps.policy.budgets
+    models = getattr(deps.llm, "models", None)
+    if models is None:
+        return budgets.per_run.max_usd, {}
+    model = models[tier]
+    price = budgets.pricing.llm.get(model)
+    if price is None:
+        raise StopError(
+            "BLOCKED_BUDGET",
+            stage,
+            f"Model {model} chưa có giá trong budgets.yml pricing.llm; không gọi LLM vì không giới hạn được chi phí.",
+        )
+    # Mỗi token của bộ tách byte-level BPE phủ ít nhất một byte UTF-8: số byte prompt là cận trên số token đầu vào.
+    tokens_in = len(system.encode()) + len(user.encode()) + MESSAGE_OVERHEAD_TOKENS
+    tokens_out = budgets.per_run.max_output_tokens
+    usd = (tokens_in * price.input_usd_per_mtok + tokens_out * price.output_usd_per_mtok) / 1_000_000
+    return usd, {"max_output_tokens": tokens_out}
+
+
 def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: str, user: str) -> str:
     """Gọi LLM nếu còn trong trần `budgets.yml: per_run.max_llm_calls`; chạm trần → NEEDS_HUMAN (SPEC §11.4)."""
     raise_if_phase_cancelled()
@@ -89,8 +117,10 @@ def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: 
     limit = deps.policy.budgets.per_run.max_llm_calls
     if state.get("llm_calls", 0) >= limit:
         raise StopError("NEEDS_HUMAN", stage, f"Đã chạm trần {limit} lần gọi LLM của run (budgets.yml max_llm_calls).")
+    usd, bound = llm_bound(deps, stage, tier, system, user)
     # Cổng batch có thể đã giữ chỗ cho đúng lần gọi này. Thử giữ chỗ idempotent trước khi kết luận ngày đã hết tiền:
-    # reserve_daily nhận ra reservation cùng (run, version, category) và cho phép dùng nó ngay cả khi tổng đã chạm trần.
+    # reserve_daily nhận ra reservation cùng (run, version, category) và cho phép dùng nó ngay cả khi tổng đã chạm trần,
+    # chỉ giữ thêm phần chênh nếu khoản cũ nhỏ hơn cận trên của lần gọi này.
     # Cùng giao dịch giữ chỗ xét cả trần cá nhân của chủ run (per_user.max_usd_per_day, ADR-0001 D10).
     day_limit = deps.policy.budgets.per_day.max_usd
     category = f"llm:{stage}:{state.get('llm_calls', 0) + 1}"
@@ -100,7 +130,7 @@ def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: 
             state["run_id"],
             state.get("version", 1),
             category,
-            deps.policy.budgets.per_run.max_usd,
+            usd,
             day_limit,
             deps.policy.budgets.per_user.max_usd_per_day,
         )
@@ -108,8 +138,7 @@ def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: 
             raise StopError(
                 "BLOCKED_BUDGET",
                 stage,
-                budget.user_limit_error(user_spent, deps.policy.budgets.per_run.max_usd, deps.policy)
-                + "; không gọi LLM nữa tới 0:00 UTC.",
+                budget.user_limit_error(user_spent, usd, deps.policy) + "; không gọi LLM nữa tới 0:00 UTC.",
             )
         if not reserved:
             raise StopError(
@@ -129,7 +158,7 @@ def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: 
                 "không gọi LLM nữa tới ngày mai (UTC).",
             )
     try:
-        reply = deps.llm(tier, system, user)
+        reply = deps.llm(tier, system, user, **bound)
         raise_if_phase_cancelled()
         return reply
     except Exception as exc:  # lỗi mạng/khóa API của nhà cung cấp LLM

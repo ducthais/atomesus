@@ -312,13 +312,16 @@ def reserve_budget(
     daily_limit: float,
     owner_gate: OwnerGate | None = None,
 ) -> tuple[bool, float]:
-    """Reserve budget under one SQLite write transaction; retries are idempotent."""
+    """Reserve budget under one SQLite write transaction; retries are idempotent.
+
+    Khoản cùng (run, version, category) đã có mà nhỏ hơn `usd` (cổng batch giữ trước per_run.max_usd) thì chỉ giữ thêm
+    phần chênh, qua cùng các trần."""
     now = datetime.now(UTC)
     day = now.date().isoformat()
     with _database(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
-            "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
+            "SELECT usd FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
             (run_id, version, category),
         ).fetchone()
         spent = conn.execute(
@@ -327,16 +330,23 @@ def reserve_budget(
         reserved = conn.execute(
             "SELECT coalesce(sum(usd), 0) FROM budget_reservations WHERE substr(reserved_at, 1, 10) = ?", (day,)
         ).fetchone()[0]
-        if existing:
+        extra = usd - (existing[0] if existing else 0.0)
+        if existing and extra <= 0:
             return True, float(spent + reserved)
-        if spent + reserved + usd > daily_limit:
+        if spent + reserved + extra > daily_limit:
             return False, float(spent + reserved)
-        if owner_gate and not owner_gate(conn, usd):
+        if owner_gate and not owner_gate(conn, extra):
             return False, float(spent + reserved)
-        conn.execute(
-            "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
-            (run_id, version, category, usd, now.isoformat()),
-        )
+        if existing:
+            conn.execute(
+                "UPDATE budget_reservations SET usd = ? WHERE run_id = ? AND version = ? AND category = ?",
+                (usd, run_id, version, category),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
+                (run_id, version, category, usd, now.isoformat()),
+            )
         return True, float(spent + reserved)
 
 

@@ -8,7 +8,8 @@ from typing import Literal
 from src.config import get_settings
 
 Tier = Literal["cheap", "strong"]
-# (tier, system, user) → chuỗi trả về của model
+# (tier, system, user) → chuỗi trả về của model. LLM gọi nhà cung cấp thật còn có thuộc tính `models` (tier → tên model,
+# để tra giá trước khi gọi) và nhận `max_output_tokens=` (trần token đầu ra, xem src/agents/nodes/common.py call_llm).
 JsonLLM = Callable[[Tier, str, str], str]
 
 FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")
@@ -54,16 +55,18 @@ def openai_llm() -> JsonLLM:
         "strong": settings.model_name_strong or settings.model_name,
     }
 
-    def call(tier: Tier, system: str, user: str) -> str:
+    def call(tier: Tier, system: str, user: str, max_output_tokens: int | None = None) -> str:
         model = ChatOpenAI(
             model=models[tier],
             api_key=settings.openai_api_key,
             temperature=0,
             timeout=120,
+            max_tokens=max_output_tokens,
             model_kwargs={"response_format": {"type": "json_object"}},
         )
         message = model.invoke([("system", system), ("user", user)])
         usage = message.usage_metadata or {}
         return LLMReply(message.content, models[tier], usage.get("input_tokens"), usage.get("output_tokens"))
 
+    call.models = models
     return call

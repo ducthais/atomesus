@@ -109,8 +109,15 @@ def cost_gate(store_path: str, owner: str, limit: float) -> tuple[OwnerGate, dic
     return gate, seen
 
 
-def _exhausted(limit: int, used: int, count: int, now: datetime) -> HTTPException:
-    retry = str(max(1, int((_next_reset(now) - now).total_seconds())))
+class RunQuotaExceeded(HTTPException):
+    """Hết lượt run trong ngày: 429 ở request API; lịch Day 2 gặp lỗi này thì hoãn run sửa tới lần sau."""
+
+    def __init__(self, detail: str, now: datetime):
+        retry = str(max(1, int((_next_reset(now) - now).total_seconds())))
+        super().__init__(429, detail, headers={"Retry-After": retry})
+
+
+def _exhausted(limit: int, used: int, count: int, now: datetime) -> RunQuotaExceeded:
     if count == 1 or used >= limit:
         detail = f"Bạn đã dùng hết {limit} run hôm nay, thử lại sau 0:00 UTC."
     else:
@@ -118,7 +125,22 @@ def _exhausted(limit: int, used: int, count: int, now: datetime) -> HTTPExceptio
             f"Bạn đã dùng {used}/{limit} run hôm nay, không đủ lượt cho {count} run; "
             "giảm số run hoặc thử lại sau 0:00 UTC."
         )
-    return HTTPException(429, detail, headers={"Retry-After": retry})
+    return RunQuotaExceeded(detail, now)
+
+
+def _claim(store_path: str, owner: str, limit: int, run_ids: list[str], now: datetime) -> int | None:
+    """Ghi lượt cho `run_ids` của `owner` trong một giao dịch ghi; không đủ lượt thì không ghi, trả số đã dùng."""
+    owners = _Owners(store_path)
+    with _database(store_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        used = _runs(conn, owners, owner, _day(now))
+        if used + len(run_ids) > limit:
+            return used
+        conn.executemany(
+            "INSERT INTO run_slots (run_id, owner_id, reserved_at) VALUES (?, ?, ?)",
+            [(run_id, owner, now.isoformat()) for run_id in run_ids],
+        )
+    return None
 
 
 def claim_runs(store_path: str, user: dict, budgets: Budgets, count: int = 1) -> list[str]:
@@ -130,17 +152,30 @@ def claim_runs(store_path: str, user: dict, budgets: Budgets, count: int = 1) ->
     owner = limited_owner(store_path, user["id"])
     if owner is None:
         return run_ids
-    limit, owners, now = budgets.per_user.max_runs_per_day, _Owners(store_path), datetime.now(UTC)
-    with _database(store_path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        used = _runs(conn, owners, owner, _day(now))
-        if used + count > limit:
-            raise _exhausted(limit, used, count, now)
-        conn.executemany(
-            "INSERT INTO run_slots (run_id, owner_id, reserved_at) VALUES (?, ?, ?)",
-            [(run_id, owner, now.isoformat()) for run_id in run_ids],
-        )
+    limit, now = budgets.per_user.max_runs_per_day, datetime.now(UTC)
+    used = _claim(store_path, owner, limit, run_ids, now)
+    if used is not None:
+        raise _exhausted(limit, used, count, now)
     return run_ids
+
+
+def claim_system_run(store_path: str, parent_run_id: str, budgets: Budgets, what: str) -> str:
+    """Giữ lượt cho một run hệ thống (run sửa Day 2), tính cho chủ pipeline của `parent_run_id`; trả run_id đã giữ.
+
+    Chủ đã hết lượt → RunQuotaExceeded, không giữ lượt nào. Chủ là Admin / không rõ chủ thì chỉ chịu trần chung.
+    """
+    run_id = str(uuid4())
+    owner = run_quota_owner(store_path, parent_run_id)
+    if owner is None:
+        return run_id
+    limit, now = budgets.per_user.max_runs_per_day, datetime.now(UTC)
+    if _claim(store_path, owner, limit, [run_id], now) is not None:
+        raise RunQuotaExceeded(
+            f"Chủ pipeline đã dùng hết {limit} run hôm nay (budgets.yml per_user.max_runs_per_day); "
+            f"không tạo {what}, thử lại sau 0:00 UTC.",
+            now,
+        )
+    return run_id
 
 
 def release_runs(store_path: str, run_ids: list[str]) -> None:

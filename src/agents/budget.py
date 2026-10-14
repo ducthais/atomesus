@@ -162,8 +162,8 @@ def check(
 def estimate_batch(run_count: int, policy: Policy, settings: PipelineSettings, owner: str | None = None) -> dict:
     """Ước tính và phần ngân sách phải giữ trước khi fan-out các lượt lập kế hoạch.
 
-    Mỗi run mới gọi planner một lần. `call_llm` đang giữ chỗ `per_run.max_usd` cho lần gọi đó, vì vậy cổng batch
-    dùng đúng cùng đơn vị để kết quả preflight và lúc job thật chạy không lệch nhau. Có `owner` chịu trần cá nhân thì
+    Mỗi run mới gọi planner một lần; cổng batch giữ trước `per_run.max_usd` cho lần gọi đó. Lúc gọi thật, `call_llm`
+    dùng lại khoản này và chỉ giữ thêm phần chênh khi cận trên chi phí lần gọi (giá prompt + trần token đầu ra) lớn hơn. Có `owner` chịu trần cá nhân thì
     thêm `per_user` (chỉ số của chính người đó) và `allowed` xét cả trần cá nhân.
     """
     per_run = policy.budgets.per_run.max_usd

@@ -179,26 +179,26 @@ def create_agent_run_batch(
     run_ids = claim_runs(config.store_path, user, deps.policy.budgets, len(checked))
     reservation_usd = estimate["reservation_usd_per_run"]
     reservations = [(run_id, 1, "llm:plan:1", reservation_usd) for run_id in run_ids]
-    reserved, spent, user_spent = budget.reserve_batch_daily(
-        config, reservations, estimate["max_usd_per_day"], user["id"], deps.policy.budgets.per_user.max_usd_per_day
-    )
-    if not reserved:
-        release_runs(config.store_path, run_ids)
-    if not reserved and user_spent is not None:
-        raise HTTPException(
-            409,
-            budget.user_limit_error(user_spent, estimate["estimated_usd"], deps.policy) + "; không tạo pipeline nào.",
-        )
-    if not reserved:
-        raise HTTPException(
-            409,
-            f"Cả mẻ ước tính {estimate['estimated_usd']:.4f} USD nhưng hôm nay đã dùng hoặc giữ chỗ "
-            f"{spent:.4f}/{estimate['max_usd_per_day']:.4f} USD (trần chung budgets.yml per_day.max_usd); "
-            "không tạo pipeline nào.",
-        )
-
     started_jobs: list[tuple[RunReport, Job]] = []
+    # Mọi lỗi sau khi giữ lượt (bị chặn ngân sách, sqlite3.OperationalError lúc giữ chỗ, khởi tạo lỗi) đều trả lại
+    # lượt run, khoản giữ chỗ và run đã ghi của cả mẻ.
     try:
+        reserved, spent, user_spent = budget.reserve_batch_daily(
+            config, reservations, estimate["max_usd_per_day"], user["id"], deps.policy.budgets.per_user.max_usd_per_day
+        )
+        if not reserved and user_spent is not None:
+            raise HTTPException(
+                409,
+                budget.user_limit_error(user_spent, estimate["estimated_usd"], deps.policy)
+                + "; không tạo pipeline nào.",
+            )
+        if not reserved:
+            raise HTTPException(
+                409,
+                f"Cả mẻ ước tính {estimate['estimated_usd']:.4f} USD nhưng hôm nay đã dùng hoặc giữ chỗ "
+                f"{spent:.4f}/{estimate['max_usd_per_day']:.4f} USD (trần chung budgets.yml per_day.max_usd); "
+                "không tạo pipeline nào.",
+            )
         for run_id, (item, sources) in zip(run_ids, checked, strict=True):
             started_jobs.append(
                 start_agent(

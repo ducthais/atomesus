@@ -1,7 +1,9 @@
 from collections.abc import Callable, Iterable
 from dataclasses import replace
+from types import SimpleNamespace
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 from src.agents.manual_optimize import start_manual_optimize
 from src.agents.nodes.common import AgentDeps
@@ -12,7 +14,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.run_report import RunReport
 from src.run_report.access import SYSTEM, model_visible, owner_of, run_owner, scope
-from src.run_report.quota import claim_runs, release_runs
+from src.run_report.quota import RunQuotaExceeded, claim_runs, release_runs
 
 router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(current_user)])
 pipelines_router = APIRouter(prefix="/pipelines", tags=["pipelines"])
@@ -118,10 +120,31 @@ def check_pipelines(
     deps: AgentDeps = Depends(monitor_deps),
 ) -> dict:
     """Chạy 4 luật suy giảm cho các pipeline đã deploy mà người gọi được thấy (Day 2). Run sửa chạy nền, thuộc chủ
-    pipeline; pipeline của người khác không bị cảnh báo hay tạo run sửa."""
+    pipeline; pipeline của người khác không bị cảnh báo hay tạo run sửa.
+
+    Run sửa tính vào lượt run của chủ pipeline: chủ hết lượt thì không tạo run sửa (đã ghi cảnh báo), các pipeline
+    khác vẫn được xét; trả 429 kèm danh sách việc đã làm, run sửa đã tạo vẫn chạy nền."""
     _engineer(user)
-    launch = day2.launcher(deps, config.store_path, background.add_task)
-    return {"actions": day2.check(config, deps.policy, launch, models=_own_pipelines(user, config))}
+    launch, blocked = day2.launcher(deps, config.store_path, background.add_task), {}
+
+    def launch_or_defer(parent: RunReport, evidence: dict):
+        try:
+            return launch(parent, evidence)
+        except RunQuotaExceeded as exc:  # không có run nào được tạo; đánh dấu để thay dòng việc bên dưới
+            blocked[evidence["model"]] = exc
+            return SimpleNamespace(run_id=None)
+
+    actions = day2.check(config, deps.policy, launch_or_defer, models=_own_pipelines(user, config))
+    actions = [
+        {"model": a["model"], "action": "quota_exhausted", "rules": a["rules"], "detail": blocked[a["model"]].detail}
+        if a["action"] == "fix_started" and a["run_id"] is None
+        else a
+        for a in actions
+    ]
+    if blocked:
+        first = next(iter(blocked.values()))
+        return JSONResponse({"detail": first.detail, "actions": actions}, 429, headers=first.headers)
+    return {"actions": actions}
 
 
 def _alert_filter(user: dict, store_path: str) -> Callable[[dict], bool]:

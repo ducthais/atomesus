@@ -12,6 +12,7 @@ per_run:
   max_spec_attempts: 2      # vòng spec
   max_sql_attempts: 2       # vòng SQL
   phase_timeout_sec: 300    # một phase chạy quá thời gian này thì dừng (NFR-05)
+  max_output_tokens: 8192   # trần token đầu ra mỗi lần gọi LLM; giữ chỗ = giá input ước theo prompt + giá ngần này token
 per_day:
   max_usd: 2.00             # tổng chi phí mọi run trong ngày (quét dữ liệu + LLM); cổng budget cộng dồn
   max_batch_runs: 20        # số pipeline tối đa trong một yêu cầu tạo theo lô
