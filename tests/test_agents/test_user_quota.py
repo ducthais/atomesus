@@ -10,7 +10,7 @@ import pytest
 
 from src.agents import budget
 from src.agents.nodes.common import AgentDeps
-from src.api import routes
+from src.api import monitor, routes
 from src.chat import api as chat_api
 from src.main import app
 from src.pipeline import api, auth, store
@@ -18,6 +18,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy.loader import POLICY_DIR, POLICY_FILES, PolicyError, load_policy
 from src.policy.models import Policy
 from src.run_report import FIXTURES_DIR, RunReport, quota, save_run_report
+from src.run_report.store import _database
 
 ENGINEER_B = "user_eng_b"
 SMALL_SCAN = {"sources": {"orders": 1000}, "model_bytes": 1000, "bytes": 2000, "usd": 0.04, "estimated": True}
@@ -276,6 +277,96 @@ async def test_creating_a_run_after_the_daily_run_limit_returns_429(quota_env, p
     assert int(response.headers["retry-after"]) > 0
     usage = (await quota_env.client.get("/api/v1/pipeline/quota")).json()
     assert usage["runs"] == {"used": 1, "limit": 1, "remaining": 0}
+
+
+@pytest.mark.asyncio
+async def test_optimize_after_the_daily_run_limit_returns_429_before_any_work(quota_env, monkeypatch):
+    parent = _run(quota_env.config.store_path, "a1", "minh", usd=0.1)  # bản đã deploy (deployed_report giả)
+    monkeypatch.setattr(monitor.runs, "deployed_report", lambda store_path, model: parent)
+    monkeypatch.setattr(monitor, "model_visible", lambda *_: True)
+    monkeypatch.setattr(monitor, "start_manual_optimize", lambda *args, **kwargs: pytest.fail("không được tối ưu"))
+    app.dependency_overrides[monitor.monitor_deps] = lambda: app.dependency_overrides[routes.agent_deps]()
+    try:
+        await _login(quota_env.client, "engineer", "Engineer@123")
+        response = await quota_env.client.post("/api/v1/pipelines/orders_model/optimize")
+    finally:
+        app.dependency_overrides.pop(monitor.monitor_deps, None)
+
+    assert response.status_code == 429, response.text
+    assert response.json()["detail"] == "Bạn đã dùng hết 1 run hôm nay, thử lại sau 0:00 UTC."
+    assert quota.usage(quota_env.config.store_path, auth.USERS["minh"], load_policy().budgets)["runs"]["used"] == 1
+
+
+def _slots(store_path: str) -> list[str]:
+    with _database(store_path) as conn:
+        return [row[0] for row in conn.execute("SELECT run_id FROM run_slots")]
+
+
+@pytest.fixture
+def open_env(client, tmp_path, monkeypatch):
+    """Engineer minh còn đủ 2 lượt run trong ngày; agent thật với LLM giả."""
+    config = _settings(tmp_path)
+    policy = _with_per_user(load_policy(), max_runs_per_day=2)
+    environment = SimpleNamespace(app_env="test")
+    monkeypatch.setattr(auth, "get_settings", lambda: environment)
+    monkeypatch.setattr(api, "get_settings", lambda: environment)
+    monkeypatch.setattr(api, "load_policy", lambda: policy)
+    app.dependency_overrides[auth.settings] = lambda: config
+    try:
+        yield SimpleNamespace(client=client, config=config, policy=policy)
+    finally:
+        app.dependency_overrides.pop(auth.settings, None)
+        app.dependency_overrides.pop(routes.agent_deps, None)
+        app.dependency_overrides.pop(monitor.monitor_deps, None)
+
+
+@pytest.mark.asyncio
+async def test_active_chat_run_counts_once_and_the_remaining_run_is_accepted(open_env):
+    from tests.test_agents.test_graph import PLAN, FakeLLM, deps
+
+    store_path, minh = open_env.config.store_path, auth.USERS["minh"]
+    seen = {}
+
+    def llm(tier, system, user):
+        # Lúc planner gọi LLM, run của chat đã được lưu (GENERATING) mà lượt giữ vẫn còn: chỉ tính một run.
+        seen["usage"] = quota.usage(store_path, minh, open_env.policy.budgets)["runs"]
+        seen["claimed"] = quota.claim_runs(store_path, minh, open_env.policy.budgets)
+        return FakeLLM(PLAN)(tier, system, user)
+
+    app.dependency_overrides[routes.agent_deps] = lambda: deps(llm, policy=open_env.policy)
+    await _login(open_env.client, "engineer", "Engineer@123")
+
+    response = await open_env.client.post("/api/v1/chat", json={"message": "Doanh thu theo ngày"})
+
+    assert response.status_code == 200, response.text
+    assert seen["usage"] == {"used": 1, "limit": 2, "remaining": 1}
+    assert len(seen["claimed"]) == 1
+    run_id = response.json()["run_id"]
+    assert sorted(_slots(store_path)) == sorted([run_id, *seen["claimed"]]), "run chat dùng đúng id của lượt đã giữ"
+    assert quota.usage(store_path, minh, open_env.policy.budgets)["runs"]["used"] == 2
+
+
+@pytest.mark.asyncio
+async def test_optimize_uses_the_claimed_run_slot(open_env, monkeypatch):
+    from src.agents import manual_optimize
+    from tests.test_agents.test_graph import FakeLLM, deps
+
+    store_path = open_env.config.store_path
+    parent = _run(store_path, "a1", "minh")  # bản đã deploy (deployed_report giả)
+    monkeypatch.setattr(monitor.runs, "deployed_report", lambda store_path, model: parent)
+    monkeypatch.setattr(monitor, "model_visible", lambda *_: True)
+    real_start = manual_optimize.start_manual_optimize
+    monkeypatch.setattr(monitor, "start_manual_optimize", lambda *args: (real_start(*args)[0], lambda: None))
+    app.dependency_overrides[monitor.monitor_deps] = lambda: deps(FakeLLM(), policy=open_env.policy)
+    await _login(open_env.client, "engineer", "Engineer@123")
+
+    response = await open_env.client.post("/api/v1/pipelines/orders_model/optimize")
+    exhausted = await open_env.client.post("/api/v1/pipelines/orders_model/optimize")
+
+    assert response.status_code == 202, response.text
+    assert _slots(store_path) == [response.json()["run_id"]]
+    assert exhausted.status_code == 429, exhausted.text
+    assert quota.usage(store_path, auth.USERS["minh"], open_env.policy.budgets)["runs"]["used"] == 2
 
 
 @pytest.mark.asyncio

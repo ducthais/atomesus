@@ -129,13 +129,13 @@ def create_agent_run(
     """
     sources = _checked_sources(body, user, deps)
     _checked_parent(body, user, config.store_path)
-    slots = claim_runs(config.store_path, user, deps.policy.budgets)
+    [run_id] = claim_runs(config.store_path, user, deps.policy.budgets)
     try:
         started, job = start_agent(
-            body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id
+            body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id, run_id
         )
     finally:
-        release_runs(config.store_path, slots)  # run đã vào sổ thì tự được đếm
+        release_runs(config.store_path, [run_id])  # run đã vào sổ thì lượt vẫn tính; khởi tạo lỗi thì trả lượt
     background.add_task(job)
     return started
 

@@ -53,7 +53,7 @@ async def test_chat_requires_session(client, env):
 async def test_new_request_plans_as_session_user_and_waits_for_the_button(client, env, monkeypatch):
     calls = []
 
-    def fake_plan_agent(request, created_by, deps, store_path):
+    def fake_plan_agent(request, created_by, deps, store_path, run_id=None):
         calls.append((request, created_by))
         report = _fixture("ready_for_review.json").model_copy(
             update={"run_id": "new-run", "created_by": created_by, "status": "DRAFT", "stage_reached": "confirm"}

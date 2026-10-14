@@ -46,16 +46,16 @@ def post_chat(
         if user["role"] != "Engineer":
             raise HTTPException(403, "Chỉ Engineer được tạo pipeline từ chat.")
         sources = _checked_sources(AgentRunRequest(request=message, sources=body.sources), user, deps)
-        # Hết lượt run trong ngày (per_user.max_runs_per_day) → 429 trước khi gọi LLM lập kế hoạch. Lượt giữ đến khi
-        # run đã vào sổ (lúc đó run tự được đếm) hoặc lập kế hoạch lỗi.
-        slots = claim_runs(config.store_path, user, deps.policy.budgets)
+        # Hết lượt run trong ngày (per_user.max_runs_per_day) → 429 trước khi gọi LLM lập kế hoạch. Run dùng đúng id
+        # của lượt đã giữ nên không bị đếm hai lần; lập kế hoạch lỗi trước khi vào sổ thì trả lượt.
+        [run_id] = claim_runs(config.store_path, user, deps.policy.budgets)
         try:
             if sources is None:
-                report = plan_agent(message, user["id"], deps, config.store_path)
+                report = plan_agent(message, user["id"], deps, config.store_path, run_id=run_id)
             else:
-                report = plan_agent(message, user["id"], deps, config.store_path, sources=sources)
+                report = plan_agent(message, user["id"], deps, config.store_path, sources=sources, run_id=run_id)
         finally:
-            release_runs(config.store_path, slots)
+            release_runs(config.store_path, [run_id])
         intent, reply = "new_request", answers.created_reply(report)
     elif answers.intent(message) == "revise":
         report = _existing_run(config.store_path, body.run_id, user)

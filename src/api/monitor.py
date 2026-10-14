@@ -12,6 +12,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.run_report import RunReport
 from src.run_report.access import SYSTEM, model_visible, owner_of, run_owner, scope
+from src.run_report.quota import claim_runs, release_runs
 
 router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(current_user)])
 pipelines_router = APIRouter(prefix="/pipelines", tags=["pipelines"])
@@ -40,14 +41,20 @@ def optimize_pipeline(
     config: PipelineSettings = Depends(settings),
     deps: AgentDeps = Depends(monitor_deps),
 ) -> RunReport:
-    """Engineer yêu cầu tối ưu pipeline đã deploy (UC-3): chạy nền lại pipeline và optimizer P13, không gọi LLM."""
+    """Engineer yêu cầu tối ưu pipeline đã deploy (UC-3): chạy nền lại pipeline và optimizer P13, không gọi LLM.
+
+    Run tối ưu là run mới của người gọi: hết lượt run trong ngày (budgets.yml per_user.max_runs_per_day) → 429."""
     # Xét quyền thấy trước vai: pipeline không được thấy là 404 với mọi vai, không lộ pipeline đó có tồn tại.
     parent = runs.deployed_report(config.store_path, model)
     if parent is None or not model_visible(user, config.store_path, model):
         raise HTTPException(404, f"Pipeline '{model}' chưa được deploy.")
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được yêu cầu tối ưu pipeline.")
-    started, job = start_manual_optimize(parent, user["id"], deps, config.store_path)
+    [run_id] = claim_runs(config.store_path, user, deps.policy.budgets)
+    try:
+        started, job = start_manual_optimize(parent, user["id"], deps, config.store_path, run_id)
+    finally:
+        release_runs(config.store_path, [run_id])  # run đã vào sổ thì lượt vẫn tính; khởi tạo lỗi thì trả lượt
     background.add_task(job)
     return started
 
