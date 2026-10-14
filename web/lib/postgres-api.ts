@@ -96,6 +96,8 @@ export type RunReport = {
   // Mỗi lần gọi LLM: token nhà cung cấp báo, usd theo budgets.yml (null = model chưa có giá).
   llm_usage?: { stage: string; tier: string; model: string | null; input_tokens: number | null; output_tokens: number | null; usd: number | null }[];
   timing: { baseline_sec: number | null; optimized_sec: number | null };
+  // Mỗi luật tối ưu P13 đã thử: thời gian chạy lại model trước / sau; applied = bản ứng viên được giữ.
+  optimizer?: { rule: string; applied: boolean; before_sec: number | null; after_sec: number | null; reason?: string | null }[];
   // error_trace là dict tự do trong hợp đồng: agent ghi `error`, run mẫu cũ ghi `message`.
   error_trace: { stage: string; error?: string; message?: string; source_id?: string; question?: string; need_tables?: string[] }[];
   /** Nguồn và bảng người dùng chọn khi tạo run; null = agent chọn trong mọi nguồn. */

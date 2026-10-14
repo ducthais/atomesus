@@ -111,3 +111,81 @@ export function resultWarnings(result: RunResult): string[] {
   if (result.goldRows === 0) warnings.push('Bảng kết quả rỗng: bộ lọc có thể đã loại hết dữ liệu.');
   return warnings;
 }
+
+const WEEKDAY = ['Chủ nhật', 'thứ Hai', 'thứ Ba', 'thứ Tư', 'thứ Năm', 'thứ Sáu', 'thứ Bảy', 'Chủ nhật'];
+const CRON_MACRO: Record<string, string> = {
+  '@hourly': '0 * * * *', '@daily': '0 0 * * *', '@midnight': '0 0 * * *', '@weekly': '0 0 * * 0',
+  '@monthly': '0 0 1 * *', '@yearly': '0 0 1 1 *', '@annually': '0 0 1 1 *',
+};
+
+/** Cron 5 trường → tiếng Việt ("mỗi ngày lúc 6:00", "mỗi giờ"...). Dạng chưa nhận ra thì trả null, không đoán. */
+export function describeCron(cron: string): string | null {
+  const fields = (CRON_MACRO[cron.trim()] ?? cron).trim().split(/\s+/);
+  if (fields.length !== 5) return null;
+  const [minute, hour, day, month, weekday] = fields;
+  const int = (v: string, min: number, max: number) => /^\d+$/.test(v) && Number(v) >= min && Number(v) <= max ? Number(v) : null;
+  const ints = (v: string, min: number, max: number) => { const all = v.split(',').map(x => int(x, min, max)); return all.every(x => x !== null) ? all as number[] : null; };
+  const every = (v: string) => { const m = v.match(/^\*\/(\d+)$/); return m && Number(m[1]) > 0 ? Number(m[1]) : null; };
+  const m = int(minute, 0, 59);
+  const hours = ints(hour, 0, 23);
+  const at = m !== null && hours ? `lúc ${hours.map(h => `${h}:${String(m).padStart(2, '0')}`).join(', ')}` : null;
+  if (month !== '*') return null;
+  if (day !== '*') {
+    const d = int(day, 1, 31);
+    return d !== null && weekday === '*' && at ? `ngày ${d} hằng tháng ${at}` : null;
+  }
+  if (weekday !== '*') {
+    if (!at) return null;
+    const range = weekday.match(/^(\d)-(\d)$/);
+    if (range) {
+      const [from, to] = [int(range[1], 0, 7), int(range[2], 0, 7)];
+      return from !== null && to !== null && from < to ? `từ ${WEEKDAY[from]} đến ${WEEKDAY[to]} ${at}` : null;
+    }
+    const days = ints(weekday, 0, 7);
+    return days ? `mỗi ${[...new Set(days.map(d => WEEKDAY[d]))].join(', ')} ${at}` : null;
+  }
+  if (hour === '*') {
+    if (minute === '*' || every(minute) === 1) return 'mỗi phút';
+    if (every(minute)) return `mỗi ${every(minute)} phút`;
+    if (m !== null) return m === 0 ? 'mỗi giờ' : `mỗi giờ vào phút ${m}`;
+    return null;
+  }
+  if (m !== null && every(hour)) return every(hour) === 1 ? (m === 0 ? 'mỗi giờ' : `mỗi giờ vào phút ${m}`) : `mỗi ${every(hour)} giờ${m ? ` vào phút ${m}` : ''}`;
+  return at ? `mỗi ngày ${at}` : null;
+}
+
+const vi = (n: number, digits: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: digits });
+
+/**
+ * Tóm tắt pipeline bằng câu thường cho người duyệt không đọc diff: đọc bảng nào, ra bảng gì, chạy khi nào, tốn bao nhiêu,
+ * optimizer có nhanh hơn không. Chỉ dùng số đã có trong RunReport; thiếu dữ liệu thì bỏ câu đó.
+ */
+export function runSummary(report: RunReport): string[] {
+  const spec = isAgentSpec(report.spec) ? report.spec : null;
+  const plan = report.plan ?? null;
+  const lines: string[] = [];
+
+  const tables = [...new Set(spec ? spec.sources.map(s => s.table ?? s.endpoint ?? s.path_pattern ?? s.id) : (plan?.sources ?? []).map(s => s.object))];
+  if (tables.length) lines.push(`Đọc ${tables.length} bảng: ${tables.join(', ')}`);
+
+  const model = spec?.transform.model_name ?? plan?.model_name;
+  const goldRows = num(report.gates.find(g => g.name === 'post_run')?.observed.gold_rows);
+  if (model) lines.push(`Ra bảng ${model}${goldRows !== null ? ` khoảng ${goldRows.toLocaleString('vi-VN')} dòng` : ''}`);
+
+  const cron = (spec?.schedule.cron ?? plan?.schedule ?? '').trim();
+  if (cron) lines.push(`Chạy theo lịch ${describeCron(cron) ?? `cron ${cron}`}`);
+
+  // Cổng budget ghi ước tính của một lần chạy; bản optimizer giữ lại thêm một cổng budget mới nên lấy cổng cuối.
+  const usd = num(report.gates.findLast(g => g.name === 'budget')?.observed.usd);
+  if (usd !== null && usd >= 0) lines.push(`Chi phí ước tính ~$${usd.toFixed(6)} mỗi lần chạy`);
+
+  // Mọi luật P13 đo so với cùng bản gốc; bản được giữ là bước applied nhanh nhất.
+  const best = (report.optimizer ?? [])
+    .filter(s => s.applied && typeof s.before_sec === 'number' && s.before_sec > 0 && typeof s.after_sec === 'number')
+    .sort((a, b) => a.after_sec! - b.after_sec!)[0];
+  if (best) {
+    const [before, after] = [best.before_sec!, best.after_sec!];
+    lines.push(`Optimizer: nhanh hơn ${vi(Math.round((before - after) * 1000 / before) / 10, 1)}% (${vi(before, 4)} s → ${vi(after, 4)} s)`);
+  }
+  return lines;
+}

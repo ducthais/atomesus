@@ -5,7 +5,7 @@
  */
 import { isAgentSpec, type RunReport, type User } from '../postgres-api.ts';
 import { toStudioRun, type Check, type Limits } from '../studio.ts';
-import { runResult } from './explain.ts';
+import { runResult, runSummary } from './explain.ts';
 import type { CatalogRun, Column, Dataset, Domain, GlossaryTerm, Person, Platform, PolicyFile, QualityCheck, Relationship, Snapshot } from './types.ts';
 
 export type CatalogSource = {
@@ -90,7 +90,7 @@ export function buildSnapshot(catalog: CatalogResponse, reports: RunReport[], po
 
   // ── Bronze / staging / gold từ Spec của run; run mới nhất quyết định metadata, mọi run được liên kết ──
   // RunReport.files chỉ là sha256 của từng file; nội dung đọc riêng qua GET /runs/{id}/files khi mở tab Code.
-  const runs: CatalogRun[] = reports.map(r => ({ ...toStudioRun(r), files: {}, result: runResult(r), spec: r.spec, agentPlan: r.plan ?? null, timeline: r.timeline ?? [] }));
+  const runs: CatalogRun[] = reports.map(r => ({ ...toStudioRun(r), files: {}, result: runResult(r), spec: r.spec, agentPlan: r.plan ?? null, timeline: r.timeline ?? [], brief: runSummary(r) }));
   const ordered = [...reports].sort((a, b) => b.created_at.localeCompare(a.created_at));
   for (const report of ordered) {
     const run = runs.find(r => r.id === report.run_id)!;
