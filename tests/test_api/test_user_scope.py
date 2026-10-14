@@ -612,6 +612,7 @@ async def test_model_name_is_claimed_before_github_and_only_one_owner_wins(env, 
     from src.run_report.access import claim_model, model_owner
 
     store_path = env.config.store_path
+    env.config.deploy_mode = "pr"  # test này kiểm luồng pull request; mặc định giờ là direct
     opened = []
 
     def failing_github(report, files, github):
