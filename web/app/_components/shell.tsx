@@ -3,9 +3,10 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useActionState, useState, useTransition } from 'react';
-import { Activity, BookOpenText, Compass, Database, Gauge, Layers3, LogIn, LogOut, MailCheck, Network, Plus, ShieldCheck, UserCog, UserPlus, Waypoints } from 'lucide-react';
+import { Activity, BookOpenText, CircleAlert, Compass, Database, Gauge, Layers3, LogIn, LogOut, MailCheck, Network, Plus, ShieldCheck, UserCheck, UserCog, UserPlus, Waypoints } from 'lucide-react';
 import { signIn, signOut, signUp, verifySignUp } from '../actions';
 import type { Person } from '@/lib/catalog/types';
+import { INVITE_INVALID, REVIEW_PATH, inviteTokenFromPath, isInviteToken } from '@/lib/invite';
 import { initials } from './ui';
 
 const NAV = [
@@ -21,7 +22,8 @@ const NAV = [
 export function Sidebar({ reviewCount, live, backend, role }: { reviewCount: number; live: boolean; backend: string; role: Person['role'] }) {
   const path = usePathname();
   const nav = role === 'Admin' ? [...NAV, { href: '/admin/users', label: 'Tài khoản', icon: UserCog, match: (p: string) => p.startsWith('/admin') }]
-    : role === 'Engineer' ? [...NAV, { href: '/connections', label: 'Nguồn dữ liệu', icon: Database, match: (p: string) => p.startsWith('/connections') }] : NAV;
+    : role === 'Engineer' ? [...NAV, { href: '/connections', label: 'Nguồn dữ liệu', icon: Database, match: (p: string) => p.startsWith('/connections') },
+      { href: '/reviewers', label: 'Reviewer', icon: UserCheck, match: (p: string) => p.startsWith('/reviewers') }] : NAV;
   return <aside className="sidebar">
     <Link href="/" className="brand"><span className="brand-mark"><Layers3 size={18} aria-hidden /></span><span><strong>Atomesus</strong><small>VSF · Pipeline Studio</small></span></Link>
     <nav aria-label="Điều hướng chính">{nav.map(({ href, label, icon: Icon, match }) => <Link key={href} href={href} aria-current={match(path) ? 'page' : undefined}><Icon size={17} aria-hidden />{label}{href === '/runs' && reviewCount > 0 && <span className="nav-count" title="Run chờ duyệt">{reviewCount}</span>}</Link>)}</nav>
@@ -41,21 +43,35 @@ export function UserMenu({ user }: { user: Person }) {
   </div>;
 }
 
+/** Màn đăng nhập / đăng ký. Layout hiện màn này cho mọi trang khi chưa đăng nhập; trên /invite/<token> thì đăng ký Reviewer theo link mời. */
 export function LoginScreen() {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const path = usePathname();
+  const inviteToken = inviteTokenFromPath(path);
+  const [mode, setMode] = useState<'login' | 'register'>(inviteToken !== null ? 'register' : 'login');
   const [registerEpoch, setRegisterEpoch] = useState(0);
   const [loginState, loginAction, loginPending] = useActionState(signIn, null);
+  if (inviteToken !== null && !isInviteToken(inviteToken)) return <main className="login">
+    <div className="login-card">
+      <span className="brand-mark"><Layers3 size={20} aria-hidden /></span>
+      <h1>Lời mời làm Reviewer</h1>
+      <p className="form-error" role="alert"><CircleAlert size={14} aria-hidden /> {INVITE_INVALID}</p>
+      <Link className="button" href="/">Về trang đăng nhập</Link>
+    </div>
+  </main>;
   return <main className="login">
     <div className="login-card">
       <span className="brand-mark"><Layers3 size={20} aria-hidden /></span>
-      <h1>Atomesus</h1>
-      <p className="muted">Đăng nhập để truy cập Pipeline Studio. Engineer tạo pipeline; Reviewer phê duyệt; Admin quản lý tài khoản.</p>
+      <h1>{inviteToken ? 'Lời mời làm Reviewer' : 'Atomesus'}</h1>
+      <p className="muted">{inviteToken
+        ? 'Một Engineer mời bạn duyệt run pipeline của họ. Đăng ký tài khoản Reviewer mới, hoặc đăng nhập bằng tài khoản Reviewer có sẵn để chấp nhận lời mời.'
+        : 'Đăng nhập để truy cập Pipeline Studio. Engineer tạo pipeline; Reviewer phê duyệt; Admin quản lý tài khoản.'}</p>
       <div className="auth-tabs" role="tablist" aria-label="Tài khoản">
         <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Đăng nhập</button>
         <button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Đăng ký</button>
       </div>
       {mode === 'login' ? <>
         <form action={loginAction} className="login-form">
+          {inviteToken && <input type="hidden" name="next" value={path} />}
           <label className="field" htmlFor="login-username">Tên đăng nhập
             <input id="login-username" name="username" autoComplete="username" required autoFocus placeholder="engineer, reviewer hoặc admin" disabled={loginPending} />
           </label>
@@ -65,13 +81,19 @@ export function LoginScreen() {
           <button className="button primary" type="submit" disabled={loginPending}><LogIn size={15} aria-hidden />{loginPending ? 'Đang đăng nhập…' : 'Đăng nhập'}</button>
         </form>
         {loginState?.error && <p className="form-error" role="alert">{loginState.error}</p>}
-        <p className="login-help">Tài khoản mẫu: <code>engineer</code>, <code>reviewer</code> hoặc <code>admin</code>.</p>
-      </> : <RegisterForm key={registerEpoch} onReset={() => setRegisterEpoch(value => value + 1)} />}
+        <p className="login-help">{inviteToken ? 'Đăng nhập bằng tài khoản Reviewer; bạn sẽ quay lại trang này để chấp nhận lời mời.'
+          : <>Tài khoản mẫu: <code>engineer</code>, <code>reviewer</code> hoặc <code>admin</code>.</>}</p>
+      </> : <>
+        <RegisterForm key={registerEpoch} inviteToken={inviteToken ?? undefined} onReset={() => setRegisterEpoch(value => value + 1)} />
+        {inviteToken && <button type="button" className="button" style={{ justifyContent: 'center', whiteSpace: 'normal' }} onClick={() => setMode('login')}>
+          <LogIn size={15} aria-hidden />Đã có tài khoản Reviewer? Đăng nhập</button>}
+      </>}
     </div>
   </main>;
 }
 
-function RegisterForm({ onReset }: { onReset: () => void }) {
+/** Có `inviteToken`: gửi kèm token, backend tạo Reviewer liên kết với Engineer đã mời; xong thì vào trang duyệt run. */
+function RegisterForm({ onReset, inviteToken }: { onReset: () => void; inviteToken?: string }) {
   const [registerState, registerAction, registerPending] = useActionState(signUp, null);
   const [verifyState, verifyAction, verifyPending] = useActionState(verifySignUp, null);
   if (registerState?.email) return <>
@@ -81,6 +103,7 @@ function RegisterForm({ onReset }: { onReset: () => void }) {
     </div>
     <form action={verifyAction} className="login-form">
       <input type="hidden" name="email" value={registerState.email} />
+      {inviteToken && <input type="hidden" name="next" value={REVIEW_PATH} />}
       <label className="field" htmlFor="register-code">Mã xác thực
         <input id="register-code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required autoFocus disabled={verifyPending} placeholder="000000" />
       </label>
@@ -92,6 +115,7 @@ function RegisterForm({ onReset }: { onReset: () => void }) {
   </>;
   return <>
         <form action={registerAction} className="login-form">
+          {inviteToken && <input type="hidden" name="invite_token" value={inviteToken} />}
           <label className="field" htmlFor="register-name">Họ và tên
             <input id="register-name" name="name" autoComplete="name" minLength={2} maxLength={80} required autoFocus disabled={registerPending} />
           </label>
@@ -108,9 +132,10 @@ function RegisterForm({ onReset }: { onReset: () => void }) {
           <label className="field" htmlFor="register-confirm">Nhập lại mật khẩu
             <input id="register-confirm" name="confirm_password" type="password" autoComplete="new-password" minLength={8} required disabled={registerPending} />
           </label>
-          <button className="button primary" type="submit" disabled={registerPending}><UserPlus size={15} aria-hidden />{registerPending ? 'Đang đăng ký…' : 'Đăng ký'}</button>
+          <button className="button primary" type="submit" disabled={registerPending}><UserPlus size={15} aria-hidden />{registerPending ? 'Đang đăng ký…' : inviteToken ? 'Đăng ký Reviewer' : 'Đăng ký'}</button>
         </form>
         {registerState?.error && <p className="form-error" role="alert">{registerState.error}</p>}
-        <p className="login-help">Tài khoản mới có quyền Engineer. Quyền Reviewer phải được Admin cấp riêng.</p>
+        <p className="login-help">{inviteToken ? 'Tài khoản tạo từ link này là Reviewer, duyệt được run của Engineer đã mời. Link chỉ dùng được một lần.'
+          : 'Tài khoản mới có quyền Engineer. Quyền Reviewer phải được Admin cấp riêng.'}</p>
       </>;
 }

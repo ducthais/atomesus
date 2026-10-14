@@ -8,8 +8,9 @@ import { cookies } from 'next/headers';
 import type { BatchBudget, RunReport, User } from '../postgres-api.ts';
 import type { ChatMessage } from '../studio.ts';
 import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live.ts';
-import { DATASETS, DOMAINS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE, USER_CONNECTIONS } from './mock.ts';
+import { DATASETS, DOMAINS, LINKED_REVIEWERS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE, USER_CONNECTIONS } from './mock.ts';
 import type { UserConnection } from '../user-connections.ts';
+import type { LinkedReviewer } from '../invite.ts';
 import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
 import { Catalog } from './query.ts';
 import type { AssetRunStatus, CatalogRun, Comparison, DeclaredSource, Discovery, Drift, Orchestration, Person, Platform } from './types.ts';
@@ -98,6 +99,13 @@ export const currentUser = cache(async (): Promise<Person | null> => {
     throw err;
   }
 });
+
+/** Reviewer đang duyệt run của Engineer đăng nhập (GET /pipeline/reviewers, chỉ Engineer gọi được). */
+export async function listLinkedReviewers(): Promise<LinkedReviewer[] | { error: string }> {
+  if (MOCK) return LINKED_REVIEWERS;
+  try { return await backend<LinkedReviewer[]>('/pipeline/reviewers'); }
+  catch (err) { return { error: err instanceof Error ? err.message : 'Không đọc được danh sách Reviewer.' }; }
+}
 
 /** Số dư dùng để form batch hiển thị ước tính; POST vẫn khóa và kiểm tra lại trong một transaction. */
 export async function getBatchBudget(): Promise<BatchBudget | null> {

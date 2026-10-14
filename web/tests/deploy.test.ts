@@ -9,6 +9,7 @@ import { APPROVAL_MESSAGE, deploymentLink, deploymentReworks, deploymentSteps, d
 import { ApiError, apiRequest, type Deployment, type RunReport } from '../lib/postgres-api.ts';
 import { STATUS_LABEL, toStudioRun, type Run } from '../lib/studio.ts';
 import { MOCK_SNAPSHOT } from '../lib/catalog/mock.ts';
+import * as invite from '../lib/invite.ts';
 
 const approval = { decision: 'approved', reviewer: 'an', files_hash: 'sha256:a', version: 1, at: '2026-10-10T08:00:00Z', comment: '' };
 const deployment: Deployment = { repo: 'atomesus/pipelines', branch: 'pipeline/revenue/v1', pr_number: 12,
@@ -214,7 +215,7 @@ function actions(request: typeof apiRequest, refresh: () => void, mock = false) 
   const modules: Record<string, unknown> = {
     'next/headers': {}, 'next/navigation': {}, 'next/cache': { refresh }, '@/lib/studio': {},
     '@/lib/deploy': { APPROVAL_MESSAGE, requestDeployment }, '@/lib/catalog/source': { backend: request, BackendError: ApiError, MOCK: mock },
-    '@/lib/catalog/connections': {}, '@/lib/catalog/explain': {},
+    '@/lib/catalog/connections': {}, '@/lib/catalog/explain': {}, '@/lib/invite': invite,
   };
   new Function('require', 'exports', actionCode)((name: string) => {
     assert.ok(name in modules, `Module chưa giả lập: ${name}`); return modules[name];
