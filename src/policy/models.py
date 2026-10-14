@@ -152,6 +152,11 @@ class ResultsPolicy(_Policy):
     max_export_rows: int = Field(default=100_000, ge=1)
 
 
+class UploadsPolicy(_Policy):
+    max_file_mb: float = Field(default=20, gt=0)
+    max_total_mb_per_user: float = Field(default=200, gt=0)
+
+
 class Rules(_Policy):
     require_partition_filter_on: list[str] = Field(default_factory=list)
     forbid_select_star_in: list[Literal["bronze", "staging", "gold"]] = Field(default_factory=list)
@@ -166,6 +171,7 @@ class Budgets(_Policy):
     rules: Rules
     optimizer: OptimizerPolicy = Field(default_factory=OptimizerPolicy)
     results: ResultsPolicy = Field(default_factory=ResultsPolicy)
+    uploads: UploadsPolicy = Field(default_factory=UploadsPolicy)
 
     @field_validator("rules", mode="before")
     @classmethod

@@ -16,6 +16,8 @@ import { Catalog } from './query.ts';
 import type { AssetRunStatus, CatalogRun, Comparison, DeclaredSource, Discovery, Drift, Orchestration, Person, Platform } from './types.ts';
 import type { Alert, MonitoredPipeline } from '../monitor.ts';
 import { MOCK_RESULTS, MODEL_NAME, backendQuery, pageOf, type ResultPage, type ResultQuery } from '../results.ts';
+import { mockUserUploads } from '../upload-source.ts';
+import { mockUploadCatalog, mockUploadDiscovery, mockUploadSources } from '../uploads.ts';
 
 export const MOCK = process.env.CATALOG_MOCK === '1';
 export const BACKEND = (process.env.PIPELINE_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -139,7 +141,11 @@ const EMPTY = new Catalog({ ...MOCK_SNAPSHOT, datasets: [], domains: [], glossar
 
 /** Catalog của request hiện tại (gọi backend một lần mỗi request). Chưa đăng nhập thì trả catalog rỗng; layout hiện màn đăng nhập. */
 export const getCatalog = cache(async (): Promise<Catalog> => {
-  if (MOCK) return new Catalog(MOCK_SNAPSHOT);
+  if (MOCK) {
+    const user = await currentUser();
+    const extra = mockUploadCatalog(user?.role === 'Engineer' ? await mockUserUploads(user.id) : []);
+    return new Catalog({ ...MOCK_SNAPSHOT, domains: [...MOCK_SNAPSHOT.domains, ...extra.domains], datasets: [...MOCK_SNAPSHOT.datasets, ...extra.datasets] });
+  }
   if (!(await currentUser())) return EMPTY;
   const [catalog, reports, policy, users] = await Promise.all([
     backend<CatalogResponse>('/catalog'), backend<RunReport[]>('/runs'), backend<PolicyResponse>('/policy'), backend<User[]>('/pipeline/users'),
@@ -149,7 +155,11 @@ export const getCatalog = cache(async (): Promise<Catalog> => {
 
 /** Kết nối khai báo trong domains.yml; chưa kết nối tới nguồn nào. */
 export async function listDeclaredSources(): Promise<DeclaredSource[]> {
-  if (MOCK) return DOMAINS.flatMap(d => d.sources.map(s => ({ ref: s.ref, domain: d.id, kind: s.kind, location: s.location, supported: s.kind === 'postgres' })));
+  if (MOCK) {
+    const user = await currentUser();
+    const extra = mockUploadSources(user?.role === 'Engineer' ? await mockUserUploads(user.id) : []);
+    return [...DOMAINS.flatMap(d => d.sources.map(s => ({ ref: s.ref, domain: d.id, kind: s.kind, location: s.location, supported: s.kind === 'postgres' }))), ...extra];
+  }
   return backend<DeclaredSource[]>('/catalog/sources');
 }
 
@@ -163,6 +173,9 @@ type ObjectsResponse = {
 export async function discoverObjects(ref: string): Promise<Discovery> {
   if (MOCK) {
     await new Promise(resolve => setTimeout(resolve, 500));
+    const user = await currentUser();
+    const uploaded = mockUploadDiscovery(user?.role === 'Engineer' ? await mockUserUploads(user.id) : [], ref);
+    if (uploaded) return uploaded;
     const decl = DOMAINS.flatMap(d => d.sources).find(s => s.ref === ref);
     if (!decl) return { error: `Nguồn '${ref}' không có trong domains.yml.` };
     if (decl.kind !== 'postgres') return { error: `Chưa có connector cho nguồn ${decl.kind as Platform}.` };

@@ -101,7 +101,7 @@ function actions({ role = 'Engineer', mockMode = false, request = async () => nu
   const exports: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
   const modules: Record<string, unknown> = {
     'next/headers': {}, 'next/navigation': {}, 'next/cache': { refresh: () => refreshed++ }, '@/lib/studio': {}, '@/lib/deploy': {},
-    '@/lib/catalog/connections': {}, '@/lib/catalog/explain': {}, '@/lib/user-connections': connections, '@/lib/catalog/mock': mock,
+    '@/lib/catalog/connections': {}, '@/lib/catalog/explain': {}, '@/lib/invite': {}, '@/lib/user-connections': connections, '@/lib/catalog/mock': mock,
     '@/lib/catalog/source': { MOCK: mockMode, BackendError, backend: request, currentUser: async () => ({ id: 'minh', role }),
       mockUserConnections: async () => items, saveMockUserConnections: async (_: string, saved: UserConnection[]) => { items = saved; } },
   };
@@ -191,7 +191,7 @@ function component(file: string, modules: Record<string, unknown>) {
   return exports;
 }
 const ui = component('../app/_components/ui.tsx', { '@/lib/catalog/query': {}, '@/lib/studio': {} });
-const modules = { '../actions': {}, '@/lib/user-connections': connections, './ui': ui };
+const modules = { '../actions': {}, '@/lib/user-connections': connections, '@/lib/invite': {}, './ui': ui };
 const { ConnectionForm, ConnectionList } = component('../app/_components/connection-form.tsx', modules);
 const { ConnectionTables } = component('../app/_components/connection-tables.tsx', modules);
 const { Sidebar } = component('../app/_components/shell.tsx', { ...modules, 'next/navigation': { usePathname: () => '/connections' } });
@@ -337,7 +337,8 @@ test('trang kết nối: đọc IP lúc request, ưu tiên runtime, fallback bi�
       assert.equal(requested, true, 'Trang phải chờ request trước khi render.');
       return { role };
     } },
-    '../actions': { listUserConnections: async () => ({ data: [] }) },
+    '../actions': { listUserConnections: async () => ({ data: [] }), listUserUploads: async () => ({ data: [] }), getUploadLimits: async () => ({ data: {} }) },
+    './upload-panel': { UploadPanel: () => null },
     '../_components/connection-form': { ConnectionForm, ConnectionList }, '../_components/ui': ui,
   }).default as unknown as () => Promise<ReactNode>;
   try {

@@ -63,10 +63,49 @@ def read_user_selections(store_path: str, owner_id: str | None = None) -> list[d
         raise PolicyError("Không đọc được lựa chọn nguồn đã lưu trong store.") from exc
 
 
+def read_upload_selections(store_path: str, owner_id: str | None = None) -> list[dict]:
+    """Store cũ chưa có uploads vẫn dùng policy hiện tại; không tạo DB khi đọc."""
+    path = Path(store_path).resolve()
+    if not path.exists():
+        return []
+    try:
+        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=10)) as conn:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'uploads'").fetchone():
+                return []
+            query = "SELECT id, owner_id, metadata, selected_json FROM uploads"
+            params = ()
+            if owner_id is not None:
+                query += " WHERE owner_id = ?"
+                params = (owner_id,)
+            rows = conn.execute(query + " ORDER BY id", params).fetchall()
+        selections = []
+        for upload_id, owner, metadata_json, selected_json in rows:
+            try:
+                metadata, selected = json.loads(metadata_json), json.loads(selected_json)
+                if not selected:
+                    continue
+                selections.append(
+                    {
+                        "id": upload_id,
+                        "owner_id": owner,
+                        "label": metadata["name"],
+                        "schema": "files",
+                        "tables": selected,
+                        "root": metadata["root"],
+                        "email": None,
+                    }
+                )
+            except (ValueError, TypeError, KeyError):
+                logger.warning("Bỏ qua lựa chọn file đã lưu: metadata không hợp lệ.")
+        return selections
+    except sqlite3.Error as exc:
+        raise PolicyError("Không đọc được lựa chọn file đã lưu trong store.") from exc
+
+
 def effective_policy(config: "PipelineSettings", owner_id: str | None = None) -> Policy:
     """None dành cho hệ thống/Reviewer; Engineer chỉ nhận domain YAML và domain của mình."""
     policy = load_policy()
-    selections = read_user_selections(config.store_path, owner_id)
+    selections = read_user_selections(config.store_path, owner_id) + read_upload_selections(config.store_path, owner_id)
     if not selections:
         return policy
     template = policy.objectives.get("_user_default")
@@ -79,7 +118,7 @@ def effective_policy(config: "PipelineSettings", owner_id: str | None = None) ->
         connection_id = selection["id"]
         for length in (8, 12, len(connection_id)):
             prefix = connection_id[:length]
-            name, source_ref = f"u_{prefix}", f"c_{prefix}"
+            name, source_ref = f"u_{prefix}", f"{'f' if 'root' in selection else 'c'}_{prefix}"
             if (
                 name not in domains
                 and source_ref not in source_refs
@@ -97,20 +136,18 @@ def effective_policy(config: "PipelineSettings", owner_id: str | None = None) ->
         if not isinstance(selection["tables"], list):
             logger.warning("Bỏ qua lựa chọn nguồn đã lưu: phải có danh sách bảng.")
             continue
+        source = (
+            {"kind": "filesystem", "connection_ref": f"upload:{connection_id}", "root": selection["root"]}
+            if "root" in selection
+            else {"kind": "postgres", "connection_ref": f"conn:{connection_id}", "schema": selection["schema"]}
+        )
         domain = {
             "label": selection["label"],
             "owner_id": selection["owner_id"],
             "datasets": [selection["schema"]],
             "steward": selection["email"] or f"{selection['owner_id']}@users.local",
             "currency": policy.domains.user_defaults.currency.model_dump(),
-            "sources": {
-                source_ref: {
-                    "kind": "postgres",
-                    "connection_ref": f"conn:{connection_id}",
-                    "schema": selection["schema"],
-                    "tables": selection["tables"],
-                }
-            },
+            "sources": {source_ref: {**source, "tables": selection["tables"]}},
         }
         try:
             domain = Domain.model_validate(domain).model_dump()

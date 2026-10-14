@@ -39,7 +39,14 @@ def bucket_url(decl: SourceDecl) -> str:
 
 
 def _files(decl: SourceDecl, name: str) -> list[Path]:
-    return sorted((root(decl) / name).glob("*.csv"))
+    base = root(decl)
+    folder = (base / name).resolve()
+    if folder.parent != base or (decl.tables is not None and name not in decl.tables):
+        raise FilesUnavailableError("Bảng không nằm trong thư mục nguồn hoặc ngoài các bảng đã chọn.")
+    paths = sorted(folder.glob("*.csv"))
+    if any(path.resolve().parent != folder for path in paths):
+        raise FilesUnavailableError("File CSV nằm ngoài thư mục bảng.")
+    return paths
 
 
 def suggested_key(name: str, columns: list[str]) -> list[str]:
@@ -54,6 +61,8 @@ def objects(decl: SourceDecl) -> dict[str, dict]:
     """Tên đối tượng → {path_pattern, format, columns, primary_key, files, bytes}."""
     found = {}
     for folder in sorted(p for p in root(decl).iterdir() if p.is_dir()):
+        if decl.tables is not None and folder.name not in decl.tables:
+            continue
         files = _files(decl, folder.name)
         if not files:
             continue
