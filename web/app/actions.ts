@@ -11,6 +11,7 @@ import type { ConnectionRequest, ConnectionResult, ConnectionSchema, ConnectionS
 import { CONNECTIONS_COOKIE, parseConnections } from '@/lib/catalog/connections';
 import type { Discovery } from '@/lib/catalog/types';
 import { toReconcile, type Reconcile } from '@/lib/catalog/explain';
+import { INVITE_ENGINEER, INVITE_INVALID, INVITE_OTHER_ROLE, REVIEW_PATH, inviteErrorMessage, isInviteToken, safeNext, type CreatedInvite } from '@/lib/invite';
 
 export type ActionState = { error?: string; message?: string } | null;
 export type RegistrationState = { error?: string; email?: string; developmentCode?: string } | null;
@@ -128,10 +129,14 @@ export async function selectUserConnectionTables(id: string, selection: Connecti
   } catch (err) { return { error: failure(err)!.error! }; }
 }
 
-/** Đăng nhập bằng tài khoản local. Backend đặt cookie Path=/api/v1; lưu lại token với Path=/ cho các Server Component. */
+/**
+ * Đăng nhập bằng tài khoản local. Backend đặt cookie Path=/api/v1; lưu lại token với Path=/ cho các Server Component.
+ * `next` (vd. trang link mời) chỉ nhận đường dẫn nội bộ.
+ */
 export async function signIn(_: ActionState, form: FormData): Promise<ActionState> {
   const username = String(form.get('username') ?? '').trim().toLowerCase();
   const password = String(form.get('password') ?? '');
+  const next = safeNext(form.get('next'));
   if (!username || !password) return { error: 'Nhập tên đăng nhập và mật khẩu.' };
   const jar = await cookies();
   if (MOCK) {
@@ -143,7 +148,7 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
     const account = accounts[username];
     if (!account || account.password !== password) return { error: 'Tên đăng nhập hoặc mật khẩu không đúng.' };
     jar.set(MOCK_USER_COOKIE, account.id, { path: '/', maxAge: 31536000, sameSite: 'lax', secure: SECURE });
-    redirect('/');
+    redirect(next);
   }
   let response: Response;
   try {
@@ -153,24 +158,29 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
   const token = response.headers.getSetCookie().map(c => c.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
   if (!token) return { error: 'Backend không trả cookie phiên.' };
   jar.set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
-  redirect('/');
+  redirect(next);
 }
 
-/** Lưu cookie phiên backend trả về (đăng ký hoặc xác thực xong) rồi vào trang chủ. */
-async function startSession(response: Response): Promise<{ error: string }> {
+/** Lưu cookie phiên backend trả về (đăng ký hoặc xác thực xong) rồi vào trang chủ (Reviewer qua link mời: trang duyệt run). */
+async function startSession(response: Response, next = '/'): Promise<{ error: string }> {
   const token = response.headers.getSetCookie().map(cookie => cookie.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
   if (!token) return { error: 'Backend không trả cookie phiên.' };
   (await cookies()).set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
-  redirect('/');
+  redirect(next);
 }
 
-/** Đăng ký Engineer. Backend tắt xác thực email: tạo tài khoản và đăng nhập ngay (201). Bật: gửi OTP (202). */
+/**
+ * Đăng ký Engineer; kèm `invite_token` (form trên trang link mời) thì backend tạo Reviewer liên kết với Engineer đã mời.
+ * Backend tắt xác thực email: tạo tài khoản và đăng nhập ngay (201). Bật: gửi OTP (202).
+ */
 export async function signUp(_: RegistrationState, form: FormData): Promise<RegistrationState> {
   const name = String(form.get('name') ?? '').trim();
   const email = String(form.get('email') ?? '').trim().toLowerCase();
   const username = String(form.get('username') ?? '').trim().toLowerCase();
   const password = String(form.get('password') ?? '');
   const confirmPassword = String(form.get('confirm_password') ?? '');
+  const inviteToken = String(form.get('invite_token') ?? '').trim() || undefined;
+  if (inviteToken && !isInviteToken(inviteToken)) return { error: INVITE_INVALID };
   if (name.length < 2) return { error: 'Họ tên phải có ít nhất 2 ký tự.' };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return { error: 'Email không hợp lệ.' };
   if (!/^[a-z][a-z0-9_.-]{2,31}$/.test(username)) return { error: 'Tên đăng nhập gồm 3–32 ký tự: chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang; bắt đầu bằng chữ.' };
@@ -185,23 +195,25 @@ export async function signUp(_: RegistrationState, form: FormData): Promise<Regi
     const clientIp = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim();
     response = await fetch(`${BACKEND}/api/v1/pipeline/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...(clientIp ? { 'X-Forwarded-For': clientIp } : {}) },
-      body: JSON.stringify({ name, email, username, password }), cache: 'no-store',
+      body: JSON.stringify({ name, email, username, password, ...(inviteToken ? { invite_token: inviteToken } : {}) }), cache: 'no-store',
     });
   } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = body?.detail;
-    return { error: typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((item: { msg: string }) => item.msg).join('; ') : 'Đăng ký thất bại.' };
+    const message = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((item: { msg: string }) => item.msg).join('; ') : 'Đăng ký thất bại.';
+    return { error: inviteToken && [404, 410].includes(response.status) ? inviteErrorMessage(response.status, message) : message };
   }
-  if (response.status === 201) return startSession(response);
+  if (response.status === 201) return startSession(response, inviteToken ? REVIEW_PATH : '/');
   const result = await response.json() as { email: string; development_code?: string };
   return { email: result.email, developmentCode: result.development_code };
 }
 
-/** Xác thực OTP rồi nhận cookie phiên của tài khoản Engineer vừa được tạo. */
+/** Xác thực OTP rồi nhận cookie phiên của tài khoản vừa được tạo (Engineer, hoặc Reviewer nếu đăng ký qua link mời). */
 export async function verifySignUp(_: ActionState, form: FormData): Promise<ActionState> {
   const email = String(form.get('email') ?? '').trim().toLowerCase();
   const code = String(form.get('code') ?? '').trim();
+  const next = safeNext(form.get('next'));
   if (!email || !/^\d{6}$/.test(code)) return { error: 'Nhập mã xác thực gồm 6 chữ số.' };
   if (MOCK) return { error: 'Đăng ký cần backend thật. Tắt CATALOG_MOCK rồi thử lại.' };
   let response: Response;
@@ -214,7 +226,54 @@ export async function verifySignUp(_: ActionState, form: FormData): Promise<Acti
     const body = await response.json().catch(() => null);
     return { error: typeof body?.detail === 'string' ? body.detail : 'Xác thực email thất bại.' };
   }
-  return startSession(response);
+  return startSession(response, next);
+}
+
+/** Engineer tạo link mời Reviewer; token chỉ trả một lần, trang ghép với origin hiện tại thành link đầy đủ. */
+export async function createInvite(): Promise<ConnectionResult<CreatedInvite>> {
+  try {
+    const actor = await currentUser();
+    if (actor?.role !== 'Engineer') return { error: 'Chỉ Engineer được mời Reviewer.' };
+    if (MOCK) {
+      const token = `mock_${crypto.randomUUID().replaceAll('-', '')}`;
+      return { data: { token, path: `/invite/${token}`, expires_at: new Date(Date.now() + 7 * 86400_000).toISOString() } };
+    }
+    return { data: await backend<CreatedInvite>('/pipeline/invites', { method: 'POST' }) };
+  } catch (err) { return { error: failure(err)!.error! }; }
+}
+
+/** Reviewer đã đăng nhập chấp nhận link mời; từ đó thấy và duyệt được run của Engineer đã mời. */
+export async function acceptInvite(token: string): Promise<ActionState> {
+  if (!isInviteToken(token)) return { error: INVITE_INVALID };
+  try {
+    const actor = await currentUser();
+    if (!actor) return { error: inviteErrorMessage(401, '') };
+    if (actor.role === 'Engineer') return { error: INVITE_ENGINEER };
+    if (actor.role !== 'Reviewer') return { error: INVITE_OTHER_ROLE };
+    if (MOCK) return { message: 'Mock: đã chấp nhận lời mời. Bạn có thể duyệt run của Engineer đã mời.' };
+    await backend('/pipeline/invites/accept', { method: 'POST', body: JSON.stringify({ token }) });
+    return { message: 'Đã chấp nhận lời mời. Bạn có thể xem và duyệt run của Engineer đã mời.' };
+  } catch (err) {
+    return { error: err instanceof BackendError ? inviteErrorMessage(err.status, err.message) : failure(err)!.error };
+  }
+}
+
+/** Engineer gỡ Reviewer: người đó mất quyền xem và duyệt run của Engineer ngay lập tức. */
+export async function removeReviewer(reviewerId: string): Promise<ActionState> {
+  try {
+    const actor = await currentUser();
+    if (actor?.role !== 'Engineer') return { error: 'Chỉ Engineer được quản lý Reviewer của mình.' };
+    if (MOCK) {
+      const { LINKED_REVIEWERS } = await import('@/lib/catalog/mock');
+      const reviewer = LINKED_REVIEWERS.find(item => item.id === reviewerId);
+      if (!reviewer) return { error: 'Reviewer này không có trong danh sách của bạn.' };
+      if (reviewer.demo) return { error: 'Không thể gỡ Reviewer của cặp tài khoản demo.' };
+      return { message: `Mock: đã gỡ ${reviewer.name ?? reviewer.id}; danh sách mock không đổi.` };
+    }
+    await backend(`/pipeline/reviewers/${encodeURIComponent(reviewerId)}`, { method: 'DELETE' });
+    refresh();
+    return { message: 'Đã gỡ Reviewer. Người này không còn xem và duyệt được run của bạn.' };
+  } catch (err) { return failure(err); }
 }
 
 export async function signOut(): Promise<void> {

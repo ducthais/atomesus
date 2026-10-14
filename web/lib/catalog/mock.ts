@@ -5,6 +5,7 @@
  */
 import type { Check, Log, Plan } from '../studio.ts';
 import type { ConnectionSchema, ConnectionTable, UserConnection } from '../user-connections.ts';
+import type { LinkedReviewer } from '../invite.ts';
 import type { CatalogRun, Dataset, Domain, GlossaryTerm, Orchestration, Person, PolicyFile, Relationship, Snapshot } from './types.ts';
 
 export const PEOPLE: Person[] = [
@@ -20,6 +21,11 @@ export const USER_CONNECTIONS: UserConnection[] = [
     database: 'sales', user: 'reader', sslmode: 'require', created_at: 1790902800, selection: { schema: 'public', tables: ['orders', 'customers'] } },
   { id: 'b98de76543214abc901234567890abcd', owner_id: 'minh', name: 'Kho dữ liệu báo cáo', host: 'reports.example.vn', port: 5432,
     database: 'reports', user: 'readonly', sslmode: 'require', created_at: 1790989200, selection: null },
+];
+/** Reviewer đã liên kết với Engineer mock (minh): cặp demo không gỡ được và một Reviewer nhận link mời. */
+export const LINKED_REVIEWERS: LinkedReviewer[] = [
+  { id: 'lan', username: null, name: 'Lan Phạm', linked_at: null, demo: true },
+  { id: 'user_mock_reviewer', username: 'hoa.vu', name: 'Hoa Vũ', linked_at: 1791507600, demo: false },
 ];
 export const USER_CONNECTION_SCHEMAS: ConnectionSchema[] = [{ name: 'public', table_count: 2 }, { name: 'archive', table_count: 1 }];
 export const USER_CONNECTION_TABLES: Record<string, ConnectionTable[]> = {
