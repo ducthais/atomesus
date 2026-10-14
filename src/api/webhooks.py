@@ -9,7 +9,7 @@ ký → 401, cả hai trước khi đọc body; body lớn hơn MAX_BODY_BYTES �
   thay đổi của run. Merge / CI đến sau callback deployer vẫn ghi vào deployment (giữ status). Sự kiện đến khi Deploy
   chưa lưu pull request được giữ lại và áp khi lưu (`replay_pending`).
 - `POST /deployments/callback` (X-Atomesus-Signature, PIPELINE_DEPLOYER_SECRET): deployer báo deployed / failed →
-  DEPLOYED / DEPLOY_FAILED (hợp đồng chung trong kế hoạch DEPLOY-PR).
+  DEPLOYED / DEPLOY_FAILED (hợp đồng chung trong kế hoạch DEPLOY-PR; commit_sha null khi cài từ hộp thư release).
 
 Secret không bao giờ ghi vào log, response hay RunReport.
 """
@@ -370,7 +370,8 @@ class DeployCallback(BaseModel):
     version: int = Field(ge=1)
     files_hash: str = Field(min_length=1, max_length=200)
     model_name: str = Field(min_length=1, max_length=200)
-    commit_sha: str = Field(pattern=GIT_SHA)
+    # Null khi deployer cài bundle của hộp thư release (PIPELINE_DEPLOY_MODE=direct): không có commit git.
+    commit_sha: str | None = Field(default=None, pattern=GIT_SHA)
     status: Literal["deployed", "failed"]
     detail: str = ""
     at: datetime
@@ -456,8 +457,9 @@ async def deployer_callback(
         fields = ", ".join(".".join(str(p) for p in error["loc"]) or "body" for error in exc.errors())
         raise HTTPException(422, f"Callback không đúng hợp đồng (trường lỗi: {fields}).") from None
     secrets = (deployer.secret, github.webhook_secret, github.token)
-    if _redact(result.commit_sha, *secrets) != result.commit_sha or any(
-        result.commit_sha in secret.get_secret_value() for secret in secrets
+    if result.commit_sha is not None and (
+        _redact(result.commit_sha, *secrets) != result.commit_sha
+        or any(result.commit_sha in secret.get_secret_value() for secret in secrets)
     ):
         # Không nhận cả phần mã commit bị cắt từ secret dạng hex.
         raise HTTPException(422, "Callback không đúng hợp đồng (trường lỗi: commit_sha).")

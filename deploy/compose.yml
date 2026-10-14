@@ -50,7 +50,12 @@ services:
 
   backend:
     <<: *app
+    environment:
+      # direct (mặc định): Deploy ghi bundle vào ../data/releases/inbox, deployer cài; pr: mở pull request (mục 6).
+      PIPELINE_DEPLOY_MODE: ${PIPELINE_DEPLOY_MODE:-direct}
+      PIPELINE_RELEASE_DIR: /app/data/releases
     volumes:
+      # Gồm cả hộp thư release data/releases: backend chỉ ghi inbox/, không đụng done/ và rejected/
       - ../data:/app/data
       # Day 2 đọc pipeline đang chạy; không ghi được
       - { type: volume, source: dagster_code, target: /app/data/dagster_local, read_only: true, volume: { nocopy: true } }
@@ -82,8 +87,9 @@ services:
       backend: { condition: service_started }
       deployer: { condition: service_started }  # deployer tạo workspace.yaml (rỗng) trong dagster_code
 
-  # Kéo nhánh mặc định của repo pipeline bằng deploy key CHỈ ĐỌC, kiểm manifest, cài vào dagster_code, báo backend
-  # (scripts/deployer.py). Không dùng ../.env: không có OpenAI key hay mật khẩu nguồn, chỉ các biến dưới đây. Luôn chạy;
+  # PIPELINE_DEPLOY_MODE=direct (mặc định): cài bundle backend ghi vào hộp thư release ../data/releases, không cần
+  # git hay deploy key. pr: kéo nhánh mặc định của repo pipeline bằng deploy key CHỈ ĐỌC. Cả hai kiểm manifest, cài
+  # vào dagster_code, báo backend (scripts/deployer.py). Không dùng ../.env: không có OpenAI key hay mật khẩu nguồn, chỉ các biến dưới đây. Luôn chạy;
   # chưa cấu hình (docs/deploy.md mục 6) thì chỉ ghi log nhắc và nằm chờ, Dagster chạy với danh sách pipeline rỗng.
   #
   # Image: image app của backend (cùng code, cùng thư viện, build trước) thêm git + openssh-client để fetch qua SSH.
@@ -108,6 +114,8 @@ services:
     image: atomesus-deployer
     command: ["python", "scripts/deployer.py"]
     environment:
+      PIPELINE_DEPLOY_MODE: ${PIPELINE_DEPLOY_MODE:-direct}
+      PIPELINE_RELEASE_DIR: /app/data/releases
       DEPLOYER_REPO_URL: ${DEPLOYER_REPO_URL:-}
       PIPELINE_DEPLOYER_SECRET: ${PIPELINE_DEPLOYER_SECRET:-}
       DEPLOYER_INTERVAL_SEC: ${DEPLOYER_INTERVAL_SEC:-60}
@@ -124,6 +132,8 @@ services:
     volumes:
       - dagster_code:/app/data/dagster_local
       - deployer_state:/app/state
+      # Hộp thư release (direct): đọc bundle trong inbox/, chuyển sang done/ hoặc rejected/ sau khi xử lý
+      - ../data/releases:/app/data/releases
       - ${DEPLOYER_SSH_DIR:-/etc/atomesus-deployer}:/run/secrets/deployer:ro
     healthcheck:
       disable: true  # không phục vụ HTTP; HEALTHCHECK của image app (cổng 8000) không áp dụng

@@ -7,7 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from src.codegen.github import GithubClient, GithubError
 from src.codegen.render import file_hashes
-from src.deployer.manifest import ManifestError
+from src.deployer.manifest import ManifestError, build_manifest
+from src.deployer.release import ReleaseError, write_bundle
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
@@ -289,6 +290,45 @@ def _merge_deployment(current: RunReport, opened: Deployment) -> dict:
     return opened.model_dump()
 
 
+def _deploy_direct(config: PipelineSettings, report: RunReport, files: dict[str, str]) -> RunReport:
+    """Chế độ direct (ADR D6): ghi bundle bất biến của bộ file đã duyệt vào hộp thư release, service deployer cài và
+    báo kết quả qua callback. Status giữ APPROVED, stage_reached deploy như sau khi mở pull request (không có
+    deployment vì không có pull request). Gọi lại an toàn: bundle đã ghi thì không ghi lại."""
+    approval = report.approval
+    try:
+        manifest = build_manifest(
+            run_id=report.run_id,
+            version=report.version,
+            model_name=(report.spec or {}).get("transform", {}).get("model_name", ""),
+            files=files,
+            reviewer=approval.reviewer,
+            approved_at=approval.at,
+        )
+        if manifest["files_hash"] != report.files_hash:
+            raise ManifestError("Bộ file không khớp chữ ký duyệt nên không ghi bundle release.")
+        write_bundle(config.release_dir, manifest, files)
+    except (ManifestError, ReleaseError) as exc:
+        raise HTTPException(409, str(exc)) from None
+    except OSError as exc:
+        error = {"stage": "deploy", "error": f"Ghi bundle vào hộp thư release thất bại ({type(exc).__name__})."}
+        _record_deploy(
+            config.store_path,
+            report,
+            lambda current: current.model_copy(
+                update={"stage_reached": "deploy", "error_trace": [*current.error_trace, error]}
+            ),
+        )
+        raise HTTPException(503, "Không ghi được bundle vào hộp thư release, thử Deploy lại sau.") from None
+    queued = _record_deploy(
+        config.store_path, report, lambda current: current.model_copy(update={"stage_reached": "deploy"})
+    )
+    if queued is None:
+        raise HTTPException(
+            409, "Đã gửi bản đã duyệt cho deployer nhưng run vừa thay đổi; tải lại run để xem trạng thái."
+        )
+    return queued
+
+
 @router.post("/{run_id}/deploy", response_model=RunReport)
 def deploy_run(
     run_id: str,
@@ -298,9 +338,13 @@ def deploy_run(
     github: GithubClient = Depends(pipeline_github),
     make_deps: Callable[[], Any] = Depends(rework_deps),
 ) -> RunReport:
-    """P16: mở pull request chứa đúng bộ file đã duyệt vào repo pipeline (SPEC §9.5, FR-17).
+    """P16: đưa đúng bộ file đã duyệt lên production (SPEC §9.5, FR-17, ADR D6).
 
-    Không merge, không ghi Dagster; status giữ APPROVED đến khi deploy production xong. Gọi lại an toàn: pull request
+    PIPELINE_DEPLOY_MODE=direct (mặc định): ghi bundle vào hộp thư release, deployer cài không cần merge (_deploy_direct).
+    PIPELINE_DEPLOY_MODE=pr: mở pull request chứa bộ file vào repo pipeline. Cả hai qua cùng kiểm tra quyền, chữ ký
+    duyệt, files_hash và giữ tên model.
+
+    Chế độ pr không merge, không ghi Dagster; status giữ APPROVED đến khi deploy production xong. Gọi lại an toàn: pull request
     đã mở thì trả lại pull request đó (giữ CI / merge webhook đã ghi), đã merge thì trả run như đang lưu. Lỗi GitHub ghi error_trace stage deploy và giữ APPROVED để bấm Deploy lại.
     Sự kiện GitHub đến trong lúc chờ mở pull request (CI, đóng, merge) được webhook giữ lại và áp ngay sau khi lưu.
     """
@@ -339,6 +383,8 @@ def deploy_run(
     # Giữ tên model trước khi mở pull request: hai chủ deploy cùng tên cùng lúc thì chỉ một người đi tiếp.
     if taken := claim_model(config.store_path, report):
         raise HTTPException(409, f"Tên pipeline {taken} đã có người dùng khác dùng, hãy đổi tên model.")
+    if config.deploy_mode == "direct":
+        return _deploy_direct(config, report, files)
     try:
         deployment = open_pull_request(report, files, github)
     except ManifestError as exc:

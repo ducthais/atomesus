@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from src.deployer import install, service, verify
+from src.deployer import install, release, service, verify
 from src.deployer.manifest import build_manifest
 from src.deployer.service import CALLBACK_PATH, SIGNATURE_HEADER, Config, DeployerError
 from tests.test_deployer.test_verify import Clock, Dagster
@@ -119,6 +119,7 @@ def config(tmp_path, remote):
         secret=SECRET,
         deploy_dir=str(tmp_path / "deploy"),
         state_dir=str(tmp_path / "state"),
+        mode="pr",
     )
 
 
@@ -460,7 +461,9 @@ def test_reinstall_installs_every_pipeline_again(config, remote, installs):
 
 def test_git_error_does_not_leak_repo_url(tmp_path):
     url = str(tmp_path / "khong-co-repo-token-bi-mat")
-    config = Config(repo_url=url, secret=SECRET, deploy_dir=str(tmp_path / "d"), state_dir=str(tmp_path / "s"))
+    config = Config(
+        repo_url=url, secret=SECRET, deploy_dir=str(tmp_path / "d"), state_dir=str(tmp_path / "s"), mode="pr"
+    )
 
     with pytest.raises(DeployerError) as error:
         run(config, Backend())
@@ -513,12 +516,22 @@ def test_http_post_returns_error_status_instead_of_raising():
 @pytest.mark.parametrize(
     ("env", "message"),
     [
-        ({}, "DEPLOYER_REPO_URL"),
+        ({"PIPELINE_DEPLOY_MODE": "pr"}, "DEPLOYER_REPO_URL"),
         ({"DEPLOYER_REPO_URL": "git@github.com:o/r.git"}, "PIPELINE_DEPLOYER_SECRET"),
+        ({}, "PIPELINE_DEPLOYER_SECRET"),
+        ({"PIPELINE_DEPLOYER_SECRET": "s", "PIPELINE_DEPLOY_MODE": "git"}, "PIPELINE_DEPLOY_MODE"),
         ({"DEPLOYER_REPO_URL": "u", "PIPELINE_DEPLOYER_SECRET": "s", "DEPLOYER_INTERVAL_SEC": "x"}, "số giây"),
         ({"DEPLOYER_REPO_URL": "u", "PIPELINE_DEPLOYER_SECRET": "s", "DEPLOYER_INTERVAL_SEC": "1"}, "5 giây"),
         ({"DEPLOYER_REPO_URL": "u", "PIPELINE_DEPLOYER_SECRET": "s", "DEPLOYER_BACKEND_URL": "backend"}, "http"),
-        ({"DEPLOYER_REPO_URL": "u", "PIPELINE_DEPLOYER_SECRET": "s", "DEPLOYER_SSH_KEY": "/khong/co"}, "khóa SSH"),
+        (
+            {
+                "PIPELINE_DEPLOY_MODE": "pr",
+                "DEPLOYER_REPO_URL": "u",
+                "PIPELINE_DEPLOYER_SECRET": "s",
+                "DEPLOYER_SSH_KEY": "/khong/co",
+            },
+            "khóa SSH",
+        ),
     ],
 )
 def test_config_rejects_missing_or_invalid_env(env, message):
@@ -611,7 +624,14 @@ def test_git_errors_never_include_key_paths_or_expanded_remote(config, monkeypat
 
 def test_config_rejects_unreadable_known_hosts():
     with pytest.raises(DeployerError, match="DEPLOYER_KNOWN_HOSTS"):
-        Config.from_env({"DEPLOYER_REPO_URL": "u", "PIPELINE_DEPLOYER_SECRET": "s", "DEPLOYER_KNOWN_HOSTS": "/missing"})
+        Config.from_env(
+            {
+                "PIPELINE_DEPLOY_MODE": "pr",
+                "DEPLOYER_REPO_URL": "u",
+                "PIPELINE_DEPLOYER_SECRET": "s",
+                "DEPLOYER_KNOWN_HOSTS": "/missing",
+            }
+        )
 
 
 def test_compose_has_only_one_code_location_writer_and_a_separate_git_image():
@@ -811,3 +831,168 @@ def test_failed_verification_callback_retries_without_reinstall_or_launch(config
     assert run(config, backend)["unresolved"] == {"fct_x": "failed"}
     assert installs == ["fct_x"] and len(dagster.launches) == 1
     assert backend.payloads()[0]["status"] == "failed"
+
+
+# Chế độ direct: hộp thư release thay cho repo pipeline -------------------------------------------------------------
+
+
+@pytest.fixture
+def direct(tmp_path):
+    """Deployer chế độ direct: không có repo git nào, chỉ hộp thư release."""
+    return Config(
+        repo_url="",
+        secret=SECRET,
+        deploy_dir=str(tmp_path / "deploy"),
+        state_dir=str(tmp_path / "state"),
+        release_dir=str(tmp_path / "releases"),
+    )
+
+
+def bundle(config, files: dict[str, str], version: int, run_id: str = "run-1", model: str = "fct_x") -> Path:
+    """Bundle đúng như backend ghi khi Deploy ở chế độ direct."""
+    manifest = build_manifest(
+        run_id=run_id,
+        version=version,
+        model_name=model,
+        files=files,
+        reviewer="an",
+        approved_at=datetime(2026, 10, 10, tzinfo=UTC),
+    )
+    return release.write_bundle(config.release_dir, manifest, files)
+
+
+def released(config, folder: str) -> list[str]:
+    path = Path(config.release_dir) / folder
+    return sorted(entry.name for entry in path.iterdir()) if path.is_dir() else []
+
+
+def test_config_defaults_to_direct_without_git_settings(tmp_path):
+    config = Config.from_env({"PIPELINE_DEPLOYER_SECRET": "s", "DEPLOYER_SSH_KEY": str(tmp_path / "khong-co-khoa")})
+
+    assert config.mode == "direct" and config.repo_url == "" and config.ssh_key == ""
+    assert config.release_dir == "data/releases"
+    assert Config.from_env({"PIPELINE_DEPLOYER_SECRET": "s", "PIPELINE_RELEASE_DIR": "/r"}).release_dir == "/r"
+
+
+def test_direct_installs_valid_bundle_reports_deployed_and_moves_it_to_done(direct, installs, dagster, monkeypatch):
+    monkeypatch.setattr(service, "fetch", lambda *_args: pytest.fail("chế độ direct không được gọi git"))
+    path = bundle(direct, files_v(1), 1)
+    assert path.parent.name == "inbox" and path.name == "run-1-v1"
+    backend = Backend()
+
+    summary = run(direct, backend)
+
+    assert summary == {"head": None, "applied": None, "models": ["run-1-v1"], "pending": 0, "unresolved": {}}
+    assert installs == ["fct_x"] and len(dagster.launches) == 1
+    sql = Path(direct.deploy_dir) / "fct_x/dbt_project/models/gold/fct_x.sql"
+    assert sql.read_text(encoding="utf-8") == "select 1 as n\n"
+    assert released(direct, "inbox") == [] and released(direct, "done") == ["run-1-v1"]
+    [(url, body, headers)] = backend.calls
+    assert url == "http://backend:8000" + CALLBACK_PATH
+    assert headers[SIGNATURE_HEADER] == "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    payload = json.loads(body)
+    manifest = json.loads((Path(direct.release_dir) / "done/run-1-v1/manifest.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "deployed" and payload["commit_sha"] is None
+    assert (payload["run_id"], payload["version"], payload["model_name"]) == ("run-1", 1, "fct_x")
+    assert payload["files_hash"] == manifest["files_hash"] and "dagster-run-1" in payload["detail"]
+
+
+def test_direct_bundle_with_one_changed_byte_is_rejected_and_reported_failed(direct, installs, dagster):
+    path = bundle(direct, files_v(1), 1)
+    sql = path / "dbt_project/models/gold/fct_x.sql"
+    sql.write_bytes(sql.read_bytes().replace(b"select 1", b"select 2"))
+    backend = Backend()
+
+    summary = run(direct, backend)
+
+    assert installs == [] and dagster.launches == [], "bundle lệch manifest thì không cài"
+    assert released(direct, "inbox") == [] and released(direct, "rejected") == ["run-1-v1"]
+    [payload] = backend.payloads()
+    assert payload["status"] == "failed" and payload["run_id"] == "run-1" and "sha256" in payload["detail"]
+    assert summary["pending"] == 0 and summary["unresolved"] == {}
+
+
+def test_direct_bundle_with_extra_file_or_wrong_name_is_rejected(direct, installs):
+    extra = bundle(direct, files_v(1), 1)
+    (extra / "infra/them.py").write_text("print('lạ')\n", encoding="utf-8")
+    renamed = bundle(direct, files_v(2), 2, run_id="run-2")
+    renamed.rename(renamed.with_name("run-9-v2"))
+    backend = Backend()
+
+    run(direct, backend)
+
+    assert installs == [] and released(direct, "rejected") == ["run-1-v1", "run-9-v2"]
+    details = {p["run_id"]: p["detail"] for p in backend.payloads()}
+    assert "thừa" in details["run-1"] and "run-9-v2" in details["run-2"]
+
+
+def test_direct_bundle_without_readable_manifest_is_rejected_without_callback(direct, installs):
+    path = bundle(direct, files_v(1), 1)
+    (path / "manifest.json").write_text("{hỏng", encoding="utf-8")
+    backend = Backend()
+
+    run(direct, backend)
+
+    assert installs == [] and backend.calls == [] and released(direct, "rejected") == ["run-1-v1"]
+
+
+def test_direct_rerun_does_not_install_or_report_twice(direct, installs, dagster, monkeypatch):
+    path = bundle(direct, files_v(1), 1)
+    real_archive = release.archive
+
+    def crash(*_args):
+        raise OSError("deployer tắt trước khi kịp chuyển bundle")
+
+    monkeypatch.setattr(release, "archive", crash)
+    with pytest.raises(OSError):
+        run(direct, Backend())
+    assert installs == ["fct_x"] and path.is_dir(), "đã cài nhưng bundle còn trong inbox"
+
+    monkeypatch.setattr(release, "archive", real_archive)
+    backend = Backend()
+    summary = run(direct, backend)
+
+    assert installs == ["fct_x"] and len(dagster.launches) == 1, "chạy lại không cài lại cùng bundle"
+    assert [p["status"] for p in backend.payloads()] == ["deployed"], "callback chưa báo được thì báo đúng một lần"
+    assert summary["models"] == [] and released(direct, "done") == ["run-1-v1"]
+
+    again = Backend()
+    assert run(direct, again)["models"] == [] and again.calls == [] and installs == ["fct_x"]
+
+
+def test_direct_writing_the_same_bundle_again_is_idempotent(direct, installs):
+    first = bundle(direct, files_v(1), 1)
+    assert bundle(direct, files_v(1), 1) == first
+    run(direct, Backend())
+    assert bundle(direct, files_v(1), 1).parent.name == "done", "đã cài: không ghi lại vào inbox"
+    assert released(direct, "inbox") == [] and installs == ["fct_x"]
+    with pytest.raises(release.ReleaseError):
+        bundle(direct, files_v(2), 1)
+
+
+def test_direct_install_failure_keeps_bundle_for_retry(direct, installs, monkeypatch):
+    def broken(_root):
+        raise OSError("đĩa đầy")
+
+    monkeypatch.setattr(install, "_compile_manifest", broken)
+    bundle(direct, files_v(1), 1)
+    backend = Backend()
+
+    summaries = [run(direct, backend) for _ in range(service.INSTALL_ATTEMPTS)]
+
+    assert [s["unresolved"] for s in summaries[:-1]] == [{"run-1-v1": "retry"}] * (service.INSTALL_ATTEMPTS - 1)
+    assert summaries[-1]["unresolved"] == {} and released(direct, "done") == ["run-1-v1"]
+    assert [p["status"] for p in backend.payloads()] == ["failed"]
+
+
+def test_compose_shares_release_inbox_and_deploy_mode_between_backend_and_deployer():
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    services = yaml.safe_load((root / "deploy/compose.yml").read_text(encoding="utf-8"))["services"]
+    for name in ("backend", "deployer"):
+        environment = services[name]["environment"]
+        assert environment["PIPELINE_DEPLOY_MODE"] == "${PIPELINE_DEPLOY_MODE:-direct}"
+        assert environment["PIPELINE_RELEASE_DIR"] == "/app/data/releases"
+    assert "../data:/app/data" in services["backend"]["volumes"]
+    assert "../data/releases:/app/data/releases" in services["deployer"]["volumes"]

@@ -18,6 +18,13 @@ Kết quả từng pipeline lưu trong state.json theo sha cây git của `pipel
 pipeline bị từ chối, cài lỗi, backend từ chối báo hay manifest không đọc được thì giữ chưa xong (commit đã áp dụng
 không tiến), không cài/báo lặp lại cùng nội dung đó; nội dung mới (version mới) hoặc `--reinstall` thì xử lý lại.
 
+Chế độ deploy trực tiếp (PIPELINE_DEPLOY_MODE=direct, mặc định; ADR D6): không dùng git, không cần repo hay khóa SSH.
+Mỗi chu kỳ báo nốt kết quả chưa báo, rồi quét hộp thư release (release.py) theo thứ tự cũ trước: mỗi bundle kiểm
+manifest + sha256 từng file (manifest.py), cài và chạy thử như trên, báo backend qua cùng callback ký HMAC (không có
+commit_sha), rồi chuyển bundle sang done/ (bundle sai: rejected/). Kết quả lưu trong state.json theo tên bundle nên
+chạy lại (kể cả khi deployer tắt trước lúc kịp chuyển bundle) không cài hay báo trùng; lỗi lúc cài giữ bundle trong
+inbox/ để thử lại như trên.
+
 URL repo, khóa SSH và secret chỉ đọc từ biến môi trường, không bao giờ ghi ra log.
 """
 
@@ -38,7 +45,7 @@ from http.client import HTTPException
 from pathlib import Path
 from uuid import uuid4
 
-from src.deployer import install, verify
+from src.deployer import install, release, verify
 from src.deployer.manifest import (
     MANIFEST_FILE,
     REPORT_FILE,
@@ -68,6 +75,7 @@ INSTALL_ATTEMPTS = 3
 # là xong; `reporting` chờ báo, `retry` chờ cài lại; `failed`, `refused`, `unreported` chờ nội dung mới / --reinstall.
 DONE = "done"
 STATUSES = {DONE, "reporting", "retry", "failed", REFUSED, "unreported"}
+DEPLOY_MODES = ("direct", "pr")
 
 
 class DeployerError(RuntimeError):
@@ -86,13 +94,19 @@ class Config:
     interval: int = 60
     dagster_url: str = field(default="http://dagster:3070", repr=False)
     verify_timeout_sec: int = 120
+    # direct: cài bundle trong hộp thư release (không git); pr: kéo nhánh mặc định của repo pipeline.
+    mode: str = "direct"
+    release_dir: str = "data/releases"
 
     @classmethod
     def from_env(cls, env=None) -> "Config":
         env = os.environ if env is None else env
+        mode = env.get("PIPELINE_DEPLOY_MODE", "direct").strip().lower() or "direct"
+        if mode not in DEPLOY_MODES:
+            raise DeployerError("PIPELINE_DEPLOY_MODE phải là direct hoặc pr.")
         repo_url = env.get("DEPLOYER_REPO_URL", "").strip()
         secret = env.get("PIPELINE_DEPLOYER_SECRET", "")
-        if not repo_url:
+        if mode == "pr" and not repo_url:
             raise DeployerError("Thiếu DEPLOYER_REPO_URL (URL SSH của repo pipeline).")
         if not secret:
             raise DeployerError("Thiếu PIPELINE_DEPLOYER_SECRET (khóa ký callback, cùng giá trị với backend).")
@@ -119,13 +133,14 @@ class Config:
             raise DeployerError("DEPLOYER_VERIFY_TIMEOUT_SEC phải là số giây nguyên dương.") from None
         if verify_timeout_sec < 1:
             raise DeployerError("DEPLOYER_VERIFY_TIMEOUT_SEC phải từ 1 giây trở lên.")
-        ssh_key = env.get("DEPLOYER_SSH_KEY", "")
+        # Khóa SSH chỉ cần ở chế độ pr: direct không fetch git nên thiếu deploy key không chặn khởi động.
+        ssh_key = env.get("DEPLOYER_SSH_KEY", "") if mode == "pr" else ""
         if ssh_key and not Path(ssh_key).is_file():
             raise DeployerError(
                 "Không đọc được file khóa SSH ở DEPLOYER_SSH_KEY; kiểm tra mount chỉ đọc của deploy key."
             )
         known_hosts = env.get("DEPLOYER_KNOWN_HOSTS", "") or DEFAULT_KNOWN_HOSTS
-        if not Path(known_hosts).is_file():
+        if mode == "pr" and not Path(known_hosts).is_file():
             raise DeployerError("Không đọc được DEPLOYER_KNOWN_HOSTS; cần file khóa host SSH đã xác minh.")
         return cls(
             repo_url=repo_url,
@@ -138,6 +153,8 @@ class Config:
             interval=interval,
             dagster_url=dagster_url,
             verify_timeout_sec=verify_timeout_sec,
+            mode=mode,
+            release_dir=env.get("PIPELINE_RELEASE_DIR", "data/releases"),
         )
 
 
@@ -351,7 +368,8 @@ def _flush(config: Config, state: dict, post, sleep) -> bool:
 # Cài đặt ------------------------------------------------------------------------------------------------------------
 
 
-def _payload(manifest: dict, model: str, head: str, status: str, detail: str) -> dict:
+def _payload(manifest: dict, model: str, head: str | None, status: str, detail: str) -> dict:
+    # head None: bundle của hộp thư release, không có commit git (callback nhận commit_sha null).
     return {
         "run_id": manifest["run_id"],
         "version": manifest["version"],
@@ -405,6 +423,13 @@ def apply_pipeline(config: Config, head: str, model: str) -> tuple[str, dict | N
             log.error("Manifest của %s không có run_id/version/files_hash hợp lệ nên không báo được backend.", model)
             return "rejected", None
         return "rejected", _payload(identity, model, head, "failed", f"Manifest không hợp lệ: {exc}")
+    return _install_checked(config, model, files, manifest, head, f"commit {head[:12]}")
+
+
+def _install_checked(
+    config: Config, model: str, files: dict[str, str], manifest: dict, commit_sha: str | None, source: str
+) -> tuple[str, dict]:
+    """Cài bộ file đã qua kiểm manifest rồi chạy thử mức D2; `source` (commit / bundle) chỉ để ghi log và callback."""
     dagster_run_id = None
 
     def confirm(_target: Path) -> None:
@@ -418,15 +443,15 @@ def apply_pipeline(config: Config, head: str, model: str) -> tuple[str, dict | N
     except verify.VerificationError as exc:
         detail = f"{exc} Đã quay về bản trước; lần cài đầu thì gỡ code location."
         log.error("Chạy thử %s lỗi: %s", model, detail)
-        return "verify_failed", _payload(manifest, model, head, "failed", detail)
+        return "verify_failed", _payload(manifest, model, commit_sha, "failed", detail)
     except (OSError, subprocess.SubprocessError, ManifestError) as exc:
         log.error("Cài %s lỗi, giữ bản đang chạy: %s", model, exc)
         return "install_failed", _payload(
-            manifest, model, head, "failed", f"Cài lên Dagster lỗi, giữ bản đang chạy: {exc}"
+            manifest, model, commit_sha, "failed", f"Cài lên Dagster lỗi, giữ bản đang chạy: {exc}"
         )
-    log.info("Đã cài %s v%s (run %s) từ commit %s.", model, manifest["version"], manifest["run_id"], head[:12])
+    log.info("Đã cài %s v%s (run %s) từ %s.", model, manifest["version"], manifest["run_id"], source)
     return "deployed", _payload(
-        manifest, model, head, "deployed", f"Chạy thử Dagster SUCCESS (run {dagster_run_id}), commit {head[:12]}."
+        manifest, model, commit_sha, "deployed", f"Chạy thử Dagster SUCCESS (run {dagster_run_id}), {source}."
     )
 
 
@@ -451,9 +476,104 @@ def _process(config: Config, state: dict, head: str, model: str, tree: str | Non
     return True
 
 
+def apply_bundle(
+    config: Config, name: str, files: dict[str, str], irregular: list[str], manifest_text: str | None
+) -> tuple[str, dict | None]:
+    """Kiểm rồi cài một bundle của hộp thư release (`files` không gồm manifest.json). Kết quả như apply_pipeline:
+    `deployed`, `rejected` (callback None nếu manifest không có danh tính để báo), `install_failed`, `verify_failed`."""
+    try:
+        if irregular:
+            raise ManifestError(f"Chỉ cài file thường UTF-8; bundle {name} có {', '.join(irregular)}.")
+        if manifest_text is None:
+            raise ManifestError(f"Thiếu {MANIFEST_FILE} trong bundle {name}.")
+        manifest = load_json(manifest_text, MANIFEST_FILE)
+        verify_manifest(manifest, files)
+        if release.bundle_name(manifest["run_id"], manifest["version"]) != name:
+            raise ManifestError(
+                f"Manifest ghi run {manifest['run_id']} v{manifest['version']} nhưng bundle tên {name}."
+            )
+    except ManifestError as exc:
+        log.error("Không cài bundle %s: %s", name, exc)
+        identity = _identity(manifest_text)
+        if identity is None:
+            log.error(
+                "Manifest của bundle %s không có run_id/version/files_hash hợp lệ nên không báo được backend.", name
+            )
+            return "rejected", None
+        model = identity["model_name"]
+        return "rejected", _payload(identity, model, None, "failed", f"Manifest không hợp lệ: {exc}")
+    return _install_checked(config, manifest["model_name"], files, manifest, None, f"bundle {name}")
+
+
+def _process_bundle(config: Config, state: dict, path: Path) -> tuple[str | None, bool]:
+    """Kiểm và cài một bundle, ghi kết quả vào state (theo model, `tree` là tên bundle), callback vào hàng chờ.
+
+    Trả (thư mục chuyển bundle tới: done / rejected, None nếu giữ trong inbox để cài lại; đã kiểm/cài ở lần gọi này
+    chưa). Bundle đã xử lý rồi (deployer dừng trước khi kịp chuyển) thì chỉ trả thư mục, không cài và báo lặp lại.
+    """
+    files, irregular = release.read_bundle(path)
+    manifest_text = files.pop(MANIFEST_FILE, None)
+    identity = _identity(manifest_text)
+    model = identity["model_name"] if identity else None
+    record = state["models"].get(model) if model else None
+    same = record is not None and record["tree"] == path.name
+    if same and record["status"] != "retry":
+        return record.get("folder", release.DONE), False
+    attempts = record["attempts"] + 1 if same else 1
+    outcome, payload = apply_bundle(config, path.name, files, irregular, manifest_text)
+    folder = release.REJECTED if outcome == "rejected" else release.DONE
+    if outcome == "install_failed" and attempts < INSTALL_ATTEMPTS:
+        log.warning(
+            "Sẽ cài lại bundle %s ở chu kỳ sau (lần %d/%d); chưa báo backend.", path.name, attempts, INSTALL_ATTEMPTS
+        )
+        status, folder = "retry", None
+    elif payload is None:
+        status = "unreported"
+    else:
+        status = "reporting"
+        state["pending"].append({"tree": path.name, "payload": payload})
+    if model:
+        record = {"tree": path.name, "status": status, "attempts": attempts, "folder": folder or release.DONE}
+        state["models"][model] = record
+    return folder, True
+
+
+def run_inbox(config: Config, *, post=http_post, sleep=time.sleep) -> dict:
+    """Một chu kỳ ở chế độ direct: cài các bundle trong hộp thư release. Tóm tắt cùng dạng run_once: `head` luôn None,
+    `models` là bundle vừa kiểm/cài, `unresolved` là bundle còn chờ cài lại ({tên bundle: "retry"})."""
+    state = load_state(config)
+    if not (Path(config.deploy_dir) / "workspace.yaml").exists():
+        install.write_workspace(config.deploy_dir)
+    if not _flush(config, state, post, sleep):
+        log.warning("Còn %d kết quả chưa báo được backend; chưa cài bundle mới.", len(state["pending"]))
+        return {"head": None, "applied": None, "models": [], "pending": len(state["pending"]), "unresolved": {}}
+    processed, unresolved = [], {}
+    for path in release.pending_bundles(config.release_dir):
+        folder, checked = _process_bundle(config, state, path)
+        save_state(config, state)  # callback chờ báo được lưu trước khi chuyển bundle: tắt giữa chừng thì lần sau báo
+        if checked:
+            processed.append(path.name)
+        if folder is None:
+            unresolved[path.name] = "retry"
+        else:
+            release.archive(config.release_dir, path, folder)
+    _flush(config, state, post, sleep)
+    return {
+        "head": None,
+        "applied": None,
+        "models": processed,
+        "pending": len(state["pending"]),
+        "unresolved": unresolved,
+    }
+
+
 def run_once(config: Config, *, reinstall: bool = False, post=http_post, sleep=time.sleep) -> dict:
     """Một chu kỳ deployer; trả tóm tắt để log và test: `head`, `applied`, `models` (pipeline vừa kiểm/cài ở chu kỳ này),
-    `pending` (số callback chưa báo được), `unresolved` (pipeline đổi chưa xong: {model: trạng thái})."""
+    `pending` (số callback chưa báo được), `unresolved` (pipeline đổi chưa xong: {model: trạng thái}).
+
+    Chế độ direct chạy run_inbox (không git; `reinstall` không áp dụng vì bundle đã cài được chuyển sang done/)."""
+    if config.mode == "direct":
+        return run_inbox(config, post=post, sleep=sleep)
     state = load_state(config)
     if not (Path(config.deploy_dir) / "workspace.yaml").exists():
         install.write_workspace(config.deploy_dir)  # Dagster cần workspace.yaml (rỗng) ngay cả khi chưa có pipeline
