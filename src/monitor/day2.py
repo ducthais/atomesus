@@ -21,6 +21,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report import RunReport
 from src.run_report.access import record_system_run_owner, run_owner
+from src.run_report.quota import RunQuotaExceeded
 from src.run_report.store import list_run_reports
 
 Launch = Callable[[RunReport, dict], RunReport]  # tạo run sửa, đưa việc chạy nền đi, trả run vừa ghi
@@ -93,7 +94,10 @@ def check(
     models: Collection[str] | None = None,
 ) -> list[dict]:
     """Chạy 4 luật cho mọi pipeline đã deploy (hoặc chỉ `models`, khi người dùng tự bấm: không đụng pipeline người
-    khác). Trả danh sách việc đã làm (cảnh báo, run sửa, bỏ qua vì cooldown)."""
+    khác). Trả danh sách việc đã làm (cảnh báo, run sửa, bỏ qua vì cooldown, hoãn vì chủ pipeline hết lượt run).
+
+    Chủ một pipeline hết lượt run trong ngày (budgets.yml per_user.max_runs_per_day) chỉ hoãn run sửa của pipeline đó
+    (`quota_exhausted`), các pipeline còn lại vẫn được xét."""
     now = now or datetime.now(UTC)
     actions = []
     for model in runs.deployed_models(settings.deploy_dir):
@@ -127,7 +131,11 @@ def check(
             actions.append({"model": model, "action": "cooldown", "run_id": previous.run_id, "rules": rules})
             continue
         evidence = {"model": model, "detected_at": now.isoformat(), "rules": [f.evidence() for f in fixable]}
-        started = launch(parent, evidence)
+        try:
+            started = launch(parent, evidence)
+        except RunQuotaExceeded as exc:  # chủ pipeline hết lượt run (đã ghi cảnh báo): hoãn, xét tiếp pipeline khác
+            actions.append({"model": model, "action": "quota_exhausted", "rules": rules, "detail": exc.detail})
+            continue
         actions.append({"model": model, "action": "fix_started", "run_id": started.run_id, "rules": rules})
     return actions
 

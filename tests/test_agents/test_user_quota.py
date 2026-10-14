@@ -3,7 +3,7 @@
 import shutil
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -508,6 +508,63 @@ def test_llm_call_tops_up_a_smaller_batch_reservation_and_refuses_unpriced_model
     assert unpriced.llm.limits == []
 
 
+def _reserved_yesterday(store_path: str, run_id: str, usd: float, category: str = "llm:plan:1") -> None:
+    """Khoản giữ chỗ còn lại từ hôm qua (vd mẻ giữ trước 0:00 UTC, chạy sau 0:00)."""
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    with _database(store_path) as conn:
+        conn.execute("INSERT INTO budget_reservations VALUES (?, 1, ?, ?, ?)", (run_id, category, usd, yesterday))
+
+
+def _reservation_day(store_path: str, run_id: str) -> tuple[float, str]:
+    with _database(store_path) as conn:
+        usd, at = conn.execute(
+            "SELECT usd, reserved_at FROM budget_reservations WHERE run_id = ?", (run_id,)
+        ).fetchone()
+    return usd, at[:10]
+
+
+def test_previous_day_reservation_is_rebooked_against_todays_personal_cap(tmp_path):
+    config, policy = _settings(tmp_path), load_policy()
+    today = datetime.now(UTC).date().isoformat()
+    _run(config.store_path, "a0", "minh", usd=0.299)
+    _run(config.store_path, "a1", "minh")
+    _run(config.store_path, "a2", "minh")
+    _reserved_yesterday(config.store_path, "a1", 0.05)
+    _reserved_yesterday(config.store_path, "a2", 0.05)
+
+    # 0.299 + 0.005 > 0.30: khoản 0.05 của hôm qua không được coi là đã giữ cho hôm nay.
+    assert _reserve(config, "a1", 0.005, policy) == (False, pytest.approx(0.299), pytest.approx(0.299))
+    assert budget.reserve_batch_daily(config, [("a2", 1, "llm:plan:1", 0.005)], 2.0, "minh", 0.30)[0] is False
+    assert quota.spent_today(config.store_path, "minh") == pytest.approx(0.299)
+
+    _run(config.store_path, "b1", ENGINEER_B)
+    _run(config.store_path, "b2", ENGINEER_B)
+    _reserved_yesterday(config.store_path, "b1", 0.05)
+    _reserved_yesterday(config.store_path, "b2", 0.05)
+    assert _reserve(config, "b1", 0.005, policy)[0]
+    assert budget.reserve_batch_daily(config, [("b2", 1, "llm:plan:1", 0.02)], 2.0, ENGINEER_B, 0.30)[0]
+    assert _reservation_day(config.store_path, "b1") == (pytest.approx(0.005), today), "chuyển sang hôm nay, đủ số"
+    assert _reservation_day(config.store_path, "b2") == (pytest.approx(0.02), today)
+    assert quota.spent_today(config.store_path, ENGINEER_B) == pytest.approx(0.025)
+    assert _reserve(config, "b1", 0.005, policy)[0], "khoản đã giữ hôm nay vẫn dùng lại được"
+    assert quota.spent_today(config.store_path, ENGINEER_B) == pytest.approx(0.025)
+
+
+def test_previous_day_reservation_is_rebooked_against_todays_global_cap(tmp_path):
+    config, policy = _settings(tmp_path), load_policy()
+    _run(config.store_path, "b1", ENGINEER_B)
+    _run(config.store_path, "b2", ENGINEER_B)
+    _reserved_yesterday(config.store_path, "b1", 0.05)
+    _reserved_yesterday(config.store_path, "b2", 0.05)
+    _reserved_yesterday(config.store_path, "legacy-old", 0.05, category="scan")
+    assert budget.reserve_daily(config, "legacy-run", 1, "scan", 1.995, 2.0)[0]  # trần chung còn 0.005
+
+    assert _reserve(config, "b1", 0.01, policy) == (False, pytest.approx(1.995), None), "chặn bởi trần chung"
+    assert budget.reserve_batch_daily(config, [("b2", 1, "llm:plan:1", 0.01)], 2.0, ENGINEER_B, 0.30)[0] is False
+    assert budget.reserve_daily(config, "legacy-old", 1, "scan", 0.01, 2.0)[0] is False
+    assert budget.spent_today(config) == pytest.approx(1.995)
+
+
 def _regression_runs(store_path: str) -> list[str]:
     with _database(store_path) as conn:
         query = "SELECT run_id FROM run_reports WHERE json_extract(report, '$.trigger') = 'regression'"
@@ -536,24 +593,58 @@ def test_scheduled_regression_fix_claims_the_pipeline_owners_run_slot(tmp_path):
     assert alert["kind"] == "needs_human" and alert["owner"] == "minh" and "hết hạn mức run" in alert["message"]
 
 
+def _degraded(monkeypatch, parents: dict[str, RunReport]) -> None:
+    """Các pipeline `parents` (model → bản đang deploy) đã deploy và đều chậm đi: day2.check thật sẽ tạo run sửa."""
+    from src.monitor import day2
+    from src.monitor.detectors import Finding
+
+    slow = Finding("runtime_regression", 120.0, 60.0, 40.0, "chậm gấp 3 đường cơ sở")
+    monkeypatch.setattr(day2.runs, "deployed_models", lambda deploy_dir: list(parents))
+    monkeypatch.setattr(day2.runs, "deployed_report", lambda store_path, model: parents.get(model))
+    monkeypatch.setattr(day2.runs, "series", lambda store_path, model: {"baseline": None, "runs": []})
+    monkeypatch.setattr(day2.detectors, "detect", lambda series, objectives, now: [slow])
+
+
+def test_scheduled_check_skips_an_exhausted_owner_and_still_repairs_the_next_pipeline(tmp_path, monkeypatch):
+    from src.monitor import alerts, day2
+    from tests.test_agents.test_graph import FakeLLM, deps
+
+    config = _settings(tmp_path)
+    policy = _with_per_user(load_policy(), max_runs_per_day=2)
+    domain = next(iter(policy.objectives))
+    parents = {
+        "a_model": _run(config.store_path, "a-dep", "minh", domain=domain),
+        "b_model": _run(config.store_path, "b-dep", ENGINEER_B, domain=domain),
+    }
+    _run(config.store_path, "a-extra", "minh")  # minh đã dùng đủ 2 run hôm nay, eng.b mới dùng 1
+    _degraded(monkeypatch, parents)
+    submitted = []
+    launch = day2.launcher(deps(FakeLLM(), policy=policy), config.store_path, submitted.append)
+
+    # Như vòng theo lịch (scripts/dagster_local.py collect): xét mọi pipeline, chủ đầu hết lượt không làm dừng cả lượt.
+    actions = day2.check(config, policy, launch)
+
+    assert [(a["model"], a["action"]) for a in actions] == [
+        ("a_model", "quota_exhausted"),
+        ("b_model", "fix_started"),
+    ]
+    assert actions[0]["detail"].startswith("Chủ pipeline đã dùng hết 2 run hôm nay")
+    (fix,) = _regression_runs(config.store_path)
+    assert fix == actions[1]["run_id"] and len(submitted) == 1, "run sửa của pipeline thứ hai vẫn chạy nền"
+    (alert,) = alerts.list_alerts(config.store_path, "a_model")
+    assert alert["kind"] == "needs_human" and alert["owner"] == "minh" and "hết hạn mức run" in alert["message"]
+    assert quota.usage(config.store_path, auth.USERS["minh"], policy.budgets)["runs"]["used"] == 2
+
+
 @pytest.mark.asyncio
 async def test_monitor_check_returns_429_when_the_pipeline_owner_has_no_run_left(quota_env, monkeypatch):
     from src.monitor import alerts
 
+    domain = next(iter(load_policy().objectives))
     parent = RunReport.model_validate_json(
         (FIXTURES_DIR / "ready_for_review.json").read_text(encoding="utf-8")
-    ).model_copy(update={"run_id": "a1"})
-    rules = [{"rule": "runtime_regression", "detail": "chậm"}]
-
-    def check(config, policy, launch, models=None):
-        # Như day2.check: mỗi pipeline suy giảm gọi launch rồi ghi dòng fix_started.
-        actions = []
-        for model in sorted(models):
-            started = launch(parent, {"model": model, "rules": rules})
-            actions.append({"model": model, "action": "fix_started", "run_id": started.run_id, "rules": ["r"]})
-        return actions
-
-    monkeypatch.setattr(monitor.day2, "check", check)
+    ).model_copy(update={"run_id": "a1", "domain": domain})
+    _degraded(monkeypatch, {"orders_model": parent})
     monkeypatch.setattr(monitor, "_own_pipelines", lambda user, config: {"orders_model"})
     app.dependency_overrides[monitor.monitor_deps] = lambda: app.dependency_overrides[routes.agent_deps]()
     try:

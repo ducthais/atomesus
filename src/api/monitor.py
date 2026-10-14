@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from types import SimpleNamespace
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -125,25 +125,12 @@ def check_pipelines(
     Run sửa tính vào lượt run của chủ pipeline: chủ hết lượt thì không tạo run sửa (đã ghi cảnh báo), các pipeline
     khác vẫn được xét; trả 429 kèm danh sách việc đã làm, run sửa đã tạo vẫn chạy nền."""
     _engineer(user)
-    launch, blocked = day2.launcher(deps, config.store_path, background.add_task), {}
-
-    def launch_or_defer(parent: RunReport, evidence: dict):
-        try:
-            return launch(parent, evidence)
-        except RunQuotaExceeded as exc:  # không có run nào được tạo; đánh dấu để thay dòng việc bên dưới
-            blocked[evidence["model"]] = exc
-            return SimpleNamespace(run_id=None)
-
-    actions = day2.check(config, deps.policy, launch_or_defer, models=_own_pipelines(user, config))
-    actions = [
-        {"model": a["model"], "action": "quota_exhausted", "rules": a["rules"], "detail": blocked[a["model"]].detail}
-        if a["action"] == "fix_started" and a["run_id"] is None
-        else a
-        for a in actions
-    ]
+    launch = day2.launcher(deps, config.store_path, background.add_task)
+    actions = day2.check(config, deps.policy, launch, models=_own_pipelines(user, config))
+    blocked = next((a for a in actions if a["action"] == "quota_exhausted"), None)
     if blocked:
-        first = next(iter(blocked.values()))
-        return JSONResponse({"detail": first.detail, "actions": actions}, 429, headers=first.headers)
+        headers = RunQuotaExceeded(blocked["detail"], datetime.now(UTC)).headers
+        return JSONResponse({"detail": blocked["detail"], "actions": actions}, 429, headers=headers)
     return {"actions": actions}
 
 

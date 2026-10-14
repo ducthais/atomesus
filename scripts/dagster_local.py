@@ -172,6 +172,8 @@ def collect() -> None:
             print(
                 f"Day 2 · {action['model']}: {action['action']} {action.get('run_id', action.get('rule'))}", flush=True
             )
+        elif action["action"] == "quota_exhausted":  # chủ pipeline hết lượt run: hoãn run sửa, pipeline khác vẫn xét
+            print(f"Day 2 · {action['model']}: hoãn run sửa — {action['detail']}", flush=True)
 
 
 def main() -> int:

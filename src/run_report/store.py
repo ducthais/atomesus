@@ -314,15 +314,17 @@ def reserve_budget(
 ) -> tuple[bool, float]:
     """Reserve budget under one SQLite write transaction; retries are idempotent.
 
-    Khoản cùng (run, version, category) đã có mà nhỏ hơn `usd` (cổng batch giữ trước per_run.max_usd) thì chỉ giữ thêm
-    phần chênh, qua cùng các trần."""
+    Khoản cùng (run, version, category) đã giữ hôm nay mà nhỏ hơn `usd` (cổng batch giữ trước per_run.max_usd) thì chỉ
+    giữ thêm phần chênh, qua cùng các trần. Khoản giữ từ ngày trước không còn tính vào hôm nay nên không được dùng lại:
+    giữ lại đủ `usd` theo trần hôm nay và chuyển khoản đó sang hôm nay."""
     now = datetime.now(UTC)
     day = now.date().isoformat()
     with _database(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
-            "SELECT usd FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
-            (run_id, version, category),
+            "SELECT usd FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?"
+            " AND substr(reserved_at, 1, 10) = ?",
+            (run_id, version, category, day),
         ).fetchone()
         spent = conn.execute(
             "SELECT coalesce(sum(usd), 0) FROM budget_ledger WHERE substr(spent_at, 1, 10) = ?", (day,)
@@ -337,16 +339,10 @@ def reserve_budget(
             return False, float(spent + reserved)
         if owner_gate and not owner_gate(conn, extra):
             return False, float(spent + reserved)
-        if existing:
-            conn.execute(
-                "UPDATE budget_reservations SET usd = ? WHERE run_id = ? AND version = ? AND category = ?",
-                (usd, run_id, version, category),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
-                (run_id, version, category, usd, now.isoformat()),
-            )
+        conn.execute(
+            "INSERT OR REPLACE INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
+            (run_id, version, category, usd, now.isoformat()),
+        )
         return True, float(spent + reserved)
 
 
@@ -356,7 +352,8 @@ def reserve_budget_batch(
     daily_limit: float,
     owner_gate: OwnerGate | None = None,
 ) -> tuple[bool, float]:
-    """Giữ chỗ cả mẻ trong một transaction; không đủ hạn mức thì không ghi khoản nào."""
+    """Giữ chỗ cả mẻ trong một transaction; không đủ hạn mức thì không ghi khoản nào. Khoản đã giữ hôm nay được bỏ
+    qua; khoản giữ từ ngày trước được giữ lại đủ theo trần hôm nay (như `reserve_budget`)."""
     if len({(run_id, version, category) for run_id, version, category, _usd in reservations}) != len(reservations):
         raise ValueError("Khoản giữ chỗ trong mẻ không được trùng nhau.")
     now = datetime.now(UTC)
@@ -372,8 +369,9 @@ def reserve_budget_batch(
         pending = []
         for run_id, version, category, usd in reservations:
             exists = conn.execute(
-                "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
-                (run_id, version, category),
+                "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?"
+                " AND substr(reserved_at, 1, 10) = ?",
+                (run_id, version, category, day),
             ).fetchone()
             if not exists:
                 pending.append((run_id, version, category, usd, now.isoformat()))
@@ -382,7 +380,7 @@ def reserve_budget_batch(
             return False, current
         if owner_gate and not owner_gate(conn, sum(item[3] for item in pending)):
             return False, current
-        conn.executemany("INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)", pending)
+        conn.executemany("INSERT OR REPLACE INTO budget_reservations VALUES (?, ?, ?, ?, ?)", pending)
         return True, current
 
 
