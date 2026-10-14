@@ -20,7 +20,7 @@ from src.monitor import alerts, detectors, runs
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report import RunReport
-from src.run_report.access import run_owner
+from src.run_report.access import record_system_run_owner, run_owner
 from src.run_report.store import list_run_reports
 
 Launch = Callable[[RunReport, dict], RunReport]  # tạo run sửa, đưa việc chạy nền đi, trả run vừa ghi
@@ -30,7 +30,7 @@ RECENT_RUNS = 1000
 
 def pipeline_owner(store_path: str, parent: RunReport) -> str | None:
     """Chủ pipeline ghi vào cảnh báo: bản đang deploy có thể là run sửa (`system`), nên lần về chủ của run gốc. None:
-    pipeline cũ không rõ chủ, cảnh báo chỉ Admin và cặp demo thấy."""
+    pipeline cũ không rõ chủ, cảnh báo chỉ Admin và cặp demo thấy; UNKNOWN (không lần ra run gốc): chỉ Admin thấy."""
     return run_owner(store_path, parent.run_id)
 
 
@@ -167,10 +167,11 @@ def follow_up(report: RunReport, parent: RunReport, store_path: str, now: dateti
 
 
 def launcher(deps: AgentDeps, store_path: str, submit: Submit) -> Launch:
-    """Launch thật: ghi run sửa, chạy nền (graph + so sánh), xong thì gắn cờ / mời người nếu cần."""
+    """Launch thật: ghi run sửa kèm chủ pipeline, chạy nền (graph + so sánh), xong thì gắn cờ / mời người nếu cần."""
 
     def launch(parent: RunReport, evidence: dict) -> RunReport:
         started, job = start_regression(parent, evidence, deps, store_path)
+        record_system_run_owner(store_path, started.run_id, parent.run_id)
         submit(lambda: follow_up(job(), parent, store_path))
         return started
 

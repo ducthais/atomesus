@@ -955,3 +955,126 @@ async def test_owner_cannot_review_own_system_runs_after_becoming_reviewer(env):
         {"run_id": "run-sys", "ok": False, "status": None, "message": "Không được tự duyệt run của mình."}
     ]
     assert get_run_report(env.config.store_path, "run-sys").status == "READY_FOR_REVIEW"
+
+
+def _system_chain(env, root: str, length: int, prefix: str) -> str:
+    """`length` run hệ thống nối nhau từ `root` (run sửa của run sửa...), không ghi chủ; trả run cuối, chờ duyệt."""
+    store_path = env.config.store_path
+    run_a = get_run_report(store_path, "run-a")
+    parent = root
+    for index in range(length):
+        report = run_a.model_copy(
+            update={
+                "run_id": f"{prefix}-{index}",
+                "created_by": "system",
+                "trigger": "regression",
+                "parent_run_id": parent,
+            }
+        )
+        save_run_report(store_path, report)
+        parent = report.run_id
+    save_run_files(store_path, parent, run_a.version, get_run_files(store_path, "run-a", run_a.version))
+    return parent
+
+
+@pytest.mark.asyncio
+async def test_long_system_chain_still_belongs_to_root_owner(env):
+    """Hơn 100 run sửa nối nhau, chưa ghi chủ: vẫn lần tới run gốc của A, không thành run cũ cho cặp demo thấy."""
+    from src.run_report.access import is_legacy, run_owner, visible_run_ids
+
+    store_path = env.config.store_path
+    leaf = _system_chain(env, "run-a", 120, "run-chain")
+    assert run_owner(store_path, leaf) == env.ids["eng.a"] and not is_legacy(store_path, leaf)
+    assert leaf in visible_run_ids({"id": env.ids["eng.a"], "role": "Engineer"}, store_path)
+
+    for username, password in (("engineer", "Engineer@123"), ("reviewer", "Reviewer@123"), ("rev.one", PASSWORD)):
+        await _login(env, username, password)
+        assert leaf not in await _run_ids(env), username
+        await _blocked_reads(env, leaf)
+        await _blocked_reviews(env, leaf)  # an và rev.one chưa liên kết với A
+    assert get_run_report(store_path, leaf).status == "READY_FOR_REVIEW"
+
+    await _login(env, "eng.a")
+    assert leaf in await _run_ids(env)
+    assert (await env.client.get(f"/api/v1/runs/{leaf}")).status_code == 200
+    await _link(env, "eng.a")
+    assert leaf in await _run_ids(env)
+    approved = await env.client.post(f"/api/v1/runs/{leaf}/approve", json={"files_hash": env.files_hash})
+    assert approved.status_code == 200, approved.text
+
+
+@pytest.mark.asyncio
+async def test_system_run_without_reachable_root_is_admin_only_and_never_reviewable(env):
+    """Run hệ thống mất run gốc (run cha không còn, thiếu parent_run_id, trỏ vòng) không phải run cũ: cặp demo không
+    thấy, chỉ Admin thấy; không ai duyệt hay deploy được, kể cả giữ tên model."""
+    from src.run_report.access import UNKNOWN, claim_model, is_legacy, run_owner, visible_run_ids
+
+    store_path = env.config.store_path
+    run_a = get_run_report(store_path, "run-a")
+    files = get_run_files(store_path, "run-a", run_a.version)
+    parents = {"run-orphan": "run-gone", "run-rootless": None, "run-loop-1": "run-loop-2", "run-loop-2": "run-loop-1"}
+    for run_id, parent in parents.items():
+        report = _with_model(
+            run_a, "lost_model", run_id=run_id, created_by="system", trigger="regression", parent_run_id=parent
+        )
+        save_run_report(store_path, report)
+        save_run_files(store_path, run_id, report.version, files)
+    lost = {*parents, _system_chain(env, "run-gone-root", 120, "run-lost")}
+    for run_id in lost:
+        report = get_run_report(store_path, run_id)
+        assert run_owner(store_path, run_id) == UNKNOWN and not is_legacy(store_path, run_id), run_id
+        model = report.spec["transform"]["model_name"]
+        assert claim_model(store_path, report) == model and store.get_model_owner(store_path, model) is None
+    owner = day2.pipeline_owner(store_path, get_run_report(store_path, "run-orphan"))
+    alert = alerts.raise_alert(store_path, "lost_model", "source_stalled", "Nguồn mất chủ", owner=owner)
+    assert alert["owner"] == UNKNOWN
+
+    for username, password in (
+        ("engineer", "Engineer@123"),
+        ("reviewer", "Reviewer@123"),
+        ("eng.a", PASSWORD),
+        ("rev.one", PASSWORD),
+    ):
+        await _login(env, username, password)
+        assert not await _run_ids(env) & lost, username
+        for run_id in lost:
+            await _blocked_reads(env, run_id)
+            await _blocked_reviews(env, run_id)
+        assert alert["id"] not in {item["id"] for item in (await env.client.get("/api/v1/monitor/alerts")).json()}
+        assert (await env.client.post(f"/api/v1/monitor/alerts/{alert['id']}/resolve")).status_code == 404
+
+    await _login(env, "admin", "Admin@123")
+    assert visible_run_ids({"id": "admin", "role": "Admin"}, store_path) is None  # danh sách không lọc
+    assert alert["id"] in {item["id"] for item in (await env.client.get("/api/v1/monitor/alerts")).json()}
+    for run_id in lost:
+        assert (await env.client.get(f"/api/v1/runs/{run_id}")).status_code == 200
+        approve = await env.client.post(f"/api/v1/runs/{run_id}/approve", json={"files_hash": env.files_hash})
+        assert approve.status_code == 403
+        assert (await env.client.post(f"/api/v1/runs/{run_id}/deploy")).status_code == 403
+        assert get_run_report(store_path, run_id).status == "READY_FOR_REVIEW"
+
+
+def test_day2_fix_records_its_owner_at_creation(env, monkeypatch):
+    """Run sửa Day 2 ghi sẵn chủ pipeline lúc tạo: đọc thẳng, không phụ thuộc chuỗi run gốc còn hay không."""
+    from src.run_report.access import UNKNOWN, run_owner, visible_run_ids
+
+    store_path = env.config.store_path
+
+    def start_regression(parent, evidence, deps, path):
+        update = {"run_id": "run-fix", "created_by": "system", "trigger": "regression", "parent_run_id": parent.run_id}
+        started = parent.model_copy(update=update)
+        save_run_report(path, started)
+        return started, lambda: started
+
+    monkeypatch.setattr(day2, "start_regression", start_regression)
+    submitted = []
+    started = day2.launcher(None, store_path, submitted.append)(get_run_report(store_path, "run-b-dep"), {})
+    assert started.run_id == "run-fix" and len(submitted) == 1
+    assert store.get_run_owner(store_path, "run-fix") == env.ids["eng.b"]
+
+    with sqlite3.connect(store_path) as conn:
+        conn.execute("DELETE FROM run_reports WHERE run_id = 'run-b-dep'")
+    assert run_owner(store_path, "run-fix") == env.ids["eng.b"]
+    assert run_owner(store_path, "run-sys") == UNKNOWN, "run sửa cũ không ghi chủ, mất run gốc thì đóng hẳn"
+    visible = visible_run_ids({"id": env.ids["eng.b"], "role": "Engineer"}, store_path)
+    assert "run-fix" in visible and "run-sys" not in visible

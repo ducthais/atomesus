@@ -3,10 +3,13 @@
 - Admin thấy mọi run.
 - Engineer thấy run do chính mình tạo.
 - Reviewer thấy run của các Engineer đã mời mình (`reviewer_links`); cặp demo minh ↔ an luôn coi là đã liên kết.
-- Run hệ thống tạo (`created_by = "system"`: regression / Day 2) thuộc về chủ của run gốc, lần theo `parent_run_id`.
-- Run không xác định được chủ (dữ liệu cũ: thiếu `created_by` hoặc người tạo không phải tài khoản nào) có chủ là
+- Run hệ thống tạo (`created_by = "system"`: regression / Day 2) thuộc về chủ của run gốc: đọc chủ đã ghi lúc tạo
+  (bảng run_owners), run hệ thống cũ chưa ghi thì lần theo `parent_run_id` tới hết chuỗi.
+- Run cũ (run gốc không phải run hệ thống, thiếu `created_by` hoặc người tạo không phải tài khoản nào) có chủ là
   `LEGACY` (None), tính lúc đọc, không ghi vào run: chỉ Admin và cặp demo minh / an thấy. Reviewer khác dù được minh
   mời cũng không thấy, vì run cũ không phải run của minh.
+- Run hệ thống không lần ra run gốc (run cha không còn, thiếu `parent_run_id`, `parent_run_id` trỏ vòng) có chủ là
+  `UNKNOWN`, đóng hẳn: chỉ Admin thấy, không ai duyệt hay deploy được (deploy không giữ được tên model).
 - Dữ liệu theo tên model (monitor, Dagster, bảng gold) thuộc chủ của tên model (`model_owner`); deploy giữ tên model
   trong bảng model_owners trước khi mở pull request, trùng tên của chủ khác bị chặn. Run cũ giữ tên cho
   `LEGACY_OWNER` (chỉ để giữ tên, không cấp quyền xem: run deploy cũ trong sổ vẫn chặn người ngoài cặp demo).
@@ -30,8 +33,10 @@ from src.run_report.models import RunReport
 from src.run_report.store import get_run_lineage, get_run_report, list_run_lineage, model_deployments
 
 SYSTEM = "system"
-MAX_LINEAGE = 100  # chặn vòng lặp nếu parent_run_id lỡ trỏ vòng
 LEGACY = None  # chủ của dữ liệu cũ không rõ người tạo
+# Chủ của run hệ thống không lần ra run gốc: không phải run cũ, không ai ngoài Admin thấy. Không trùng id tài khoản
+# nào (uuid hoặc tên tài khoản hệ thống, không có khoảng trắng).
+UNKNOWN = "(không rõ chủ)"
 # Tài khoản đứng tên dữ liệu cũ khi cần một chủ cụ thể: giữ tên model (model_owners), domain cho agent. Không cấp quyền.
 LEGACY_OWNER = DEMO_ENGINEER
 
@@ -44,6 +49,8 @@ class Scope:
     def allows(self, owner: str | None) -> bool:
         if self.owners is None:
             return True
+        if owner == UNKNOWN:
+            return False
         return self.legacy if owner is LEGACY else owner in self.owners
 
 
@@ -70,33 +77,55 @@ def is_account(store_path: str, user_id: str | None) -> bool:
 
 
 def owner_of(store_path: str, user_id: str | None) -> str | None:
-    """Chủ ứng với id người dùng đã lưu (cảnh báo, run): id không phải tài khoản nào là dữ liệu cũ (LEGACY)."""
+    """Chủ ứng với id người dùng đã lưu (cảnh báo, run): id không phải tài khoản nào là dữ liệu cũ (LEGACY); chủ
+    UNKNOWN (cảnh báo của pipeline không lần ra run gốc) giữ nguyên UNKNOWN."""
+    if user_id == UNKNOWN:
+        return UNKNOWN
     return user_id if is_account(store_path, user_id) else LEGACY
 
 
 Lineage = Callable[[str], tuple[str | None, str | None] | None]  # run_id → (created_by, parent_run_id)
+Recorded = Callable[[str], str | None]  # run_id → chủ đã ghi lúc hệ thống tạo run (bảng run_owners)
 
 
-def _owner(run_id: str, lineage: Lineage, account: Callable[[str | None], bool]) -> str | None:
-    """Lần theo metadata (không dựng RunReport, nên bản ghi cũ thiếu trường cũng không lỗi). Không lần ra tài khoản nào
-    (thiếu `created_by`, run hệ thống mất run gốc, vòng lặp) là dữ liệu cũ (LEGACY)."""
-    current = run_id
-    for _ in range(MAX_LINEAGE):
+def _owner(run_id: str, lineage: Lineage, account: Callable[[str | None], bool], recorded: Recorded) -> str | None:
+    """Lần theo metadata (không dựng RunReport, nên bản ghi cũ thiếu trường cũng không lỗi) tới hết chuỗi, chỉ dừng
+    khi gặp lại run đã đi qua. Ba kết quả: tài khoản chủ; LEGACY khi run gốc không phải run hệ thống mà thiếu
+    `created_by` hoặc người tạo không phải tài khoản; UNKNOWN khi run hệ thống mất run gốc hoặc chuỗi trỏ vòng."""
+    current, seen = run_id, set()
+    while current not in seen:
+        seen.add(current)
         found = lineage(current)
         if found is None:
-            return LEGACY
+            return UNKNOWN
         created_by, parent = found
         if created_by != SYSTEM:
             return created_by if account(created_by) else LEGACY
-        if not parent or parent == current:
-            return LEGACY
+        if owner := recorded(current):
+            return owner
+        if not parent:
+            return UNKNOWN
         current = parent
-    return LEGACY
+    return UNKNOWN
 
 
 def run_owner(store_path: str, run_id: str) -> str | None:
-    """Chủ của run: người tạo, hoặc chủ của run gốc với run hệ thống; LEGACY (None) nếu không xác định được."""
-    return _owner(run_id, lambda current: get_run_lineage(store_path, current), lambda uid: is_account(store_path, uid))
+    """Chủ của run: người tạo, hoặc chủ của run gốc với run hệ thống; LEGACY (None) với run cũ, UNKNOWN nếu không lần
+    ra run gốc."""
+    return _owner(
+        run_id,
+        lambda current: get_run_lineage(store_path, current),
+        lambda uid: is_account(store_path, uid),
+        lambda current: store.get_run_owner(store_path, current),
+    )
+
+
+def record_system_run_owner(store_path: str, run_id: str, parent_run_id: str) -> None:
+    """Ghi sẵn chủ của run hệ thống vừa tạo từ `parent_run_id` (Day 2), để lần sau đọc thẳng, không phải lần theo
+    chuỗi run sửa nối nhau. Chủ là LEGACY hay UNKNOWN thì không ghi: lần theo vẫn ra đúng kết quả đó."""
+    owner = run_owner(store_path, parent_run_id)
+    if owner not in (LEGACY, UNKNOWN):
+        store.record_run_owner(store_path, run_id, owner, time.time())
 
 
 def is_legacy(store_path: str, run_id: str) -> bool:
@@ -121,9 +150,11 @@ def visible_run_ids(user: dict, store_path: str) -> set[str] | None:
     access = scope(user, store_path)
     if access.owners is None:
         return None
-    lineage = list_run_lineage(store_path)
+    lineage, recorded = list_run_lineage(store_path), store.list_run_owners(store_path)
     accounts = set(USERS) | {account["id"] for account in store.list_users(store_path)}
-    return {run_id for run_id in lineage if access.allows(_owner(run_id, lineage.get, accounts.__contains__))}
+    return {
+        run_id for run_id in lineage if access.allows(_owner(run_id, lineage.get, accounts.__contains__, recorded.get))
+    }
 
 
 def is_own_run(store_path: str, report: RunReport, user: dict) -> bool:
@@ -164,11 +195,13 @@ def claim_model(store_path: str, report: RunReport) -> str | None:
     """Giữ tên model của `report` cho chủ run, gọi trước mọi tác động ra ngoài (GitHub, deployer). Trả tên model nếu
     đã thuộc chủ khác (deploy sẽ ghi đè pipeline người khác), không thì None. Hai chủ deploy cùng lúc chỉ một người
     giữ được tên (khóa chính model_owners); deploy lỗi sau đó vẫn giữ tên cho người đã giữ. Run cũ cũng giữ tên, cho
-    LEGACY_OWNER (chỉ giữ tên: quyền xem run cũ vẫn theo LEGACY)."""
+    LEGACY_OWNER (chỉ giữ tên: quyền xem run cũ vẫn theo LEGACY). Run không lần ra chủ (UNKNOWN) không giữ được tên."""
     model = ((report.spec or {}).get("transform") or {}).get("model_name")
     if not model:
         return None
     holder = _holder(run_owner(store_path, report.run_id))
+    if holder == UNKNOWN:
+        return model
     if any(_holder(other) != holder for other in model_owners(store_path, model)):
         return model
     return None if store.claim_model(store_path, model, holder, time.time()) == holder else model

@@ -63,6 +63,12 @@ def database(path: str):
                 "CREATE TABLE IF NOT EXISTS model_owners ("
                 " model_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL, claimed_at REAL NOT NULL)"
             )
+            # Chủ của run hệ thống (Day 2) ghi lúc tạo, để xét quyền đọc thẳng thay vì lần theo chuỗi run gốc (xem
+            # src.run_report.access.record_system_run_owner).
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_owners ("
+                " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, recorded_at REAL NOT NULL)"
+            )
             # Lần đăng ký gần nhất của mỗi IP (giới hạn 1 tài khoản / IP / cửa sổ, xem api.register).
             conn.execute("CREATE TABLE IF NOT EXISTS registration_ips (ip TEXT PRIMARY KEY, at REAL NOT NULL)")
             conn.execute(
@@ -336,6 +342,25 @@ def get_model_owner(path: str, model: str) -> str | None:
     with database(path) as conn:
         row = conn.execute("SELECT owner_id FROM model_owners WHERE model_name = ?", (model,)).fetchone()
     return row[0] if row else None
+
+
+def record_run_owner(path: str, run_id: str, owner_id: str, now: float) -> None:
+    """Ghi chủ của run hệ thống một lần; ghi lại không đổi chủ đã ghi."""
+    with database(path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO run_owners (run_id, owner_id, recorded_at) VALUES (?, ?, ?)", (run_id, owner_id, now)
+        )
+
+
+def get_run_owner(path: str, run_id: str) -> str | None:
+    with database(path) as conn:
+        row = conn.execute("SELECT owner_id FROM run_owners WHERE run_id = ?", (run_id,)).fetchone()
+    return row[0] if row else None
+
+
+def list_run_owners(path: str) -> dict[str, str]:
+    with database(path) as conn:
+        return dict(conn.execute("SELECT run_id, owner_id FROM run_owners").fetchall())
 
 
 def save_connection(path: str, metadata: dict[str, Any], password_encrypted: str) -> None:
