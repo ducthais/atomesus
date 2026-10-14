@@ -1,7 +1,9 @@
 from collections.abc import Callable, Iterable
 from dataclasses import replace
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 from src.agents.manual_optimize import start_manual_optimize
 from src.agents.nodes.common import AgentDeps
@@ -12,6 +14,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.run_report import RunReport
 from src.run_report.access import SYSTEM, model_visible, owner_of, run_owner, scope
+from src.run_report.quota import RunQuotaExceeded, claim_runs, release_runs
 
 router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(current_user)])
 pipelines_router = APIRouter(prefix="/pipelines", tags=["pipelines"])
@@ -40,14 +43,20 @@ def optimize_pipeline(
     config: PipelineSettings = Depends(settings),
     deps: AgentDeps = Depends(monitor_deps),
 ) -> RunReport:
-    """Engineer yêu cầu tối ưu pipeline đã deploy (UC-3): chạy nền lại pipeline và optimizer P13, không gọi LLM."""
+    """Engineer yêu cầu tối ưu pipeline đã deploy (UC-3): chạy nền lại pipeline và optimizer P13, không gọi LLM.
+
+    Run tối ưu là run mới của người gọi: hết lượt run trong ngày (budgets.yml per_user.max_runs_per_day) → 429."""
     # Xét quyền thấy trước vai: pipeline không được thấy là 404 với mọi vai, không lộ pipeline đó có tồn tại.
     parent = runs.deployed_report(config.store_path, model)
     if parent is None or not model_visible(user, config.store_path, model):
         raise HTTPException(404, f"Pipeline '{model}' chưa được deploy.")
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được yêu cầu tối ưu pipeline.")
-    started, job = start_manual_optimize(parent, user["id"], deps, config.store_path)
+    [run_id] = claim_runs(config.store_path, user, deps.policy.budgets)
+    try:
+        started, job = start_manual_optimize(parent, user["id"], deps, config.store_path, run_id)
+    finally:
+        release_runs(config.store_path, [run_id])  # run đã vào sổ thì lượt vẫn tính; khởi tạo lỗi thì trả lượt
     background.add_task(job)
     return started
 
@@ -111,10 +120,18 @@ def check_pipelines(
     deps: AgentDeps = Depends(monitor_deps),
 ) -> dict:
     """Chạy 4 luật suy giảm cho các pipeline đã deploy mà người gọi được thấy (Day 2). Run sửa chạy nền, thuộc chủ
-    pipeline; pipeline của người khác không bị cảnh báo hay tạo run sửa."""
+    pipeline; pipeline của người khác không bị cảnh báo hay tạo run sửa.
+
+    Run sửa tính vào lượt run của chủ pipeline: chủ hết lượt thì không tạo run sửa (đã ghi cảnh báo), các pipeline
+    khác vẫn được xét; trả 429 kèm danh sách việc đã làm, run sửa đã tạo vẫn chạy nền."""
     _engineer(user)
     launch = day2.launcher(deps, config.store_path, background.add_task)
-    return {"actions": day2.check(config, deps.policy, launch, models=_own_pipelines(user, config))}
+    actions = day2.check(config, deps.policy, launch, models=_own_pipelines(user, config))
+    blocked = next((a for a in actions if a["action"] == "quota_exhausted"), None)
+    if blocked:
+        headers = RunQuotaExceeded(blocked["detail"], datetime.now(UTC)).headers
+        return JSONResponse({"detail": blocked["detail"], "actions": actions}, 429, headers=headers)
+    return {"actions": actions}
 
 
 def _alert_filter(user: dict, store_path: str) -> Callable[[dict], bool]:

@@ -35,10 +35,10 @@ def _no_llm(*_args, **_kwargs):
     raise LLMForbiddenError("Luồng tối ưu thủ công (UC-3) không được gọi LLM (SPEC FR-14).")
 
 
-def initial_state(parent: RunReport, actor: str) -> AgentState:
+def initial_state(parent: RunReport, actor: str, run_id: str | None = None) -> AgentState:
     """Run tối ưu: Spec và kế hoạch của bản đang deploy, bắt đầu ở VALIDATING (không sinh Spec, SPEC §9.6.1)."""
     return {
-        "run_id": str(uuid4()),
+        "run_id": run_id or str(uuid4()),
         "version": 1,
         "created_by": actor,
         "trigger": "manual_optimize",
@@ -140,9 +140,13 @@ def run(state: AgentState, deps: AgentDeps) -> AgentState:
     return {**state, "optimizer": outcome["steps"], "status": "NO_IMPROVEMENT", "stage_reached": "report"}
 
 
-def start_manual_optimize(parent: RunReport, actor: str, deps: AgentDeps, store_path: str) -> tuple[RunReport, Job]:
-    """Ghi run tối ưu (VALIDATING) ngay; việc chạy nền chạy lại pipeline và optimizer, không gọi LLM."""
-    initial, created_at = initial_state(parent, actor), datetime.now(UTC)
+def start_manual_optimize(
+    parent: RunReport, actor: str, deps: AgentDeps, store_path: str, run_id: str | None = None
+) -> tuple[RunReport, Job]:
+    """Ghi run tối ưu (VALIDATING) ngay; việc chạy nền chạy lại pipeline và optimizer, không gọi LLM.
+
+    `run_id`: id đã giữ lượt run trong ngày (src/run_report/quota.py), để lượt và run là một."""
+    initial, created_at = initial_state(parent, actor, run_id), datetime.now(UTC)
     deps = _deps_for_store(deps, store_path)
     started = _save(initial, created_at, store_path)
 

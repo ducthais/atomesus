@@ -121,11 +121,21 @@ class PerRun(_Policy):
     max_spec_attempts: int = Field(ge=0)
     max_sql_attempts: int = Field(ge=0)
     phase_timeout_sec: int = Field(gt=0)
+    # Trần token đầu ra mỗi lần gọi LLM: cùng giá input ước theo prompt, đây là cận trên chi phí được giữ chỗ.
+    max_output_tokens: int = Field(default=8192, gt=0)
 
 
 class PerDay(_Policy):
     max_usd: float = Field(gt=0)
     max_batch_runs: int = Field(default=20, ge=2)
+
+
+class PerUser(_Policy):
+    """Trần theo từng người dùng mỗi ngày UTC (ADR-0001 D10), giữ nguyên trần chung per_day. Thiếu khối trong
+    budgets.yml thì dùng mặc định dưới đây (an toàn khi mở đăng ký tự do)."""
+
+    max_usd_per_day: float = Field(default=0.30, gt=0)
+    max_runs_per_day: int = Field(default=20, ge=1)
 
 
 class OptimizerPolicy(_Policy):
@@ -146,6 +156,7 @@ class Budgets(_Policy):
     pricing: Pricing
     per_run: PerRun
     per_day: PerDay
+    per_user: PerUser = Field(default_factory=PerUser)
     rules: Rules
     optimizer: OptimizerPolicy = Field(default_factory=OptimizerPolicy)
 
@@ -169,6 +180,10 @@ class Budgets(_Policy):
     def _day_covers_run(self) -> "Budgets":
         if self.per_day.max_usd < self.per_run.max_usd:
             raise ValueError("per_day.max_usd phải >= per_run.max_usd")
+        if self.per_user.max_usd_per_day < self.per_run.max_usd:
+            raise ValueError(
+                "per_user.max_usd_per_day phải >= per_run.max_usd (mỗi run tạo theo lô giữ chỗ per_run.max_usd)"
+            )
         return self
 
 

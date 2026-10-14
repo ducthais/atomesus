@@ -357,9 +357,10 @@ def plan_agent(
     store_path: str,
     sources: list[dict] | None = None,
     parent_run_id: str | None = None,
+    run_id: str | None = None,
 ) -> RunReport:
     """Chỉ lập kế hoạch (đồng bộ, một lần gọi LLM rẻ), lưu ở DRAFT / stage `confirm` chờ Engineer xác nhận."""
-    initial = _initial(user_request, created_by, sources, parent_run_id)
+    initial = _initial(user_request, created_by, sources, parent_run_id, run_id)
     return _run(initial, datetime.now(UTC), deps, store_path, draft=False, plan_gate=True)
 
 

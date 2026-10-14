@@ -37,7 +37,10 @@ from src.pipeline.auth import (
 from src.pipeline.cleaning import clean_rows
 from src.pipeline.models import LoginRequest, RegisterRequest, RoleUpdateRequest, RunRequest, VerifyRegistrationRequest
 from src.pipeline.settings import PipelineSettings
+from src.policy.loader import PolicyError, load_policy
+from src.policy.models import Budgets
 from src.run_report import Check, Cost, GateResult, RunReport, Timing, save_run_report
+from src.run_report import quota as run_quota
 
 router = APIRouter(prefix="/pipeline", tags=["Postgres pipeline"])
 DEFAULT_PASSWORDS = {"Engineer@123", "Reviewer@123", "Admin@123"}
@@ -429,12 +432,29 @@ def _staging_check(table: str, cleaned: dict) -> Check:
     )
 
 
+def _budgets() -> Budgets:
+    """Trần trong budgets.yml, đọc lại mỗi request (NFR-04)."""
+    try:
+        return load_policy().budgets
+    except PolicyError as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@router.get("/quota")
+def quota(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
+    """Hạn mức hôm nay của chính người dùng (ADR-0001 D10): tiền và số run đã dùng / trần; Admin không có trần riêng.
+    Chỉ có số của người đang đăng nhập, không lộ mức dùng của người khác."""
+    return run_quota.usage(config.store_path, user, _budgets())
+
+
 @router.post("/runs", status_code=201, response_model=RunReport)
 def create_run(
     body: RunRequest, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
 ) -> RunReport:
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được chạy pipeline.")
+    # Hết lượt run trong ngày (budgets.yml per_user.max_runs_per_day) → 429 trước khi đọc nguồn.
+    [run_id] = run_quota.claim_runs(config.store_path, user, _budgets())
     created_at = datetime.now(UTC)
     started = time.perf_counter()
     gates: list[GateResult] = []
@@ -472,7 +492,7 @@ def create_run(
         status, stage = "INTERNAL_ERROR", "t_run"
         error_trace.append({"stage": stage, "error": "Chạy sandbox thất bại. Kiểm tra cấu hình và tài nguyên backend."})
     report = RunReport(
-        run_id=str(uuid4()),
+        run_id=run_id,
         version=1,
         domain=DOMAIN,
         created_by=user["id"],

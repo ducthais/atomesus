@@ -143,7 +143,7 @@ def _report(created_by, request, sources):
 async def test_creating_run_or_chat_rejects_another_owners_source(
     client, user_domains, monkeypatch, path, message_key, identity, status
 ):
-    def plan(request, created_by, deps, store_path, sources=None, parent_run_id=None):
+    def plan(request, created_by, deps, store_path, sources=None, parent_run_id=None, run_id=None):
         user_domains.calls.append((created_by, sources, set(deps.policy.domains.domains)))
         return _report(created_by, request, sources)
 
@@ -163,7 +163,7 @@ async def test_creating_run_or_chat_rejects_another_owners_source(
 
 @pytest.mark.asyncio
 async def test_chat_without_selection_uses_only_the_engineers_policy(client, user_domains, monkeypatch):
-    def plan(request, created_by, deps, store_path):
+    def plan(request, created_by, deps, store_path, run_id=None):
         assert DOMAIN_A in deps.policy.domains.domains and DOMAIN_B not in deps.policy.domains.domains
         return _report(created_by, request, None)
 
@@ -205,7 +205,7 @@ async def test_run_and_chat_keep_empty_choice_and_yaml_table_behavior(
 ):
     expected_sources = [{"source_ref": source_ref, "tables": tables}]
 
-    def plan(request, created_by, deps, store_path, sources=None, parent_run_id=None):
+    def plan(request, created_by, deps, store_path, sources=None, parent_run_id=None, run_id=None):
         assert sources == expected_sources
         user_domains.calls.append(sources)
         return _report(created_by, request, sources)

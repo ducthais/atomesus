@@ -54,6 +54,11 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
                 " run_id TEXT NOT NULL, version INTEGER NOT NULL, category TEXT NOT NULL, usd REAL NOT NULL,"
                 " reserved_at TEXT NOT NULL, PRIMARY KEY (run_id, version, category))"
             )
+            # Lượt run mới đã giữ cho chủ (hạn mức số run/ngày, src/run_report/quota.py), ghi trước khi run vào sổ.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_slots ("
+                " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL)"
+            )
             # Delivery webhook GitHub đã xử lý (X-GitHub-Delivery), để gửi lại không áp hai lần. `pending`: sự kiện
             # liên quan đến chưa có run nào khớp (Deploy chưa lưu pull request), áp lại khi deployment được lưu.
             conn.execute(
@@ -293,17 +298,40 @@ def replay_webhook_deliveries(
         return changed
 
 
+# Trần của chủ run (src/run_report/quota.py), chạy trong cùng giao dịch ghi sau khi trần chung đã qua: nhận kết nối,
+# số USD sắp giữ và ngày UTC của giao dịch, trả False thì không giữ khoản nào.
+OwnerGate = Callable[[sqlite3.Connection, float, str], bool]
+Clock = Callable[[], datetime]
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
 def reserve_budget(
-    path: str, run_id: str, version: int, category: str, usd: float, daily_limit: float
+    path: str,
+    run_id: str,
+    version: int,
+    category: str,
+    usd: float,
+    daily_limit: float,
+    owner_gate: OwnerGate | None = None,
+    clock: Clock = utcnow,
 ) -> tuple[bool, float]:
-    """Reserve budget under one SQLite write transaction; retries are idempotent."""
-    now = datetime.now(UTC)
-    day = now.date().isoformat()
+    """Reserve budget under one SQLite write transaction; retries are idempotent.
+
+    Khoản cùng (run, version, category) đã giữ hôm nay mà nhỏ hơn `usd` (cổng batch giữ trước per_run.max_usd) thì chỉ
+    giữ thêm phần chênh, qua cùng các trần. Khoản giữ từ ngày trước không còn tính vào hôm nay nên không được dùng lại:
+    giữ lại đủ `usd` theo trần hôm nay và chuyển khoản đó sang hôm nay. Thời điểm lấy một lần sau khi đã giữ khóa ghi:
+    chờ khóa qua nửa đêm UTC thì trần chung, trần cá nhân và khoản ghi cùng thuộc ngày mới."""
     with _database(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        now = clock()
+        day = now.date().isoformat()
         existing = conn.execute(
-            "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
-            (run_id, version, category),
+            "SELECT usd FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?"
+            " AND substr(reserved_at, 1, 10) = ?",
+            (run_id, version, category, day),
         ).fetchone()
         spent = conn.execute(
             "SELECT coalesce(sum(usd), 0) FROM budget_ledger WHERE substr(spent_at, 1, 10) = ?", (day,)
@@ -311,12 +339,15 @@ def reserve_budget(
         reserved = conn.execute(
             "SELECT coalesce(sum(usd), 0) FROM budget_reservations WHERE substr(reserved_at, 1, 10) = ?", (day,)
         ).fetchone()[0]
-        if existing:
+        extra = usd - (existing[0] if existing else 0.0)
+        if existing and extra <= 0:
             return True, float(spent + reserved)
-        if spent + reserved + usd > daily_limit:
+        if spent + reserved + extra > daily_limit:
+            return False, float(spent + reserved)
+        if owner_gate and not owner_gate(conn, extra, day):
             return False, float(spent + reserved)
         conn.execute(
-            "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
             (run_id, version, category, usd, now.isoformat()),
         )
         return True, float(spent + reserved)
@@ -326,14 +357,17 @@ def reserve_budget_batch(
     path: str,
     reservations: list[tuple[str, int, str, float]],
     daily_limit: float,
+    owner_gate: OwnerGate | None = None,
+    clock: Clock = utcnow,
 ) -> tuple[bool, float]:
-    """Giữ chỗ cả mẻ trong một transaction; không đủ hạn mức thì không ghi khoản nào."""
+    """Giữ chỗ cả mẻ trong một transaction; không đủ hạn mức thì không ghi khoản nào. Khoản đã giữ hôm nay được bỏ
+    qua; khoản giữ từ ngày trước được giữ lại đủ theo trần hôm nay (như `reserve_budget`, cả cách lấy thời điểm)."""
     if len({(run_id, version, category) for run_id, version, category, _usd in reservations}) != len(reservations):
         raise ValueError("Khoản giữ chỗ trong mẻ không được trùng nhau.")
-    now = datetime.now(UTC)
-    day = now.date().isoformat()
     with _database(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        now = clock()
+        day = now.date().isoformat()
         spent = conn.execute(
             "SELECT coalesce(sum(usd), 0) FROM budget_ledger WHERE substr(spent_at, 1, 10) = ?", (day,)
         ).fetchone()[0]
@@ -343,15 +377,18 @@ def reserve_budget_batch(
         pending = []
         for run_id, version, category, usd in reservations:
             exists = conn.execute(
-                "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
-                (run_id, version, category),
+                "SELECT 1 FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?"
+                " AND substr(reserved_at, 1, 10) = ?",
+                (run_id, version, category, day),
             ).fetchone()
             if not exists:
                 pending.append((run_id, version, category, usd, now.isoformat()))
         current = float(spent + reserved)
         if current + sum(item[3] for item in pending) > daily_limit:
             return False, current
-        conn.executemany("INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)", pending)
+        if owner_gate and not owner_gate(conn, sum(item[3] for item in pending), day):
+            return False, current
+        conn.executemany("INSERT OR REPLACE INTO budget_reservations VALUES (?, ?, ?, ?, ?)", pending)
         return True, current
 
 
@@ -377,6 +414,7 @@ def rollback_batch_start(path: str, run_ids: list[str]) -> None:
         conn.execute(f"DELETE FROM run_reports WHERE run_id IN ({marks})", run_ids)
         conn.execute(f"DELETE FROM budget_ledger WHERE run_id IN ({marks})", run_ids)
         conn.execute(f"DELETE FROM budget_reservations WHERE run_id IN ({marks})", run_ids)
+        conn.execute(f"DELETE FROM run_slots WHERE run_id IN ({marks})", run_ids)
 
 
 def spent_today(path: str) -> float:

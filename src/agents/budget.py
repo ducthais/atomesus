@@ -12,6 +12,8 @@ USD = byte / 10^12 × `budgets.yml: pricing.usd_per_tb`, luôn gắn nhãn ướ
 Chặn `BLOCKED_BUDGET` khi tổng vượt `per_run.max_bytes_scanned` hoặc `per_run.max_usd`, hoặc chi phí các run đã
 ghi trong ngày (UTC, sổ bằng chứng, gồm cả tiền gọi LLM `cost.llm_usd`) cộng ước tính vượt `per_day.max_usd`.
 Trần một run (`per_run.max_usd`) chỉ áp cho chi phí quét dữ liệu, như `dry_run` của SPEC.
+Thêm trần cá nhân `per_user.max_usd_per_day` (ADR-0001 D10, src/run_report/quota.py): chi phí của các run cùng chủ
+trong ngày; chặn khi vượt trần cá nhân HOẶC trần chung, lý do ghi rõ trần nào.
 """
 
 import json
@@ -21,6 +23,7 @@ from src.agents import azure_storage
 from src.pipeline import files, postgres, rest_api
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
+from src.run_report import quota
 from src.run_report.models import GateResult
 from src.run_report.store import reserve_budget, reserve_budget_batch
 from src.run_report.store import spent_today as ledger_spent_today
@@ -103,8 +106,20 @@ def reserve_daily(
     category: str,
     usd: float,
     daily_limit: float,
-) -> tuple[bool, float]:
-    return reserve_budget(settings.store_path, run_id, version, category, usd, daily_limit)
+    user_limit: float | None = None,
+) -> tuple[bool, float, float | None]:
+    """Giữ chỗ nguyên tử trong ngân sách ngày; có `user_limit` thì cùng giao dịch xét cả trần của chủ run.
+
+    Trả (giữ được, tổng toàn hệ thống đã dùng/giữ, số của chủ run). Số của chủ là None khi không áp trần cá nhân
+    (Admin, run không rõ chủ) hoặc trần chung đã chặn trước; khác None mà không giữ được nghĩa là vượt trần cá nhân.
+    """
+    owner = quota.run_quota_owner(settings.store_path, run_id) if user_limit is not None else None
+    if owner is None:
+        reserved, spent = reserve_budget(settings.store_path, run_id, version, category, usd, daily_limit)
+        return reserved, spent, None
+    owner_gate, seen = quota.cost_gate(settings.store_path, owner, user_limit)
+    reserved, spent = reserve_budget(settings.store_path, run_id, version, category, usd, daily_limit, owner_gate)
+    return reserved, spent, seen.get("spent")
 
 
 def check(
@@ -129,22 +144,44 @@ def check(
     spent = (spent_fn or spent_today)(settings)
     result, errors = gate(estimated, policy, spent)
     if not errors and reserve:
-        reserved, spent = reserve(settings, run_id, version, category, estimated["usd"], policy.budgets.per_day.max_usd)
+        budgets = policy.budgets
+        reserved, spent, user_spent = reserve(
+            settings,
+            run_id,
+            version,
+            category,
+            estimated["usd"],
+            budgets.per_day.max_usd,
+            budgets.per_user.max_usd_per_day,
+        )
         if not reserved:
-            result, errors = gate(estimated, policy, spent)
+            result, errors = gate(estimated, policy, spent, user_spent)
     return result, errors, estimated
 
 
-def estimate_batch(run_count: int, policy: Policy, settings: PipelineSettings) -> dict:
+def estimate_batch(run_count: int, policy: Policy, settings: PipelineSettings, owner: str | None = None) -> dict:
     """Ước tính và phần ngân sách phải giữ trước khi fan-out các lượt lập kế hoạch.
 
-    Mỗi run mới gọi planner một lần. `call_llm` đang giữ chỗ `per_run.max_usd` cho lần gọi đó, vì vậy cổng batch
-    dùng đúng cùng đơn vị để kết quả preflight và lúc job thật chạy không lệch nhau.
+    Mỗi run mới gọi planner một lần; cổng batch giữ trước `per_run.max_usd` cho lần gọi đó. Lúc gọi thật, `call_llm`
+    dùng lại khoản này và chỉ giữ thêm phần chênh khi cận trên chi phí lần gọi (giá prompt + trần token đầu ra) lớn hơn. Có `owner` chịu trần cá nhân thì
+    thêm `per_user` (chỉ số của chính người đó) và `allowed` xét cả trần cá nhân.
     """
     per_run = policy.budgets.per_run.max_usd
     daily_limit = policy.budgets.per_day.max_usd
     spent = spent_today(settings)
     usd = run_count * per_run
+    allowed = run_count <= policy.budgets.per_day.max_batch_runs and spent + usd <= daily_limit
+    per_user = None
+    if owner and quota.limited_owner(settings.store_path, owner):
+        user_limit = policy.budgets.per_user.max_usd_per_day
+        user_spent = quota.spent_today(settings.store_path, owner)
+        per_user = {
+            "spent_today_usd": user_spent,
+            "remaining_usd": max(0.0, user_limit - user_spent),
+            "remaining_after_usd": max(0.0, user_limit - user_spent - usd),
+            "max_usd_per_day": user_limit,
+        }
+        allowed = allowed and user_spent + usd <= user_limit
     return {
         "run_count": run_count,
         "reservation_usd_per_run": per_run,
@@ -154,7 +191,8 @@ def estimate_batch(run_count: int, policy: Policy, settings: PipelineSettings) -
         "remaining_after_usd": max(0.0, daily_limit - spent - usd),
         "max_usd_per_day": daily_limit,
         "max_batch_runs": policy.budgets.per_day.max_batch_runs,
-        "allowed": run_count <= policy.budgets.per_day.max_batch_runs and spent + usd <= daily_limit,
+        "per_user": per_user,
+        "allowed": allowed,
     }
 
 
@@ -162,11 +200,31 @@ def reserve_batch_daily(
     settings: PipelineSettings,
     reservations: list[tuple[str, int, str, float]],
     daily_limit: float,
-) -> tuple[bool, float]:
-    return reserve_budget_batch(settings.store_path, reservations, daily_limit)
+    owner: str | None = None,
+    user_limit: float | None = None,
+) -> tuple[bool, float, float | None]:
+    """Giữ chỗ cả mẻ (all-or-none); có `owner` và `user_limit` thì cùng giao dịch xét trần cá nhân. Kết quả như
+    `reserve_daily`."""
+    owner = quota.limited_owner(settings.store_path, owner) if owner and user_limit is not None else None
+    if owner is None:
+        reserved, spent = reserve_budget_batch(settings.store_path, reservations, daily_limit)
+        return reserved, spent, None
+    owner_gate, seen = quota.cost_gate(settings.store_path, owner, user_limit)
+    reserved, spent = reserve_budget_batch(settings.store_path, reservations, daily_limit, owner_gate)
+    return reserved, spent, seen.get("spent")
 
 
-def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, list[str]]:
+def user_limit_error(user_spent: float, usd: float, policy: Policy) -> str:
+    """Lý do chặn khi vượt trần cá nhân (không phải trần chung)."""
+    return (
+        f"Hôm nay các run của bạn đã dùng hoặc giữ chỗ {user_spent:.6f} USD, cộng {usd:.6f} USD vượt trần cá nhân "
+        f"budgets.yml per_user.max_usd_per_day = {policy.budgets.per_user.max_usd_per_day}"
+    )
+
+
+def gate(
+    estimated: dict, policy: Policy, spent: float, user_spent: float | None = None
+) -> tuple[GateResult, list[str]]:
     per_run, per_day = policy.budgets.per_run, policy.budgets.per_day
     size, usd = estimated["bytes"], estimated["usd"]
     by_source = ", ".join(f"{sid} {count:,} byte" for sid, count in estimated["sources"].items())
@@ -181,9 +239,11 @@ def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, lis
         errors.append(f"{word} {usd:.6f} USD vượt budgets.yml per_run.max_usd = {per_run.max_usd}")
     if spent + usd > per_day.max_usd:
         errors.append(
-            f"Hôm nay đã dùng {spent:.6f} USD, cộng run này ({usd:.6f} USD) vượt budgets.yml per_day.max_usd "
-            f"= {per_day.max_usd}"
+            f"Hôm nay đã dùng {spent:.6f} USD, cộng run này ({usd:.6f} USD) vượt trần chung budgets.yml "
+            f"per_day.max_usd = {per_day.max_usd}"
         )
+    if user_spent is not None and user_spent + usd > policy.budgets.per_user.max_usd_per_day:
+        errors.append(user_limit_error(user_spent, usd, policy))
     detail = "; ".join(errors) or (
         f"{word} {size:,} byte ≈ {usd:.6f} USD ({by_source}, cộng model); hôm nay đã dùng {spent:.6f}/"
         f"{per_day.max_usd} USD"
@@ -195,4 +255,7 @@ def gate(estimated: dict, policy: Policy, spent: float) -> tuple[GateResult, lis
         "max_usd": per_run.max_usd,
         "max_usd_per_day": per_day.max_usd,
     }
+    if user_spent is not None:
+        observed["user_spent_today_usd"] = user_spent
+        observed["max_usd_per_user_day"] = policy.budgets.per_user.max_usd_per_day
     return GateResult(name="budget", result="fail" if errors else "pass", detail=detail, observed=observed), errors
