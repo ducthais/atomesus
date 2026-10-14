@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -10,8 +10,8 @@ from src.monitor import alerts, day2, runs
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
-from src.run_report import RunReport, get_run_report
-from src.run_report.access import can_view_run, run_owner, scope
+from src.run_report import RunReport
+from src.run_report.access import SYSTEM, is_account, run_owner, scope
 
 router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(current_user)])
 pipelines_router = APIRouter(prefix="/pipelines", tags=["pipelines"])
@@ -20,7 +20,7 @@ ALERT_SCAN = 1000  # đọc rộng rồi lọc theo quyền, để cảnh báo c
 
 
 def monitor_deps(config: PipelineSettings = Depends(settings), deps: AgentDeps = Depends(agent_deps)) -> AgentDeps:
-    """Chính sách đủ mọi domain để đọc được Spec của pipeline đã deploy; quyền xem lọc riêng bằng `_pipelines_of`."""
+    """Chính sách đủ mọi domain để đọc được Spec của pipeline đã deploy; quyền xem lọc riêng bằng `visible_models`."""
     try:
         return replace(deps, policy=effective_policy(config))
     except PolicyError as exc:
@@ -30,10 +30,10 @@ def monitor_deps(config: PipelineSettings = Depends(settings), deps: AgentDeps =
 def _pipelines_of(user: dict, store_path: str) -> Callable[[RunReport | None], bool]:
     """Pipeline người dùng được thấy, xét theo run đang deploy (cùng luật với run, xem src.run_report.access)."""
     access = scope(user, store_path)
-    return lambda parent: access.allows(run_owner(store_path, parent) if parent else None)
+    return lambda parent: access.allows(run_owner(store_path, parent.run_id) if parent else None)
 
 
-def _visible_models(user: dict, store_path: str, models: set[str]) -> set[str]:
+def visible_models(user: dict, store_path: str, models: Iterable[str]) -> set[str]:
     allowed = _pipelines_of(user, store_path)
     return {model for model in models if allowed(runs.deployed_report(store_path, model))}
 
@@ -62,22 +62,24 @@ def _engineer(user: dict) -> None:
         raise HTTPException(403, "Chỉ Engineer được chạy monitor hoặc xử lý cảnh báo.")
 
 
+def _own_pipelines(user: dict, config: PipelineSettings) -> set[str]:
+    """Pipeline đã deploy mà người gọi được thấy: bấm tay chỉ xử lý những pipeline này. Lịch monitor của hệ thống
+    (scripts/dagster_local.py) vẫn xử lý mọi pipeline."""
+    return visible_models(user, config.store_path, runs.deployed_models(config.deploy_dir))
+
+
 @router.post("/collect")
 def collect_runs(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
-    """Thu số đo các lần chạy theo lịch đã xong mà chưa ghi (đọc Dagster, dbt, warehouse, nguồn). Chỉ đọc.
-
-    Thu cho mọi pipeline (số đo là của hệ thống), nhưng chỉ trả về số đo của pipeline người gọi được thấy.
-    """
+    """Thu số đo các lần chạy theo lịch đã xong mà chưa ghi (đọc Dagster, dbt, warehouse, nguồn), chỉ cho pipeline
+    người gọi được thấy. Chỉ đọc."""
     _engineer(user)
     try:
-        written = runs.collect(config, effective_policy(config))
+        written = runs.collect(config, effective_policy(config), models=_own_pipelines(user, config))
     except runs.MonitorError as exc:
         raise HTTPException(503, str(exc)) from exc
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
-    visible = _visible_models(user, config.store_path, {row["model"] for row in written})
-    mine = [row for row in written if row["model"] in visible]
-    return {"collected": len(mine), "runs": mine}
+    return {"collected": len(written), "runs": written}
 
 
 @router.get("/pipelines")
@@ -89,7 +91,7 @@ def list_pipelines(user: dict = Depends(current_user), config: PipelineSettings 
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
     found = day2.overview(config, policy)
-    visible = _visible_models(user, config.store_path, {row["model"] for row in found})
+    visible = visible_models(user, config.store_path, {row["model"] for row in found})
     return [row for row in found if row["model"] in visible]
 
 
@@ -98,7 +100,7 @@ def pipeline_series(
     model: str, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
 ) -> dict:
     """Chuỗi số đo của một pipeline: đường cơ sở (lúc chạy thử) và từng lần chạy theo lịch."""
-    if not _visible_models(user, config.store_path, {model}):
+    if not visible_models(user, config.store_path, {model}):
         raise HTTPException(404, f"Pipeline '{model}' chưa deploy hoặc chưa có số đo")
     found = runs.series(config.store_path, model)
     if found["baseline"] is None and not found["runs"]:
@@ -113,20 +115,28 @@ def check_pipelines(
     config: PipelineSettings = Depends(settings),
     deps: AgentDeps = Depends(monitor_deps),
 ) -> dict:
-    """Chạy 4 luật suy giảm cho mọi pipeline đã deploy (Day 2, việc của hệ thống như lịch monitor). Run sửa chạy nền,
-    thuộc chủ pipeline; chỉ trả việc đã làm trên pipeline người gọi được thấy."""
+    """Chạy 4 luật suy giảm cho các pipeline đã deploy mà người gọi được thấy (Day 2). Run sửa chạy nền, thuộc chủ
+    pipeline; pipeline của người khác không bị cảnh báo hay tạo run sửa."""
     _engineer(user)
-    actions = day2.check(config, deps.policy, day2.launcher(deps, config.store_path, background.add_task))
-    visible = _visible_models(user, config.store_path, {action["model"] for action in actions})
-    return {"actions": [action for action in actions if action["model"] in visible]}
+    launch = day2.launcher(deps, config.store_path, background.add_task)
+    return {"actions": day2.check(config, deps.policy, launch, models=_own_pipelines(user, config))}
 
 
-def _alert_visible(alert: dict, user: dict, store_path: str, models: set[str]) -> bool:
-    """Cảnh báo thuộc pipeline người dùng thấy, hoặc gắn với run người dùng thấy."""
-    if alert["model"] in models:
-        return True
-    report = get_run_report(store_path, alert["run_id"]) if alert["run_id"] else None
-    return report is not None and can_view_run(user, report, store_path)
+def _alert_filter(user: dict, store_path: str) -> Callable[[dict], bool]:
+    """Cảnh báo gắn với run thì xét quyền trên chính run đó, không thì theo chủ pipeline đã lưu lúc cảnh báo. Tên
+    model chỉ dùng cho cảnh báo cũ ghi chủ là `system` (trước khi lần về chủ run gốc), vì hai người có thể trùng tên."""
+    access = scope(user, store_path)
+
+    def visible(alert: dict) -> bool:
+        if access.owners is None:
+            return True
+        if alert["run_id"]:
+            return access.allows(run_owner(store_path, alert["run_id"]))
+        if alert["owner"] == SYSTEM:
+            return bool(visible_models(user, store_path, {alert["model"]}))
+        return access.allows(alert["owner"] if is_account(store_path, alert["owner"]) else None)
+
+    return visible
 
 
 @router.get("/alerts")
@@ -137,10 +147,9 @@ def list_alerts(
     config: PipelineSettings = Depends(settings),
 ) -> list[dict]:
     """Cảnh báo Day 2: nguồn ngừng cấp, pipeline gắn cờ, run sửa cần người vào sửa. Mới nhất trước; chỉ cảnh báo
-    của pipeline người dùng được thấy."""
+    người dùng được thấy."""
     found = alerts.list_alerts(config.store_path, model, open_only=not include_resolved, limit=ALERT_SCAN)
-    models = _visible_models(user, config.store_path, {alert["model"] for alert in found})
-    return [alert for alert in found if _alert_visible(alert, user, config.store_path, models)][:ALERT_LIMIT]
+    return list(filter(_alert_filter(user, config.store_path), found))[:ALERT_LIMIT]
 
 
 @router.post("/alerts/{alert_id}/resolve")
@@ -150,9 +159,7 @@ def resolve_alert(
     """Đánh dấu cảnh báo đã xử lý."""
     _engineer(user)
     alert = alerts.get_alert(config.store_path, alert_id)
-    if alert is None or not _alert_visible(
-        alert, user, config.store_path, _visible_models(user, config.store_path, {alert["model"]})
-    ):
+    if alert is None or not _alert_filter(user, config.store_path)(alert):
         raise HTTPException(404, f"Không có cảnh báo {alert_id}")
     found = alerts.resolve_alert(config.store_path, alert_id)
     if found is None:

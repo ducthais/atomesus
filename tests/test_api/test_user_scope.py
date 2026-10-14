@@ -1,6 +1,9 @@
 """Mỗi người chỉ thấy run của mình; Reviewer thấy run của Engineer đã mời (ADR-0001 D1, D2, bất biến 9)."""
 
+import sqlite3
 import time
+from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,13 +12,14 @@ import pytest_asyncio
 from src.agents.nodes.common import AgentDeps
 from src.api import monitor, routes
 from src.main import app
-from src.monitor import alerts
+from src.monitor import alerts, day2, detectors, runs
+from src.orchestration import dagster
 from src.pipeline import api, auth, store
 from src.pipeline.settings import PipelineSettings
 from src.policy import load_policy
 from src.run_report import FIXTURES_DIR, RunReport, save_run_report
 from src.run_report.router import pipeline_github, request_change_deps
-from src.run_report.store import save_run_files
+from src.run_report.store import LEGACY_OWNER, get_run_report, save_run_files
 
 READY = "3f6c1a2e-8b4d-4c7a-9e21-0d5b7a1c9f10"
 PASSWORD = "StrongPass9"
@@ -275,6 +279,153 @@ async def test_only_engineers_manage_invites(env):
     await _login(env, "rev.one")
     assert (await env.client.post("/api/v1/pipeline/invites")).status_code == 403
     assert (await env.client.get("/api/v1/pipeline/reviewers")).status_code == 403
+
+
+def _deploy(env, model: str, owner: str, run_id: str, days_later: int = 1) -> RunReport:
+    """Deployment của `owner` mới hơn deployment của B, để thành bản đang chạy của `model`."""
+    deployed = _fixture("deployed.json")
+    report = _with_model(
+        deployed,
+        model,
+        run_id=run_id,
+        created_by=env.ids[owner],
+        created_at=deployed.created_at + timedelta(days=days_later),
+    )
+    save_run_report(env.config.store_path, report)
+    (Path(env.config.deploy_dir) / model).mkdir(exist_ok=True)
+    return report
+
+
+@pytest.mark.asyncio
+async def test_alert_permission_follows_its_run_and_owner_not_model_name(env):
+    """A deploy pipeline trùng tên `b_model` với B: cảnh báo cũ của B (gắn run, hoặc ghi chủ B) vẫn chỉ của B."""
+    _deploy(env, "b_model", "eng.a", "run-a-dep")
+    store_path = env.config.store_path
+    owned = alerts.raise_alert(store_path, "b_model", "source_stalled", "Nguồn của B", owner=env.ids["eng.b"])
+    b_run = alerts.list_alerts(store_path, "b_model")[-1]
+    assert b_run["run_id"] == "run-sys"
+
+    await _login(env, "eng.a")
+    assert [row["model"] for row in (await env.client.get("/api/v1/monitor/pipelines")).json()] == ["b_model"]
+    listed = (await env.client.get("/api/v1/monitor/alerts", params={"model": "b_model"})).json()
+    assert listed == []
+    for alert in (owned, b_run):
+        assert (await env.client.post(f"/api/v1/monitor/alerts/{alert['id']}/resolve")).status_code == 404
+        assert alerts.get_alert(store_path, alert["id"])["resolved_at"] is None
+
+    await _login(env, "eng.b")
+    listed = (await env.client.get("/api/v1/monitor/alerts", params={"model": "b_model"})).json()
+    assert {alert["id"] for alert in listed} == {owned["id"], b_run["id"]}
+    assert (await env.client.post(f"/api/v1/monitor/alerts/{owned['id']}/resolve")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_manual_check_and_collect_never_touch_other_peoples_pipelines(env, monkeypatch):
+    finding = detectors.Finding("runtime_regression", 20.0, 15.0, 10.0, "chạy chậm")
+    stalled = detectors.Finding("freshness_breach", 120.0, 60.0, None, "nguồn ngừng", stalled_sources=("orders",))
+    monkeypatch.setattr(detectors, "detect", lambda *a: [finding, stalled])
+    launched, read = [], []
+
+    def launcher(deps, store_path, submit):
+        return lambda parent, evidence: launched.append(parent.run_id) or parent
+
+    monkeypatch.setattr(day2, "launcher", launcher)
+    found = [{"runId": "dg-b", "jobName": "b_model_job", "status": "SUCCESS", "startTime": 1.8e9, "endTime": 1.8e9 + 9}]
+    monkeypatch.setattr(runs, "fetch_runs", lambda url: found)
+    monkeypatch.setattr(runs, "source_records", lambda *a: read.append(a) or {})
+    monkeypatch.setattr(runs.budget, "estimate", lambda *a: {})
+    store_path = env.config.store_path
+    full_spec = get_run_report(store_path, "run-b").spec  # /collect dựng Spec đầy đủ của bản đang deploy
+    save_run_report(store_path, get_run_report(store_path, "run-b-dep").model_copy(update={"spec": full_spec}))
+
+    await _login(env, "eng.a")
+    assert (await env.client.post("/api/v1/monitor/check")).json() == {"actions": []}
+    assert (await env.client.post("/api/v1/monitor/collect")).json() == {"collected": 0, "runs": []}
+    assert launched == [] and read == [], "không tạo run sửa, không đọc nguồn của pipeline B"
+    assert [alert["kind"] for alert in alerts.list_alerts(store_path, "b_model")] == ["needs_human"]
+    assert runs.recorded(store_path) == set()
+
+    await _login(env, "eng.b")
+    actions = (await env.client.post("/api/v1/monitor/check")).json()["actions"]
+    assert {(action["model"], action["action"]) for action in actions} == {
+        ("b_model", "alert"),
+        ("b_model", "fix_started"),
+    }
+    assert launched == ["run-b-dep"]
+    stalled_alert = alerts.list_alerts(store_path, "b_model")[0]
+    assert stalled_alert["kind"] == "source_stalled" and stalled_alert["owner"] == env.ids["eng.b"]
+    assert (await env.client.post("/api/v1/monitor/collect")).json()["collected"] == 1
+    assert len(read) == 1 and runs.recorded(store_path) == {"dg-b"}
+
+
+def _dagster_asset(jobs: list[str], run_job: str, run_id: str) -> dict:
+    return {
+        "jobs": jobs,
+        "last_materialized_at": "2026-10-02T00:00:00+00:00",
+        "last_materialized_run_id": run_id,
+        "last_run": {"run_id": run_id, "job": run_job, "status": "SUCCESS", "started_at": None, "ended_at": None},
+        "schedule": {"name": f"{run_job}_schedule", "job": run_job, "cron": "0 2 * * *", "running": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_orchestration_status_only_shows_own_jobs(env, monkeypatch):
+    _deploy(env, "a_model", "eng.a", "run-a-dep")
+    assets = {
+        "gold/a_model": _dagster_asset(["a_model_job"], "a_model_job", "dg-a"),
+        "gold/b_model": _dagster_asset(["b_model_job"], "b_model_job", "dg-b"),
+        # Asset dùng chung: lần chạy, lịch và lần materialize gần nhất là của B.
+        "bronze/shared": _dagster_asset(["a_model_job", "b_model_job"], "b_model_job", "dg-b"),
+    }
+    monkeypatch.setattr(dagster, "fetch_status", lambda url: assets)
+
+    async def status() -> dict:
+        body = (await env.client.get("/api/v1/orchestration/status")).json()
+        assert body["available"] is True
+        return body["assets"]
+
+    await _login(env, "eng.a")
+    seen = await status()
+    assert set(seen) == {"gold/a_model", "bronze/shared"}
+    assert seen["bronze/shared"] == {
+        "jobs": ["a_model_job"],
+        "last_materialized_at": None,
+        "last_materialized_run_id": None,
+        "last_run": None,
+        "schedule": None,
+    }
+    assert "dg-b" not in str(seen) and "b_model" not in str(seen)
+
+    await _login(env, "rev.one")
+    assert await status() == {}
+
+    await _login(env, "eng.b")
+    seen = await status()
+    assert set(seen) == {"gold/b_model", "bronze/shared"}
+    assert seen["bronze/shared"]["last_run"]["run_id"] == "dg-b" and seen["bronze/shared"]["jobs"] == ["b_model_job"]
+
+    await _login(env, "admin", "Admin@123")
+    assert await status() == assets
+
+
+@pytest.mark.asyncio
+async def test_legacy_run_without_created_by_is_readable_only_by_admin_and_demo_pair(env):
+    save_run_report(env.config.store_path, _fixture("ready_for_review.json").model_copy(update={"run_id": "run-old"}))
+    with sqlite3.connect(env.config.store_path) as conn:
+        conn.execute("UPDATE run_reports SET report = json_remove(report, '$.created_by') WHERE run_id = 'run-old'")
+
+    for username, password in (("admin", "Admin@123"), ("engineer", "Engineer@123"), ("reviewer", "Reviewer@123")):
+        await _login(env, username, password)
+        assert "run-old" in await _run_ids(env), username
+        detail = await env.client.get("/api/v1/runs/run-old")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["created_by"] == LEGACY_OWNER
+
+    for username in ("eng.a", "rev.one"):
+        await _login(env, username)
+        assert "run-old" not in await _run_ids(env)
+        await _blocked_reads(env, "run-old")
+    await _blocked_reviews(env, "run-old")  # rev.one: Reviewer chưa liên kết
 
 
 @pytest.mark.asyncio

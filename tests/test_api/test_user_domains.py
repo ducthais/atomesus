@@ -230,13 +230,13 @@ async def test_selected_catalog_keeps_connection_error_handling(client, user_dom
 async def test_monitor_day2_and_reviewer_rework_use_all_user_domains(client, user_domains, monkeypatch):
     policies = []
 
-    def check(config, policy, launch):
+    def check(config, policy, launch, models=None):
         policies.append(policy)
         return []
 
     monkeypatch.setattr(monitor.day2, "check", check)
     monkeypatch.setattr(monitor.day2, "overview", lambda config, policy: check(config, policy, None))
-    monkeypatch.setattr(monitor.runs, "collect", lambda config, policy: check(config, policy, None))
+    monkeypatch.setattr(monitor.runs, "collect", lambda config, policy, models=None: check(config, policy, None))
     assert (await client.post("/api/v1/monitor/check")).status_code == 200
     assert (await client.get("/api/v1/monitor/pipelines")).status_code == 200
     assert (await client.post("/api/v1/monitor/collect")).status_code == 200

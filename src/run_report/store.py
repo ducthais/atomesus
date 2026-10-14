@@ -17,8 +17,19 @@ from src.run_report.models import RunReport, RunStatus
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "run_reports"
 HISTORY_LIMIT = 100
+# Bản ghi cũ trước khi có `created_by`: gán người tạo không phải tài khoản nào (id tài khoản không chứa ":"), để đọc
+# được thành RunReport và chỉ Admin cùng cặp demo thấy (xem src.run_report.access).
+LEGACY_OWNER = "legacy:unknown"
 # GitHub chỉ cho gửi lại delivery trong vài ngày; giữ lâu hơn hẳn mức đó.
 DELIVERY_RETENTION_DAYS = 30
+
+
+def _report(raw: str) -> RunReport:
+    """JSON đã lưu → RunReport; bản ghi cũ thiếu `created_by` được gán LEGACY_OWNER thay vì lỗi kiểm tra."""
+    data = json.loads(raw)
+    if isinstance(data, dict) and not data.get("created_by"):
+        raw = json.dumps({**data, "created_by": LEGACY_OWNER})
+    return RunReport.model_validate_json(raw)
 
 
 @contextmanager
@@ -132,7 +143,7 @@ def transition_run_report(
         # So trạng thái trước khi đọc JSON: người thắng race đã đổi status thì trả False ngay, không phụ thuộc nội dung.
         if row is None or row[0] != expected_status:
             return False
-        current = RunReport.model_validate_json(row[1])
+        current = _report(row[1])
         if current.version != expected_version:
             return False
         if expected_files_hash is not None and current.files_hash != expected_files_hash:
@@ -157,7 +168,7 @@ def _apply_change(conn: sqlite3.Connection, run_id: str, change: Change) -> RunR
     if row is None:
         return None
     try:
-        current = RunReport.model_validate_json(row[1])
+        current = _report(row[1])
     except ValidationError:
         return None
     updated = change(current)
@@ -236,7 +247,7 @@ def _match_and_apply(
     ).fetchall()
     for run_id, status, raw in rows:
         try:
-            current = RunReport.model_validate_json(raw)
+            current = _report(raw)
         except ValidationError:
             continue
         if not match(current):
@@ -274,7 +285,7 @@ def replay_webhook_deliveries(
         if not deliveries or row is None:
             return None
         try:
-            current = RunReport.model_validate_json(row[1])
+            current = _report(row[1])
         except ValidationError:
             return None
         changed = None
@@ -409,7 +420,7 @@ def list_run_reports(
         query, params = query + " AND run_id IN (SELECT value FROM json_each(?))", [*params, json.dumps(list(run_ids))]
     with _database(path) as conn:
         rows = conn.execute(query + " ORDER BY created_at DESC, rowid DESC LIMIT ?", [*params, limit]).fetchall()
-    return [RunReport.model_validate_json(row[0]) for row in rows]
+    return [_report(row[0]) for row in rows]
 
 
 def abandon_unfinished(path: str, stale_before: datetime | None = None) -> list[str]:
@@ -430,7 +441,7 @@ def abandon_unfinished(path: str, stale_before: datetime | None = None) -> list[
                 ).fetchone()
                 if row is None or row[0] != status:
                     continue
-                report = RunReport.model_validate_json(row[1])
+                report = _report(row[1])
                 updated_at = datetime.fromisoformat(row[2]) if row[2] else report.created_at
                 if stale_before is not None and updated_at >= stale_before:
                     continue
@@ -460,10 +471,21 @@ def list_run_lineage(path: str) -> dict[str, tuple[str | None, str | None]]:
     return {row[0]: (row[1], row[2]) for row in rows}
 
 
+def get_run_lineage(path: str, run_id: str) -> tuple[str | None, str | None] | None:
+    """(created_by, parent_run_id) của một run, đọc thẳng JSON để xét quyền trước khi dựng RunReport; None nếu không có."""
+    with _database(path) as conn:
+        row = conn.execute(
+            "SELECT json_extract(report, '$.created_by'), json_extract(report, '$.parent_run_id')"
+            " FROM run_reports WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    return (row[0], row[1]) if row else None
+
+
 def get_run_report(path: str, run_id: str) -> RunReport | None:
     with _database(path) as conn:
         row = conn.execute("SELECT report FROM run_reports WHERE run_id = ?", (run_id,)).fetchone()
-    return RunReport.model_validate_json(row[0]) if row else None
+    return _report(row[0]) if row else None
 
 
 def save_run_files(path: str, run_id: str, version: int, files: dict[str, str]) -> None:
