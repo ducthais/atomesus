@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { describeCron, runSummary } from '../lib/catalog/explain.ts';
 import { buildSnapshot, type CatalogResponse } from '../lib/catalog/live.ts';
+import { RUNS } from '../lib/catalog/mock.ts';
 import type { RunReport } from '../lib/postgres-api.ts';
 
 const full: RunReport = {
@@ -57,6 +58,20 @@ test('tóm tắt: thiếu phần nào thì bỏ câu đó, không bịa', () => 
   assert.deepEqual(runSummary({ ...full, spec: null, plan: { sources: [] }, gates: [], optimizer: [] }), []);
 });
 
+test('tóm tắt: bảng cùng tên ở hai kết nối là hai bảng, ghi kèm kết nối', () => {
+  const [orders] = (full.spec as { sources: object[] }).sources;
+  const spec = { ...(full.spec as object), sources: [
+    { ...orders, source_ref: 'east_pg' }, { ...orders, id: 'west_orders', source_ref: 'west_pg' }, { ...orders, id: 'again', source_ref: 'east_pg' },
+    (full.spec as { sources: object[] }).sources[1],
+  ] } as RunReport['spec'];
+  assert.equal(runSummary({ ...full, spec })[0], 'Đọc 3 bảng: east_pg.orders, west_pg.orders, customers');
+
+  const plan = { model_name: 'm', sources: [
+    { id: 'a', source_ref: 'east_pg', object: 'orders' }, { id: 'b', source_ref: 'west_pg', object: 'orders' }, { id: 'c', source_ref: 'east_pg', object: 'orders' },
+  ] };
+  assert.equal(runSummary({ ...full, spec: null, plan })[0], 'Đọc 2 bảng: east_pg.orders, west_pg.orders');
+});
+
 test('tóm tắt: lịch cron phổ biến diễn giải được, dạng lạ giữ nguyên cron', () => {
   const cases: [string, string][] = [
     ['0 6 * * *', 'mỗi ngày lúc 6:00'], ['30 18 * * *', 'mỗi ngày lúc 18:30'], ['0 2 * * *', 'mỗi ngày lúc 2:00'],
@@ -65,9 +80,13 @@ test('tóm tắt: lịch cron phổ biến diễn giải được, dạng lạ g
     ['0 7 * * 1', 'mỗi thứ Hai lúc 7:00'], ['0 7 * * 0', 'mỗi Chủ nhật lúc 7:00'], ['0 7 * * 1,3', 'mỗi thứ Hai, thứ Tư lúc 7:00'],
     ['0 8 * * 1-5', 'từ thứ Hai đến thứ Sáu lúc 8:00'], ['0 0 1 * *', 'ngày 1 hằng tháng lúc 0:00'],
     ['@daily', 'mỗi ngày lúc 0:00'], ['@hourly', 'mỗi giờ'], ['  0 6 * * *  ', 'mỗi ngày lúc 6:00'],
+    ['*/30 * * * *', 'mỗi 30 phút'], ['0 */6 * * *', 'mỗi 6 giờ'], ['30 */12 * * *', 'mỗi 12 giờ vào phút 30'], ['0,30 * * * *', 'mỗi giờ vào phút 0, 30'],
+    // Bước không chia hết chu kỳ thì khoảng cách không đều: liệt kê mốc chạy thật, không nói "mỗi n".
+    ['*/45 * * * *', 'mỗi giờ vào phút 0, 45'], ['*/25 * * * *', 'mỗi giờ vào phút 0, 25, 50'], ['*/60 * * * *', 'mỗi giờ'],
+    ['0 */5 * * *', 'mỗi ngày lúc 0:00, 5:00, 10:00, 15:00, 20:00'], ['15 */7 * * *', 'mỗi ngày lúc 0:15, 7:15, 14:15, 21:15'],
   ];
   for (const [cron, text] of cases) assert.equal(describeCron(cron), text, cron);
-  for (const cron of ['0 6 * 1 *', '0 25 * * *', '61 * * * *', '0 6 1 * 1', '0 6 * * 9', '0 6 * *', 'abc', '0 6 L * *', '0-30 * * * *']) {
+  for (const cron of ['0 6 * 1 *', '0 25 * * *', '61 * * * *', '0 6 1 * 1', '0 6 * * 9', '0 6 * *', 'abc', '0 6 L * *', '0-30 * * * *', '*/0 * * * *', '*/15 6 * * *', '* 6 * * *']) {
     assert.equal(describeCron(cron), null, cron);
   }
   const custom = runSummary({ ...full, spec: { ...(full.spec as object), schedule: { cron: '0 6 * 1 *' } } as RunReport['spec'] });
@@ -79,4 +98,13 @@ test('tóm tắt: catalog live gắn câu tóm tắt vào run cho trang chi ti�
   const catalog: CatalogResponse = { domains: {}, conformed_dimensions: [] };
   const snapshot = buildSnapshot(catalog, [full], { files: {}, limits: { max_llm_calls: 6, max_spec_attempts: 2, max_sql_attempts: 2, max_chat_calls: 20, max_usd_per_day: 2 } }, []);
   assert.deepEqual(snapshot.runs[0].brief, runSummary(full));
+});
+
+test('tóm tắt: run mock (CATALOG_MOCK=1) cũng có khối tóm tắt, thiếu dữ liệu thì ít câu hơn', () => {
+  const brief = (id: string) => RUNS.find(r => r.id.startsWith(id))?.brief;
+  assert.deepEqual(brief('b41f07d2'), [
+    'Đọc 2 bảng: orders, customers', 'Ra bảng fct_customer_revenue khoảng 3.102 dòng', 'Chạy theo lịch mỗi ngày lúc 3:00', 'Chi phí ước tính ~$0.004400 mỗi lần chạy',
+  ]);
+  assert.equal(brief('7c2e91a4')?.at(-1), 'Optimizer: nhanh hơn 34,8% (0,2155 s → 0,1405 s)');
+  assert.deepEqual(brief('5d8b2f60'), ['Đọc 2 bảng: customers, leads', 'Ra bảng fct_new_customers_monthly']);
 });

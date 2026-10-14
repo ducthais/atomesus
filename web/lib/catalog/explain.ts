@@ -125,9 +125,16 @@ export function describeCron(cron: string): string | null {
   const [minute, hour, day, month, weekday] = fields;
   const int = (v: string, min: number, max: number) => /^\d+$/.test(v) && Number(v) >= min && Number(v) <= max ? Number(v) : null;
   const ints = (v: string, min: number, max: number) => { const all = v.split(',').map(x => int(x, min, max)); return all.every(x => x !== null) ? all as number[] : null; };
-  const every = (v: string) => { const m = v.match(/^\*\/(\d+)$/); return m && Number(m[1]) > 0 ? Number(m[1]) : null; };
-  const m = int(minute, 0, 59);
-  const hours = ints(hour, 0, 23);
+  // */n đếm lại từ 0 ở mỗi giờ / mỗi ngày (*/45 → phút 0 và 45): chỉ gọi "mỗi n phút/giờ" khi n chia hết 60 / 24,
+  // không thì liệt kê các mốc chạy thật.
+  const step = (v: string, period: number) => {
+    const n = Number(v.match(/^\*\/(\d+)$/)?.[1] ?? 0);
+    return n > 0 ? { n, values: Array.from({ length: Math.ceil(period / n) }, (_, i) => i * n), even: n < period && period % n === 0 } : null;
+  };
+  const minuteStep = step(minute, 60), hourStep = step(hour, 24);
+  const mins = minute === '*' ? null : minuteStep?.values ?? ints(minute, 0, 59);
+  const m = mins?.length === 1 ? mins[0] : null;
+  const hours = hourStep?.values ?? ints(hour, 0, 23);
   const at = m !== null && hours ? `lúc ${hours.map(h => `${h}:${String(m).padStart(2, '0')}`).join(', ')}` : null;
   if (month !== '*') return null;
   if (day !== '*') {
@@ -145,12 +152,12 @@ export function describeCron(cron: string): string | null {
     return days ? `mỗi ${[...new Set(days.map(d => WEEKDAY[d]))].join(', ')} ${at}` : null;
   }
   if (hour === '*') {
-    if (minute === '*' || every(minute) === 1) return 'mỗi phút';
-    if (every(minute)) return `mỗi ${every(minute)} phút`;
-    if (m !== null) return m === 0 ? 'mỗi giờ' : `mỗi giờ vào phút ${m}`;
-    return null;
+    if (minute === '*' || minuteStep?.n === 1) return 'mỗi phút';
+    if (minuteStep?.even) return `mỗi ${minuteStep.n} phút`;
+    if (!mins) return null;
+    return m === 0 ? 'mỗi giờ' : `mỗi giờ vào phút ${mins.join(', ')}`;
   }
-  if (m !== null && every(hour)) return every(hour) === 1 ? (m === 0 ? 'mỗi giờ' : `mỗi giờ vào phút ${m}`) : `mỗi ${every(hour)} giờ${m ? ` vào phút ${m}` : ''}`;
+  if (m !== null && hourStep?.even) return hourStep.n === 1 ? (m === 0 ? 'mỗi giờ' : `mỗi giờ vào phút ${m}`) : `mỗi ${hourStep.n} giờ${m ? ` vào phút ${m}` : ''}`;
   return at ? `mỗi ngày ${at}` : null;
 }
 
@@ -165,8 +172,12 @@ export function runSummary(report: RunReport): string[] {
   const plan = report.plan ?? null;
   const lines: string[] = [];
 
-  const tables = [...new Set(spec ? spec.sources.map(s => s.table ?? s.endpoint ?? s.path_pattern ?? s.id) : (plan?.sources ?? []).map(s => s.object))];
-  if (tables.length) lines.push(`Đọc ${tables.length} bảng: ${tables.join(', ')}`);
+  // Một bảng = kết nối + tên: orders ở hai kết nối là hai bảng, và ghi kèm kết nối để người đọc phân biệt.
+  const read = spec ? spec.sources.map(s => ({ ref: s.source_ref, name: s.table ?? s.endpoint ?? s.path_pattern ?? s.id }))
+    : (plan?.sources ?? []).map(s => ({ ref: s.source_ref, name: s.object }));
+  const tables = [...new Map(read.map(t => [`${t.ref}\u0000${t.name}`, t])).values()];
+  const label = (t: { ref: string; name: string }) => tables.filter(o => o.name === t.name).length > 1 ? `${t.ref}.${t.name}` : t.name;
+  if (tables.length) lines.push(`Đọc ${tables.length} bảng: ${tables.map(label).join(', ')}`);
 
   const model = spec?.transform.model_name ?? plan?.model_name;
   const goldRows = num(report.gates.find(g => g.name === 'post_run')?.observed.gold_rows);
