@@ -57,6 +57,12 @@ def database(path: str):
                 " expires REAL NOT NULL, used_by TEXT, used_at REAL)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS reviewer_invites_engineer ON reviewer_invites(engineer_id)")
+            # Chủ của mỗi tên model (job Dagster, bảng gold dùng chung tên): giữ trước khi deploy, khóa chính chặn hai
+            # chủ cùng giữ một tên (xem src.run_report.access.claim_model).
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS model_owners ("
+                " model_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL, claimed_at REAL NOT NULL)"
+            )
             # Lần đăng ký gần nhất của mỗi IP (giới hạn 1 tài khoản / IP / cửa sổ, xem api.register).
             conn.execute("CREATE TABLE IF NOT EXISTS registration_ips (ip TEXT PRIMARY KEY, at REAL NOT NULL)")
             conn.execute(
@@ -313,6 +319,23 @@ def remove_reviewer_link(path: str, engineer_id: str, reviewer_id: str) -> bool:
                 "DELETE FROM reviewer_links WHERE engineer_id = ? AND reviewer_id = ?", (engineer_id, reviewer_id)
             ).rowcount
         )
+
+
+def claim_model(path: str, model: str, owner_id: str, now: float) -> str:
+    """Giữ tên `model` cho `owner_id` nếu chưa ai giữ; trả chủ đang giữ (là `owner_id` khi giữ được). Một câu INSERT trên
+    khóa chính nên hai người giữ cùng lúc chỉ một người thắng."""
+    with database(path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO model_owners (model_name, owner_id, claimed_at) VALUES (?, ?, ?)",
+            (model, owner_id, now),
+        )
+        return conn.execute("SELECT owner_id FROM model_owners WHERE model_name = ?", (model,)).fetchone()[0]
+
+
+def get_model_owner(path: str, model: str) -> str | None:
+    with database(path) as conn:
+        row = conn.execute("SELECT owner_id FROM model_owners WHERE model_name = ?", (model,)).fetchone()
+    return row[0] if row else None
 
 
 def save_connection(path: str, metadata: dict[str, Any], password_encrypted: str) -> None:

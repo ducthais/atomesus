@@ -11,11 +11,11 @@ from src.deployer.manifest import ManifestError
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
-from src.run_report.access import is_own_run, model_taken, run_visible, viewable_run, visible_run_ids
+from src.run_report.access import claim_model, is_own_run, run_owner, run_visible, viewable_run, visible_run_ids
 from src.run_report.compare import compare, pick_base
 from src.run_report.models import Approval, Decision, Deployment, RunReport, RunStatus
+from src.run_report.store import LEGACY_OWNER, get_run_files, list_run_reports, save_run_report, transition_run_report
 from src.run_report.store import _database as run_report_database
-from src.run_report.store import get_run_files, list_run_reports, save_run_report, transition_run_report
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
 
@@ -74,8 +74,12 @@ class RequestChangesRequest(BaseModel):
         return value.strip()
 
 
-def request_change_deps(config: PipelineSettings = Depends(settings)):
+def request_change_deps(config: PipelineSettings = Depends(settings), run_id: str | None = None):
     """Phụ thuộc của agent cho "Yêu cầu sửa".
+
+    Có `run_id` (Reviewer yêu cầu sửa): agent chỉ nhận domain của chủ run như lúc Engineer tạo run, không gộp domain
+    riêng của người khác; run không rõ chủ chỉ nhận domain YAML. Không có (vòng sửa nội bộ P16 → P4): chính sách hệ
+    thống đầy đủ.
 
     Import muộn: src.agents.* import gói src.run_report (models, store), nên import agent ở đầu file này tạo vòng
     run_report → router → agents → run_report và làm hỏng mọi chỗ import src.run_report trước src.main
@@ -86,8 +90,9 @@ def request_change_deps(config: PipelineSettings = Depends(settings)):
     from src.agents.nodes.common import AgentDeps
     from src.run_report.store import is_run_cancelled
 
+    owner = (run_owner(config.store_path, run_id) or LEGACY_OWNER) if run_id else None
     try:
-        policy = effective_policy(config)
+        policy = effective_policy(config, owner_id=owner)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
 
@@ -299,8 +304,6 @@ def deploy_run(
         raise HTTPException(
             409, "Chữ ký duyệt không khớp bộ file hoặc version hiện tại nên không deploy được."
         ) from None
-    if taken := model_taken(config.store_path, report):
-        raise HTTPException(409, f"Tên pipeline {taken} đã có người dùng khác dùng, hãy đổi tên model.")
     if report.status != "APPROVED":
         raise HTTPException(409, f"Run đang ở trạng thái {report.status}, chỉ run đã duyệt mới deploy được.")
     approval = report.approval
@@ -318,6 +321,9 @@ def deploy_run(
     files = get_run_files(config.store_path, run_id, report.version)
     if not files or file_hashes(files)[1] != report.files_hash:
         raise HTTPException(409, "Nội dung file đã lưu không khớp files_hash nên không deploy được.")
+    # Giữ tên model trước khi mở pull request: hai chủ deploy cùng tên cùng lúc thì chỉ một người đi tiếp.
+    if taken := claim_model(config.store_path, report):
+        raise HTTPException(409, f"Tên pipeline {taken} đã có người dùng khác dùng, hãy đổi tên model.")
     try:
         deployment = open_pull_request(report, files, github)
     except ManifestError as exc:
@@ -369,8 +375,9 @@ def batch_review_runs(
     config: PipelineSettings = Depends(settings),
 ) -> BatchReviewResponse:
     """Duyệt hoặc từ chối tối đa 50 run trong một request; lỗi của một run không chặn các run còn lại."""
-    # Vai xét sau quyền thấy: mục không được thấy báo không tìm thấy như run không tồn tại (xem _reviewable).
-    if user["role"] != "Reviewer" and any(run_visible(user, config.store_path, item.run_id) for item in body.items):
+    # Vai xét sau quyền thấy, theo từng mục (xem _reviewable): mục không được thấy báo không tìm thấy như run không tồn
+    # tại, mục thấy được mà vai không đủ báo lỗi quyền. Chỉ trả 403 cho cả mẻ khi mọi mục đều thấy được (không lộ gì).
+    if user["role"] != "Reviewer" and all(run_visible(user, config.store_path, item.run_id) for item in body.items):
         raise HTTPException(403, "Chỉ Reviewer được duyệt hoặc từ chối run.")
     results = []
     for item in body.items:

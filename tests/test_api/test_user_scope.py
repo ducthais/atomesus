@@ -14,7 +14,7 @@ from src.api import monitor, routes
 from src.main import app
 from src.monitor import alerts, day2, detectors, runs
 from src.orchestration import dagster
-from src.pipeline import api, auth, store
+from src.pipeline import api, auth, connectors, store
 from src.pipeline.settings import PipelineSettings
 from src.policy import load_policy
 from src.run_report import FIXTURES_DIR, RunReport, save_run_report
@@ -481,15 +481,16 @@ def _approved(env, run_id: str, model: str) -> RunReport:
 
 @pytest.mark.asyncio
 async def test_deploy_refuses_model_name_owned_by_another_user(env):
-    from src.run_report.access import model_owner, model_taken
+    from src.run_report.access import claim_model, model_owner
 
     store_path = env.config.store_path
     taken = _approved(env, "run-a-taken", "b_model")
     own = _approved(env, "run-a-own", "a_model")
     assert model_owner(store_path, "b_model") == env.ids["eng.b"] and model_owner(store_path, "a_model") is None
-    assert model_taken(store_path, own) is None
+    assert claim_model(store_path, own) is None
+    assert model_owner(store_path, "a_model") == env.ids["eng.a"]
     # Bản sửa do hệ thống tạo trên pipeline của B vẫn là của B, không bị coi là trùng tên.
-    assert model_taken(store_path, get_run_report(store_path, "run-sys")) is None
+    assert claim_model(store_path, get_run_report(store_path, "run-sys")) is None
     await _link(env, "eng.a")
 
     response = await env.client.post(f"/api/v1/runs/{taken.run_id}/deploy")
@@ -497,6 +498,184 @@ async def test_deploy_refuses_model_name_owned_by_another_user(env):
     assert response.status_code == 409
     assert response.json()["detail"] == "Tên pipeline b_model đã có người dùng khác dùng, hãy đổi tên model."
     assert get_run_report(store_path, taken.run_id).deployment is None
+
+
+@pytest.mark.asyncio
+async def test_model_name_is_claimed_before_github_and_only_one_owner_wins(env, monkeypatch):
+    """Deploy giữ tên model trước khi mở pull request; deploy lỗi vẫn giữ tên; chủ khác tới sau nhận 409 mà không gọi
+    GitHub."""
+    from src.codegen.github import GithubError
+    from src.run_report.access import claim_model, model_owner
+
+    store_path = env.config.store_path
+    opened = []
+
+    def failing_github(report, files, github):
+        opened.append((report.run_id, store.get_model_owner(store_path, "fresh_model")))
+        raise GithubError(502, "GitHub đang lỗi")
+
+    monkeypatch.setattr("src.codegen.deploy.open_pull_request", failing_github)
+    mine = _approved(env, "run-a-fresh", "fresh_model")
+    await _link(env, "eng.a")
+
+    failed = await env.client.post(f"/api/v1/runs/{mine.run_id}/deploy")
+    assert failed.status_code == 502
+    assert opened == [(mine.run_id, env.ids["eng.a"])], "tên đã được giữ trước khi gọi GitHub"
+    assert model_owner(store_path, "fresh_model") == env.ids["eng.a"]
+
+    theirs = _with_model(get_run_report(store_path, "run-b"), "fresh_model", run_id="run-b-fresh")
+    save_run_report(store_path, theirs)
+    assert claim_model(store_path, theirs) == "fresh_model"
+    assert claim_model(store_path, mine) is None, "chủ đã giữ tên deploy lại được"
+
+    # B duyệt bằng Reviewer đã liên kết với B: 409, không mở pull request nào.
+    approved_b = _approved(env, "run-b-approved", "fresh_model").model_copy(update={"created_by": env.ids["eng.b"]})
+    save_run_report(store_path, approved_b)
+    await _link(env, "eng.b")
+    response = await env.client.post(f"/api/v1/runs/{approved_b.run_id}/deploy")
+    assert response.status_code == 409, response.text
+    assert "fresh_model" in response.json()["detail"]
+    assert len(opened) == 1 and model_owner(store_path, "fresh_model") == env.ids["eng.a"]
+
+
+def test_concurrent_model_claims_by_two_owners_have_one_winner(env, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from src.run_report import access
+
+    store_path = env.config.store_path
+    race_a = _with_model(get_run_report(store_path, "run-a"), "race_model", run_id="run-a-race")
+    race_b = _with_model(get_run_report(store_path, "run-b"), "race_model", run_id="run-b-race")
+    for report in (race_a, race_b):
+        save_run_report(store_path, report)
+    # Cả hai cùng qua bước đọc (chưa ai giữ tên, chưa ai deploy) rồi cùng ghi: chỉ khóa chính quyết định ai thắng.
+    monkeypatch.setattr(access, "model_owners", lambda *args: [])
+    barrier = Barrier(2)
+
+    def claim(report: RunReport) -> str | None:
+        barrier.wait()
+        return access.claim_model(store_path, report)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, [race_a, race_b]))
+
+    assert results.count(None) == 1 and results.count("race_model") == 1
+    winner = env.ids["eng.a"] if results[0] is None else env.ids["eng.b"]
+    assert store.get_model_owner(store_path, "race_model") == winner
+    with store.database(store_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM model_owners WHERE model_name = 'race_model'").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_review_reports_each_item_for_mixed_visibility(env):
+    await _login(env, "eng.a")
+    items = [{"run_id": "run-a", "files_hash": env.files_hash}, {"run_id": "run-b", "files_hash": env.files_hash}]
+
+    mixed = await env.client.post("/api/v1/runs/batch-review", json={"decision": "approve", "items": items})
+
+    assert mixed.status_code == 200, mixed.text
+    assert mixed.json()["results"] == [
+        {"run_id": "run-a", "ok": False, "status": None, "message": "Chỉ Reviewer được duyệt hoặc từ chối run."},
+        {"run_id": "run-b", "ok": False, "status": None, "message": "Không tìm thấy run run-b"},
+    ]
+    own_only = await env.client.post("/api/v1/runs/batch-review", json={"decision": "approve", "items": items[:1]})
+    assert own_only.status_code == 403
+    for run_id in ("run-a", "run-b"):
+        assert get_run_report(env.config.store_path, run_id).status == "READY_FOR_REVIEW"
+
+
+CONNECTION_B = "87654321-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+DOMAIN_B, SOURCE_B = "u_87654321", "c_87654321"
+
+
+def _private_source(env, monkeypatch) -> list[str]:
+    """Kết nối Postgres riêng của B đã chọn bảng; trả danh sách connection_ref đã bị kết nối tới để khám phá."""
+    owner = env.ids["eng.b"]
+    metadata = {
+        "id": CONNECTION_B,
+        "owner_id": owner,
+        "name": "Kho riêng B",
+        "host": "db-rieng-b.example",
+        "port": 5432,
+        "database": "shop",
+        "user": "b_user",
+        "sslmode": "require",
+        "created_at": 1,
+    }
+    store.save_connection(env.config.store_path, metadata, "mat-khau-ma-hoa")
+    store.save_connection_selection(env.config.store_path, CONNECTION_B, owner, "b_private", ["orders"])
+    discovered = []
+
+    def discover(decl, config):
+        discovered.append(decl.connection_ref)
+        columns = [{"name": "id", "type": "integer"}]
+        orders = {"name": "orders", "kind": "table", "columns": columns, "primary_key": ["id"], "row_estimate": 1}
+        return {"objects": [orders], "foreign_keys": []}
+
+    monkeypatch.setattr(connectors, "discover", discover)
+    return discovered
+
+
+async def _sees_private_source(env) -> bool:
+    """Catalog, danh sách nguồn, khám phá bảng và /policy phải cùng thấy hoặc cùng không thấy nguồn riêng của B."""
+    catalog = await env.client.get("/api/v1/catalog")
+    sources = await env.client.get("/api/v1/catalog/sources")
+    objects = await env.client.get(f"/api/v1/catalog/sources/{SOURCE_B}/objects")
+    policy = await env.client.get("/api/v1/policy")
+    seen = {
+        DOMAIN_B in catalog.json()["domains"],
+        SOURCE_B in {source["ref"] for source in sources.json()},
+        objects.status_code == 200,
+        DOMAIN_B in {domain["name"] for domain in policy.json()["user_domains"]},
+    }
+    assert len(seen) == 1, seen
+    if seen == {False}:
+        assert objects.status_code == 404
+        for response in (catalog, sources, policy):
+            assert "b_private" not in response.text and CONNECTION_B not in response.text
+            assert "eng.b@example.com" not in response.text
+    return seen.pop()
+
+
+@pytest.mark.asyncio
+async def test_reviewer_sees_private_sources_only_of_linked_engineers(env, monkeypatch):
+    discovered = _private_source(env, monkeypatch)
+    conn_ref = f"conn:{CONNECTION_B}"
+
+    for username in ("rev.one", "eng.a"):
+        await _login(env, username)
+        assert not await _sees_private_source(env), username
+    assert conn_ref not in discovered, "không kết nối tới Postgres riêng của B cho người không được thấy"
+
+    await _link(env, "eng.b")
+    assert await _sees_private_source(env)
+    assert conn_ref in discovered
+
+    await _login(env, "eng.b")
+    assert (await env.client.delete(f"/api/v1/pipeline/reviewers/{env.ids['rev.one']}")).status_code == 200
+    await _login(env, "rev.one")
+    discovered.clear()
+    assert not await _sees_private_source(env)
+    assert conn_ref not in discovered
+
+    for username, password in (("eng.b", PASSWORD), ("admin", "Admin@123")):
+        await _login(env, username, password)
+        assert await _sees_private_source(env), username
+
+
+def test_request_changes_agent_gets_only_the_run_owners_domains(env, monkeypatch):
+    """Reviewer yêu cầu sửa run của A: agent không nhận domain riêng của B dù Reviewer liên kết với cả hai."""
+    _private_source(env, monkeypatch)
+    monkeypatch.setattr("src.agents.llm.openai_llm", lambda: lambda *_: pytest.fail("Không được gọi LLM thật"))
+
+    def domains(run_id: str | None) -> set[str]:
+        return set(request_change_deps(env.config, run_id).policy.domains.domains)
+
+    assert DOMAIN_B not in domains("run-a")
+    assert DOMAIN_B in domains("run-b") and DOMAIN_B in domains("run-sys")
+    assert DOMAIN_B not in domains("khong-co-run")
+    assert DOMAIN_B in domains(None), "vòng sửa nội bộ (P16 → P4) giữ chính sách hệ thống đầy đủ"
 
 
 def _measure(env, model: str, run_id: str) -> None:

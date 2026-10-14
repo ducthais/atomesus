@@ -6,12 +6,14 @@
 - Run hệ thống tạo (`created_by = "system"`: regression / Day 2) thuộc về chủ của run gốc, lần theo `parent_run_id`.
 - Run không xác định được chủ (dữ liệu cũ: thiếu `created_by` hoặc người tạo không phải tài khoản nào) chỉ Admin và
   cặp demo thấy.
-- Dữ liệu theo tên model (monitor, Dagster, bảng gold) thuộc chủ của tên model (`model_owner`); deploy trùng tên model
-  của chủ khác bị chặn.
+- Dữ liệu theo tên model (monitor, Dagster, bảng gold) thuộc chủ của tên model (`model_owner`); deploy giữ tên model
+  trong bảng model_owners trước khi mở pull request, trùng tên của chủ khác bị chặn.
+- Domain nguồn riêng của người dùng (catalog, /policy) chỉ chủ, Reviewer đã liên kết và Admin thấy (`policy_for`).
 
 Không thấy thì API trả 404 như run không tồn tại, để không lộ run của người khác có hay không.
 """
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -19,6 +21,9 @@ from fastapi import HTTPException
 
 from src.pipeline import store
 from src.pipeline.auth import DEMO_ENGINEER, DEMO_REVIEWER, USERS
+from src.pipeline.settings import PipelineSettings
+from src.policy import effective_policy
+from src.policy.models import Policy
 from src.run_report.models import RunReport
 from src.run_report.store import get_run_lineage, get_run_report, list_run_lineage, model_deployments
 
@@ -111,32 +116,66 @@ def is_own_run(store_path: str, report: RunReport, user: dict) -> bool:
 
 
 def model_owners(store_path: str, model: str) -> list[str | None]:
-    """Chủ (đã lần theo run gốc) của mọi run đã đưa `model` lên production, cũ trước; None là run không rõ chủ."""
-    return [run_owner(store_path, run_id) for run_id in model_deployments(store_path, model)]
+    """Người đã giữ tên `model` (bảng model_owners) rồi tới chủ (đã lần theo run gốc) của mọi run đã đưa `model` lên
+    production, cũ trước; None là run không rõ chủ. Run deploy trước khi có bảng giữ tên vẫn được tính."""
+    claimed = store.get_model_owner(store_path, model)
+    deployed = [run_owner(store_path, run_id) for run_id in model_deployments(store_path, model)]
+    return [claimed, *deployed] if claimed else deployed
 
 
 def model_owner(store_path: str, model: str) -> str | None:
     """Tên model là không gian tên chung (job Dagster, số đo monitor, bảng gold trong warehouse), nên mỗi tên chỉ thuộc
-    một chủ: chủ của run đầu tiên đưa model lên production. None: chưa ai deploy hoặc không rõ chủ."""
+    một chủ: người đã giữ tên khi deploy, dữ liệu cũ thì chủ của run đầu tiên đưa model lên production. None: chưa ai
+    deploy hoặc không rõ chủ."""
     owners = model_owners(store_path, model)
     return owners[0] if owners else None
 
 
 def model_visible(user: dict, store_path: str, model: str) -> bool:
-    """`user` thấy dữ liệu theo tên `model` (lịch sử chạy, số đo, cảnh báo, bảng gold) không. Model không có run deploy
-    nào trong sổ là dữ liệu không rõ chủ (như run cũ: chỉ Admin và cặp demo thấy); dữ liệu cũ lẫn nhiều chủ thì chỉ
+    """`user` thấy dữ liệu theo tên `model` (lịch sử chạy, số đo, cảnh báo, bảng gold) không. Model chưa ai giữ tên và
+    không có run deploy nào trong sổ là dữ liệu không rõ chủ (như run cũ: chỉ Admin và cặp demo thấy); dữ liệu cũ lẫn nhiều chủ thì chỉ
     thấy khi được thấy mọi chủ (đóng khi không chắc)."""
     access = scope(user, store_path)
     return all(access.allows(owner) for owner in model_owners(store_path, model) or [None])
 
 
-def model_taken(store_path: str, report: RunReport) -> str | None:
-    """Tên model của `report` nếu đã thuộc chủ khác (deploy sẽ ghi đè pipeline người khác), không thì None."""
+def claim_model(store_path: str, report: RunReport) -> str | None:
+    """Giữ tên model của `report` cho chủ run, gọi trước mọi tác động ra ngoài (GitHub, deployer). Trả tên model nếu
+    đã thuộc chủ khác (deploy sẽ ghi đè pipeline người khác), không thì None. Hai chủ deploy cùng lúc chỉ một người
+    giữ được tên (khóa chính model_owners); deploy lỗi sau đó vẫn giữ tên cho người đã giữ."""
     model = ((report.spec or {}).get("transform") or {}).get("model_name")
     if not model:
         return None
     owner = run_owner(store_path, report.run_id)
-    return model if any(other != owner for other in model_owners(store_path, model)) else None
+    if any(other != owner for other in model_owners(store_path, model)):
+        return model
+    if owner is None:
+        return None  # run không rõ chủ (dữ liệu cũ, chỉ Admin và cặp demo thấy): không có ai để ghi tên
+    return None if store.claim_model(store_path, model, owner, time.time()) == owner else model
+
+
+def policy_for(user: dict, config: PipelineSettings) -> Policy:
+    """Chính sách hiệu lực người dùng được xem: Admin thấy domain của mọi người; Engineer thấy domain YAML và domain
+    của mình; Reviewer (và vai khác) chỉ thấy thêm domain của các Engineer đã liên kết. Hệ thống xử lý nội bộ vẫn gọi
+    effective_policy(config) không lọc."""
+    if user["role"] == "Admin":
+        return effective_policy(config)
+    if user["role"] == "Engineer":
+        return effective_policy(config, owner_id=user["id"])
+    owners = scope(user, config.store_path).owners or frozenset()
+    policy = effective_policy(config)
+    hidden = [
+        name
+        for name, domain in policy.domains.domains.items()
+        if domain.owner_id is not None and domain.owner_id not in owners
+    ]
+    if not hidden:
+        return policy
+    raw = policy.model_dump()
+    for name in hidden:
+        raw["domains"]["domains"].pop(name)
+        raw["objectives"].pop(name, None)
+    return Policy.model_validate(raw)
 
 
 def viewable_run(store_path: str, run_id: str, user: dict) -> RunReport:

@@ -8,7 +8,7 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError, effective_policy
 from src.policy.models import Policy
-from src.run_report.access import model_visible, run_visible, visible_run_ids
+from src.run_report.access import model_visible, policy_for, run_visible, visible_run_ids
 from src.run_report.compare import model_of
 from src.run_report.drift import detect, live_pipelines
 from src.run_report.store import list_run_reports
@@ -18,8 +18,9 @@ router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(cu
 
 
 def _policy(config: PipelineSettings, user: dict | None = None) -> Policy:
+    """Chỉ domain người dùng được xem (xem policy_for): lọc trước khi trả metadata hay kết nối tới nguồn."""
     try:
-        return effective_policy(config, owner_id=user["id"] if user and user["role"] == "Engineer" else None)
+        return policy_for(user, config) if user else effective_policy(config)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
 

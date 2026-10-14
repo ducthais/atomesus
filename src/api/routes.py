@@ -21,9 +21,9 @@ from src.codegen.sandbox import SUPPORTED_KINDS
 from src.pipeline.auth import current_user, settings
 from src.pipeline.postgres import SourceUnavailableError
 from src.pipeline.settings import PipelineSettings
-from src.policy import PolicyError, effective_policy
+from src.policy import PolicyError
 from src.run_report import RunReport
-from src.run_report.access import viewable_run
+from src.run_report.access import policy_for, viewable_run
 from src.run_report.store import is_run_cancelled
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -75,7 +75,7 @@ def agent_deps(config: PipelineSettings = Depends(settings), user: dict = Depend
     from src.agents import budget
 
     try:
-        policy = effective_policy(config, owner_id=user["id"] if user["role"] == "Engineer" else None)
+        policy = policy_for(user, config)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
     return AgentDeps(

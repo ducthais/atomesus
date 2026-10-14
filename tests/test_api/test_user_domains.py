@@ -96,7 +96,9 @@ async def test_catalog_scopes_domains_and_all_table_metadata(client, user_domain
     [
         ("minh", "Engineer", {DOMAIN_A}),
         ("engineer-b", "Engineer", {DOMAIN_B}),
-        ("an", "Reviewer", {DOMAIN_A, DOMAIN_B}),
+        # Reviewer demo chỉ liên kết với minh: không thấy domain của engineer-b (ADR-0001 D2).
+        ("an", "Reviewer", {DOMAIN_A}),
+        ("admin", "Admin", {DOMAIN_A, DOMAIN_B}),
     ],
 )
 async def test_policy_preserves_yaml_and_exposes_only_safe_user_metadata(
