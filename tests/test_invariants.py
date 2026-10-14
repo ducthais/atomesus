@@ -94,7 +94,8 @@ async def test_3_and_6_only_the_signed_files_are_deployed(client, tmp_path, monk
     store = str(tmp_path / "runs.sqlite3")
     report = run_agent("Doanh thu theo ngày", "minh", deps(FakeLLM(PLAN, SPEC)), store)
     assert report.status == "READY_FOR_REVIEW"
-    config = PipelineSettings(_env_file=None, store_path=store, deploy_dir=str(tmp_path / "deploy"))
+    # Bất biến 3, 6 kiểm qua luồng pull request (chế độ pr); chế độ direct có test riêng ở test_run_report.
+    config = PipelineSettings(_env_file=None, store_path=store, deploy_dir=str(tmp_path / "deploy"), deploy_mode="pr")
     github = FakeGithub()
     app.dependency_overrides[auth.settings] = lambda: config
     app.dependency_overrides[pipeline_github] = github.client
