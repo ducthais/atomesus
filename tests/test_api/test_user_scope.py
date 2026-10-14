@@ -43,7 +43,8 @@ async def env(client, tmp_path, monkeypatch):
     from src.codegen.render import file_hashes, render
     from src.spec import SPEC_FIXTURES_DIR, Spec
 
-    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+    # Các test deploy ở đây kiểm luồng pull request (chế độ pr); mặc định của sản phẩm giờ là direct.
+    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"), deploy_mode="pr")
     config.deploy_dir = str(tmp_path / "dagster_local")
     (tmp_path / "dagster_local" / "b_model").mkdir(parents=True)  # pipeline của B đang deploy
     environment = SimpleNamespace(app_env="test")
@@ -612,7 +613,6 @@ async def test_model_name_is_claimed_before_github_and_only_one_owner_wins(env, 
     from src.run_report.access import claim_model, model_owner
 
     store_path = env.config.store_path
-    env.config.deploy_mode = "pr"  # test này kiểm luồng pull request; mặc định giờ là direct
     opened = []
 
     def failing_github(report, files, github):
