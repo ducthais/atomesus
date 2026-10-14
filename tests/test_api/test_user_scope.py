@@ -19,8 +19,9 @@ from src.pipeline import api, auth, connectors, store
 from src.pipeline.settings import PipelineSettings
 from src.policy import load_policy
 from src.run_report import FIXTURES_DIR, RunReport, save_run_report
+from src.run_report.access import LEGACY_OWNER
 from src.run_report.router import pipeline_github, request_change_deps
-from src.run_report.store import LEGACY_OWNER, get_run_files, get_run_report, save_run_files
+from src.run_report.store import get_run_files, get_run_report, save_run_files
 
 READY = "3f6c1a2e-8b4d-4c7a-9e21-0d5b7a1c9f10"
 PASSWORD = "StrongPass9"
@@ -206,6 +207,15 @@ async def test_unlinked_reviewer_sees_nothing_and_cannot_review(env):
     await _blocked_reads(env, "run-a")
     await _blocked_reviews(env, "run-a")
     assert (await env.client.get("/api/v1/monitor/alerts")).json() == []
+    # Pipeline, cảnh báo không được thấy: 404 trước khi xét vai (Reviewer), không phải 403.
+    b_alert = alerts.list_alerts(env.config.store_path, "b_model")[0]["id"]
+    assert (await env.client.post(f"/api/v1/monitor/alerts/{b_alert}/resolve")).status_code == 404
+    assert (await env.client.post("/api/v1/pipelines/b_model/optimize")).status_code == 404
+
+    await _link(env, "eng.b")
+    assert (await env.client.post(f"/api/v1/monitor/alerts/{b_alert}/resolve")).status_code == 403
+    assert (await env.client.post("/api/v1/pipelines/b_model/optimize")).status_code == 403
+    assert alerts.get_alert(env.config.store_path, b_alert)["resolved_at"] is None
 
 
 @pytest.mark.asyncio
@@ -427,24 +437,101 @@ async def test_orchestration_status_only_shows_own_jobs(env, monkeypatch):
     assert await status() == assets
 
 
+def _strip_created_by(env, run_id: str) -> None:
+    """Biến run đã lưu thành dữ liệu cũ: bản lưu thiếu `created_by`."""
+    with sqlite3.connect(env.config.store_path) as conn:
+        conn.execute("UPDATE run_reports SET report = json_remove(report, '$.created_by') WHERE run_id = ?", (run_id,))
+
+
+def _stored_created_by(env, run_id: str) -> tuple[int, str | None]:
+    """(có khóa `created_by` không, giá trị) trong JSON đã lưu."""
+    with sqlite3.connect(env.config.store_path) as conn:
+        return conn.execute(
+            "SELECT json_type(report, '$.created_by') IS NOT NULL, json_extract(report, '$.created_by')"
+            " FROM run_reports WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+
+
 @pytest.mark.asyncio
 async def test_legacy_run_without_created_by_is_readable_only_by_admin_and_demo_pair(env):
     save_run_report(env.config.store_path, _fixture("ready_for_review.json").model_copy(update={"run_id": "run-old"}))
-    with sqlite3.connect(env.config.store_path) as conn:
-        conn.execute("UPDATE run_reports SET report = json_remove(report, '$.created_by') WHERE run_id = 'run-old'")
+    _strip_created_by(env, "run-old")
 
     for username, password in (("admin", "Admin@123"), ("engineer", "Engineer@123"), ("reviewer", "Reviewer@123")):
         await _login(env, username, password)
         assert "run-old" in await _run_ids(env), username
         detail = await env.client.get("/api/v1/runs/run-old")
         assert detail.status_code == 200, detail.text
-        assert detail.json()["created_by"] == LEGACY_OWNER
+        assert detail.json()["created_by"] is None, "đọc ra không gán chủ nào cho run cũ"
 
     for username in ("eng.a", "rev.one"):
         await _login(env, username)
         assert "run-old" not in await _run_ids(env)
         await _blocked_reads(env, "run-old")
     await _blocked_reviews(env, "run-old")  # rev.one: Reviewer chưa liên kết
+    assert _stored_created_by(env, "run-old") == (0, None)
+
+
+@pytest.mark.asyncio
+async def test_reviewer_invited_by_minh_sees_minh_runs_but_never_legacy_runs(env):
+    """Run cũ không phải run của minh: Reviewer minh mời thấy và duyệt run thật của minh, còn run cũ (kể cả run hệ
+    thống sinh từ run cũ, cảnh báo, pipeline cũ) chỉ Admin và cặp demo thấy. an duyệt run cũ không ghi thêm chủ."""
+    from src.run_report.access import is_legacy, model_visible
+
+    store_path = env.config.store_path
+    run_a = get_run_report(store_path, "run-a")
+    files = get_run_files(store_path, "run-a", run_a.version)
+    minh_run = _with_model(run_a, "minh_model", run_id="run-minh", created_by="minh")
+    old = _with_model(run_a, "old_model", run_id="run-old")
+    old_sys = old.model_copy(
+        update={"run_id": "run-old-sys", "created_by": "system", "trigger": "regression", "parent_run_id": "run-old"}
+    )
+    for report in (minh_run, old, old_sys):
+        save_run_report(store_path, report)
+        save_run_files(store_path, report.run_id, report.version, files)
+    _strip_created_by(env, "run-old")
+    assert is_legacy(store_path, "run-old") and is_legacy(store_path, "run-old-sys")
+    assert not is_legacy(store_path, "run-minh")
+    old_alert = alerts.raise_alert(store_path, "old_model", "needs_human", "Run cũ cần sửa", run_id="run-old-sys")
+    owner_alert = alerts.raise_alert(store_path, "old_model", "source_stalled", "Nguồn cũ ngừng", owner=None)
+    _deploy(env, "old_model", "eng.a", "run-old-dep")
+    _strip_created_by(env, "run-old-dep")  # pipeline cũ đang deploy, không rõ chủ
+
+    await _login(env, "engineer", "Engineer@123")
+    token = await _invite(env)
+    await _login(env, "rev.one")
+    assert (await env.client.post("/api/v1/pipeline/invites/accept", json={"token": token})).status_code == 200
+    rev_one = {"id": env.ids["rev.one"], "role": "Reviewer"}
+
+    seen = await _run_ids(env)
+    assert {READY, "run-minh"} <= seen, "run thật của minh"
+    assert not seen & {"run-old", "run-old-sys", "run-old-dep", "c4b8f0d3-1e2a-4f5b-b7c9-6a0e3d2f1b50"}
+    for run_id in ("run-old", "run-old-sys"):
+        await _blocked_reads(env, run_id)
+        await _blocked_reviews(env, run_id)
+    assert (await env.client.get("/api/v1/runs/run-minh/compare", params={"base": "run-old"})).status_code == 404
+    assert (await env.client.get("/api/v1/monitor/alerts")).json() == []
+    for alert in (old_alert, owner_alert):
+        assert (await env.client.post(f"/api/v1/monitor/alerts/{alert['id']}/resolve")).status_code == 404
+    assert (await env.client.get("/api/v1/monitor/pipelines/old_model")).status_code == 404
+    assert (await env.client.post("/api/v1/pipelines/old_model/optimize")).status_code == 404
+    assert not model_visible(rev_one, store_path, "old_model")
+    approved = await env.client.post("/api/v1/runs/run-minh/approve", json={"files_hash": env.files_hash})
+    assert approved.status_code == 200, approved.text
+
+    await _login(env, "reviewer", "Reviewer@123")
+    assert {"run-old", "run-old-sys", "run-minh"} <= await _run_ids(env)
+    alert_ids = {alert["id"] for alert in (await env.client.get("/api/v1/monitor/alerts")).json()}
+    assert {old_alert["id"], owner_alert["id"]} <= alert_ids
+    approved = await env.client.post("/api/v1/runs/run-old/approve", json={"files_hash": env.files_hash})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["created_by"] is None
+    assert _stored_created_by(env, "run-old")[1] is None, "lưu lại run cũ không ghi thêm minh"
+    assert is_legacy(store_path, "run-old")
+
+    await _login(env, "rev.one")
+    await _blocked_reads(env, "run-old")
 
 
 @pytest.mark.asyncio
@@ -469,8 +556,8 @@ async def test_demo_pair_keeps_working_and_admin_sees_everything(env):
     }
 
 
-async def _link(env, engineer: str, reviewer: str = "rev.one") -> None:
-    await _login(env, engineer)
+async def _link(env, engineer: str, reviewer: str = "rev.one", password: str = PASSWORD) -> None:
+    await _login(env, engineer, password)
     token = await _invite(env)
     await _login(env, reviewer)
     assert (await env.client.post("/api/v1/pipeline/invites/accept", json={"token": token})).status_code == 200
@@ -587,8 +674,7 @@ def test_concurrent_model_claims_by_two_owners_have_one_winner(env, monkeypatch)
 def _legacy_approved(env, run_id: str, model: str) -> RunReport:
     """Run cũ đã duyệt, chờ deploy, bản lưu thiếu `created_by`."""
     _approved(env, run_id, model)
-    with sqlite3.connect(env.config.store_path) as conn:
-        conn.execute("UPDATE run_reports SET report = json_remove(report, '$.created_by') WHERE run_id = ?", (run_id,))
+    _strip_created_by(env, run_id)
     return get_run_report(env.config.store_path, run_id)
 
 
@@ -616,13 +702,13 @@ def _fake_pull_request(opened: list[str], hold: Callable[[], None] = lambda: Non
 
 @pytest.mark.asyncio
 async def test_legacy_run_without_created_by_deploys_and_keeps_deployment(env, monkeypatch):
-    from src.run_report.access import model_owner
+    from src.run_report.access import claim_model, model_owner, model_visible
 
     store_path = env.config.store_path
     opened = []
     monkeypatch.setattr("src.codegen.deploy.open_pull_request", _fake_pull_request(opened))
     legacy = _legacy_approved(env, "run-old-approved", "old_model")
-    assert legacy.created_by == LEGACY_OWNER
+    assert legacy.created_by is None
     await _login(env, "reviewer", "Reviewer@123")
 
     response = await env.client.post(f"/api/v1/runs/{legacy.run_id}/deploy")
@@ -631,8 +717,15 @@ async def test_legacy_run_without_created_by_deploys_and_keeps_deployment(env, m
     assert response.json()["deployment"]["pr_number"] == 1 and opened == [legacy.run_id]
     stored = get_run_report(store_path, legacy.run_id)
     assert stored.deployment is not None and stored.deployment.pr_number == 1
-    assert stored.created_by == LEGACY_OWNER
+    assert stored.created_by is None and _stored_created_by(env, legacy.run_id)[1] is None
+    # Tên model giữ cho LEGACY_OWNER chỉ để chặn trùng tên; không cấp quyền xem pipeline cũ cho Reviewer minh mời.
     assert model_owner(store_path, "old_model") == LEGACY_OWNER == store.get_model_owner(store_path, "old_model")
+    other = _with_model(get_run_report(store_path, "run-b"), "old_model", run_id="run-b-old")
+    save_run_report(store_path, other)
+    assert claim_model(store_path, other) == "old_model", "chủ khác không lấy được tên của pipeline cũ"
+    await _link(env, "engineer", password="Engineer@123")
+    assert model_visible({"id": "minh", "role": "Engineer"}, store_path, "old_model")
+    assert not model_visible({"id": env.ids["rev.one"], "role": "Reviewer"}, store_path, "old_model")
 
 
 @pytest.mark.asyncio

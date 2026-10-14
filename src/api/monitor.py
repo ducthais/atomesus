@@ -41,11 +41,12 @@ def optimize_pipeline(
     deps: AgentDeps = Depends(monitor_deps),
 ) -> RunReport:
     """Engineer yêu cầu tối ưu pipeline đã deploy (UC-3): chạy nền lại pipeline và optimizer P13, không gọi LLM."""
-    if user["role"] != "Engineer":
-        raise HTTPException(403, "Chỉ Engineer được yêu cầu tối ưu pipeline.")
+    # Xét quyền thấy trước vai: pipeline không được thấy là 404 với mọi vai, không lộ pipeline đó có tồn tại.
     parent = runs.deployed_report(config.store_path, model)
     if parent is None or not model_visible(user, config.store_path, model):
         raise HTTPException(404, f"Pipeline '{model}' chưa được deploy.")
+    if user["role"] != "Engineer":
+        raise HTTPException(403, "Chỉ Engineer được yêu cầu tối ưu pipeline.")
     started, job = start_manual_optimize(parent, user["id"], deps, config.store_path)
     background.add_task(job)
     return started
@@ -150,11 +151,11 @@ def list_alerts(
 def resolve_alert(
     alert_id: int, user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)
 ) -> dict:
-    """Đánh dấu cảnh báo đã xử lý."""
-    _engineer(user)
+    """Đánh dấu cảnh báo đã xử lý. Xét quyền thấy trước vai: cảnh báo không được thấy là 404 với mọi vai."""
     alert = alerts.get_alert(config.store_path, alert_id)
     if alert is None or not _alert_filter(user, config.store_path)(alert):
         raise HTTPException(404, f"Không có cảnh báo {alert_id}")
+    _engineer(user)
     found = alerts.resolve_alert(config.store_path, alert_id)
     if found is None:
         raise HTTPException(404, f"Không có cảnh báo {alert_id}")

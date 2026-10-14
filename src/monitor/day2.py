@@ -28,8 +28,9 @@ Submit = Callable[[Callable[[], object]], None]  # cách chạy nền: Backgroun
 RECENT_RUNS = 1000
 
 
-def pipeline_owner(store_path: str, parent: RunReport) -> str:
-    """Chủ pipeline ghi vào cảnh báo: bản đang deploy có thể là run sửa (`system`), nên lần về chủ của run gốc."""
+def pipeline_owner(store_path: str, parent: RunReport) -> str | None:
+    """Chủ pipeline ghi vào cảnh báo: bản đang deploy có thể là run sửa (`system`), nên lần về chủ của run gốc. None:
+    pipeline cũ không rõ chủ, cảnh báo chỉ Admin và cặp demo thấy."""
     return run_owner(store_path, parent.run_id)
 
 
