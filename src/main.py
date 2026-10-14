@@ -10,6 +10,7 @@ from src.api.monitor import pipelines_router
 from src.api.monitor import router as monitor_router
 from src.api.orchestration import router as orchestration_router
 from src.api.policy import router as policy_router
+from src.api.results import router as results_router
 from src.api.routes import router
 from src.api.webhooks import router as webhooks_router
 from src.chat import router as chat_router
@@ -82,6 +83,7 @@ app.include_router(catalog_router, prefix="/api/v1")
 app.include_router(orchestration_router, prefix="/api/v1")
 app.include_router(monitor_router, prefix="/api/v1")
 app.include_router(pipelines_router, prefix="/api/v1")
+app.include_router(results_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(webhooks_router, prefix="/api/v1")
 

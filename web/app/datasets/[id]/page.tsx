@@ -62,7 +62,10 @@ export default async function DatasetPage({ params, searchParams }: { params: Pr
     <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/">Khám phá</Link><span>/</span><Link href={`/domains/${dataset.domain}`}>{dataset.domain}</Link><span>/</span><Link href={`/?layer=${dataset.layer}&domain=${dataset.domain}`}>{LAYER_LABEL[dataset.layer]}</Link></nav>
     <PageHeader icon={<Table2 size={22} />} kicker={<><LayerBadge layer={dataset.layer} /><PlatformTag platform={dataset.platform} /><QualitySummary checks={dataset.quality} />{managed && <DagsterChip status={runStatus} />}</>}
       title={<span className="mono">{dataset.name}</span>}
-      actions={<Link className="button" href={`/runs/new?dataset=${dataset.id}`}><Workflow size={15} aria-hidden /> Yêu cầu pipeline từ đây</Link>}>
+      actions={<>
+        {dataset.layer === 'gold' && table && <Link className="button" href={`/results/${encodeURIComponent(table)}`}><Table2 size={15} aria-hidden /> Xem kết quả</Link>}
+        <Link className="button" href={`/runs/new?dataset=${dataset.id}`}><Workflow size={15} aria-hidden /> Yêu cầu pipeline từ đây</Link>
+      </>}>
       <p>{dataset.description}</p>
     </PageHeader>
     {dataset.unavailable && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>{dataset.unavailable} Dataset vẫn có trong catalog vì được khai báo trong <Link href="/policy">domains.yml</Link>.</span></div>}

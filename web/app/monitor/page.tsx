@@ -55,7 +55,8 @@ export default async function MonitorPage() {
               : last ? <span className="badge tone-good">Ổn định</span> : <span className="badge tone-muted">Chưa chạy theo lịch</span>}</td>
             <td>{last ? <>{fmtAgo(last.ended_at ?? last.started_at)}<br /><small className={last.status === 'SUCCESS' ? 'muted' : 'form-error'}>{last.status} · {fmtDate(last.started_at)}</small></> : '—'}</td>
             <td className="mono">{seconds(last?.duration_sec)}{change && <><br /><small className="muted">{change} so với lúc deploy ({seconds(p.baseline?.duration_sec)})</small></>}</td>
-            <td className="mono">{fmtNum(last?.gold_rows ?? null)}</td>
+            <td><span className="mono">{fmtNum(last?.gold_rows ?? null)}</span><br />
+              <Link href={`/results/${encodeURIComponent(p.model)}`} className="small">Xem kết quả →</Link></td>
             <td className="mono">{last?.tests == null ? '—' : `${last.tests_failed ?? 0}/${last.tests}`}</td>
             <td className="small">{newRecordsText(last)}</td>
             {user?.role === 'Engineer' && <td><OptimizeRunButton model={p.model} /></td>}

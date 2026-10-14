@@ -15,6 +15,7 @@ import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
 import { Catalog } from './query.ts';
 import type { AssetRunStatus, CatalogRun, Comparison, DeclaredSource, Discovery, Drift, Orchestration, Person, Platform } from './types.ts';
 import type { Alert, MonitoredPipeline } from '../monitor.ts';
+import { MOCK_RESULTS, MODEL_NAME, backendQuery, pageOf, type ResultPage, type ResultQuery } from '../results.ts';
 
 export const MOCK = process.env.CATALOG_MOCK === '1';
 export const BACKEND = (process.env.PIPELINE_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -273,6 +274,18 @@ export const getDrift = cache(async (): Promise<Drift> => {
     };
   } catch (err) { return { available: false, reason: err instanceof Error ? err.message : 'Không kiểm tra được.' }; }
 });
+
+/** Một trang bảng gold.<model> (GET /results/{model}); lỗi trả kèm mã HTTP để trang phân biệt 404 / 422 / 503. */
+export async function getResults(model: string, query: ResultQuery): Promise<ResultPage | { error: string; status: number }> {
+  const notFound = { status: 404, error: `Không có kết quả gold.${model} mà bạn được xem.` };
+  if (!MODEL_NAME.test(model)) return notFound;
+  if (MOCK) return MOCK_RESULTS[model] ? pageOf(MOCK_RESULTS[model], query) : notFound;
+  try { return await backend<ResultPage>(`/results/${encodeURIComponent(model)}?${backendQuery(query)}`); }
+  catch (err) {
+    if (err instanceof BackendError) return { status: err.status, error: err.message };
+    return { status: 500, error: 'Không đọc được kết quả từ backend.' };
+  }
+}
 
 /** Màn theo dõi (Day 2): pipeline đã deploy kèm luật suy giảm đang kích hoạt, và cảnh báo còn mở. */
 export async function getMonitor(): Promise<{ pipelines: MonitoredPipeline[]; alerts: Alert[] } | { error: string }> {

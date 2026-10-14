@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test --test-isolation=none tests/studio.test.ts tests/postgres-api.test.ts tests/catalog.test.ts tests/monitor.test.ts tests/deploy.test.ts tests/invite.test.ts tests/run-summary.test.ts",
+    "test": "node --experimental-strip-types --test --test-isolation=none tests/studio.test.ts tests/postgres-api.test.ts tests/catalog.test.ts tests/monitor.test.ts tests/deploy.test.ts tests/invite.test.ts tests/run-summary.test.ts tests/results.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
