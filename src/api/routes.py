@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,6 +23,7 @@ from src.pipeline.settings import PipelineSettings
 from src.policy import PolicyError
 from src.run_report import RunReport
 from src.run_report.access import policy_for, viewable_run
+from src.run_report.quota import claim_runs, release_runs
 from src.run_report.store import is_run_cancelled
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -125,10 +125,17 @@ def create_agent_run(
     """Yêu cầu → kế hoạch, dừng ở DRAFT / stage `confirm` chờ Engineer xác nhận (P2, FR-03).
 
     Trả ngay run ở trạng thái GENERATING; lập kế hoạch chạy nền, tiến độ đọc lại qua GET /runs/{run_id}.
+    Hết lượt run trong ngày (budgets.yml per_user.max_runs_per_day) → 429, không gọi LLM.
     """
     sources = _checked_sources(body, user, deps)
     _checked_parent(body, user, config.store_path)
-    started, job = start_agent(body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id)
+    slots = claim_runs(config.store_path, user, deps.policy.budgets)
+    try:
+        started, job = start_agent(
+            body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id
+        )
+    finally:
+        release_runs(config.store_path, slots)  # run đã vào sổ thì tự được đếm
     background.add_task(job)
     return started
 
@@ -144,7 +151,7 @@ def batch_budget(
         raise HTTPException(403, "Chỉ Engineer được tạo pipeline.")
     from src.agents import budget
 
-    return budget.estimate_batch(0, deps.policy, config)
+    return budget.estimate_batch(0, deps.policy, config, user["id"])
 
 
 @router.post("/runs/batch", status_code=201, response_model=AgentBatchRunResponse)
@@ -160,7 +167,7 @@ def create_agent_run_batch(
     from src.run_report.store import rollback_batch_start
 
     count = len(body.requests)
-    estimate = budget.estimate_batch(count, deps.policy, config)
+    estimate = budget.estimate_batch(count, deps.policy, config, user["id"])
     if count > estimate["max_batch_runs"]:
         raise HTTPException(
             422,
@@ -169,15 +176,25 @@ def create_agent_run_batch(
     checked = [(item, _checked_sources(item, user, deps)) for item in body.requests]
     for item in body.requests:
         _checked_parent(item, user, config.store_path)
-    run_ids = [str(uuid4()) for _ in checked]
+    run_ids = claim_runs(config.store_path, user, deps.policy.budgets, len(checked))
     reservation_usd = estimate["reservation_usd_per_run"]
     reservations = [(run_id, 1, "llm:plan:1", reservation_usd) for run_id in run_ids]
-    reserved, spent = budget.reserve_batch_daily(config, reservations, estimate["max_usd_per_day"])
+    reserved, spent, user_spent = budget.reserve_batch_daily(
+        config, reservations, estimate["max_usd_per_day"], user["id"], deps.policy.budgets.per_user.max_usd_per_day
+    )
+    if not reserved:
+        release_runs(config.store_path, run_ids)
+    if not reserved and user_spent is not None:
+        raise HTTPException(
+            409,
+            budget.user_limit_error(user_spent, estimate["estimated_usd"], deps.policy) + "; không tạo pipeline nào.",
+        )
     if not reserved:
         raise HTTPException(
             409,
             f"Cả mẻ ước tính {estimate['estimated_usd']:.4f} USD nhưng hôm nay đã dùng hoặc giữ chỗ "
-            f"{spent:.4f}/{estimate['max_usd_per_day']:.4f} USD; không tạo pipeline nào.",
+            f"{spent:.4f}/{estimate['max_usd_per_day']:.4f} USD (trần chung budgets.yml per_day.max_usd); "
+            "không tạo pipeline nào.",
         )
 
     started_jobs: list[tuple[RunReport, Job]] = []

@@ -91,22 +91,32 @@ def call_llm(state: AgentState, deps: AgentDeps, stage: str, tier: str, system: 
         raise StopError("NEEDS_HUMAN", stage, f"Đã chạm trần {limit} lần gọi LLM của run (budgets.yml max_llm_calls).")
     # Cổng batch có thể đã giữ chỗ cho đúng lần gọi này. Thử giữ chỗ idempotent trước khi kết luận ngày đã hết tiền:
     # reserve_daily nhận ra reservation cùng (run, version, category) và cho phép dùng nó ngay cả khi tổng đã chạm trần.
+    # Cùng giao dịch giữ chỗ xét cả trần cá nhân của chủ run (per_user.max_usd_per_day, ADR-0001 D10).
     day_limit = deps.policy.budgets.per_day.max_usd
     category = f"llm:{stage}:{state.get('llm_calls', 0) + 1}"
     if deps.reserve_daily:
-        reserved, spent = deps.reserve_daily(
+        reserved, spent, user_spent = deps.reserve_daily(
             deps.settings,
             state["run_id"],
             state.get("version", 1),
             category,
             deps.policy.budgets.per_run.max_usd,
             day_limit,
+            deps.policy.budgets.per_user.max_usd_per_day,
         )
+        if not reserved and user_spent is not None:
+            raise StopError(
+                "BLOCKED_BUDGET",
+                stage,
+                budget.user_limit_error(user_spent, deps.policy.budgets.per_run.max_usd, deps.policy)
+                + "; không gọi LLM nữa tới 0:00 UTC.",
+            )
         if not reserved:
             raise StopError(
                 "BLOCKED_BUDGET",
                 stage,
-                f"Hôm nay đã dùng hoặc giữ chỗ {spent:.4f} USD; không đủ hạn mức {day_limit} USD/ngày cho lần gọi LLM.",
+                f"Hôm nay đã dùng hoặc giữ chỗ {spent:.4f} USD; không đủ trần chung {day_limit} USD/ngày "
+                "(budgets.yml per_day.max_usd) cho lần gọi LLM.",
             )
     else:
         # Các dependency không có sổ reservation (ví dụ adapter/test tối giản) vẫn phải chặn trước khi gọi nhà cung cấp.

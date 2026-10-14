@@ -54,6 +54,11 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
                 " run_id TEXT NOT NULL, version INTEGER NOT NULL, category TEXT NOT NULL, usd REAL NOT NULL,"
                 " reserved_at TEXT NOT NULL, PRIMARY KEY (run_id, version, category))"
             )
+            # Lượt run mới đã giữ cho chủ (hạn mức số run/ngày, src/run_report/quota.py), ghi trước khi run vào sổ.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_slots ("
+                " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL)"
+            )
             # Delivery webhook GitHub đã xử lý (X-GitHub-Delivery), để gửi lại không áp hai lần. `pending`: sự kiện
             # liên quan đến chưa có run nào khớp (Deploy chưa lưu pull request), áp lại khi deployment được lưu.
             conn.execute(
@@ -293,8 +298,19 @@ def replay_webhook_deliveries(
         return changed
 
 
+# Trần của chủ run (src/run_report/quota.py), chạy trong cùng giao dịch ghi sau khi trần chung đã qua: nhận kết nối
+# và số USD sắp giữ, trả False thì không giữ khoản nào.
+OwnerGate = Callable[[sqlite3.Connection, float], bool]
+
+
 def reserve_budget(
-    path: str, run_id: str, version: int, category: str, usd: float, daily_limit: float
+    path: str,
+    run_id: str,
+    version: int,
+    category: str,
+    usd: float,
+    daily_limit: float,
+    owner_gate: OwnerGate | None = None,
 ) -> tuple[bool, float]:
     """Reserve budget under one SQLite write transaction; retries are idempotent."""
     now = datetime.now(UTC)
@@ -315,6 +331,8 @@ def reserve_budget(
             return True, float(spent + reserved)
         if spent + reserved + usd > daily_limit:
             return False, float(spent + reserved)
+        if owner_gate and not owner_gate(conn, usd):
+            return False, float(spent + reserved)
         conn.execute(
             "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)",
             (run_id, version, category, usd, now.isoformat()),
@@ -326,6 +344,7 @@ def reserve_budget_batch(
     path: str,
     reservations: list[tuple[str, int, str, float]],
     daily_limit: float,
+    owner_gate: OwnerGate | None = None,
 ) -> tuple[bool, float]:
     """Giữ chỗ cả mẻ trong một transaction; không đủ hạn mức thì không ghi khoản nào."""
     if len({(run_id, version, category) for run_id, version, category, _usd in reservations}) != len(reservations):
@@ -350,6 +369,8 @@ def reserve_budget_batch(
                 pending.append((run_id, version, category, usd, now.isoformat()))
         current = float(spent + reserved)
         if current + sum(item[3] for item in pending) > daily_limit:
+            return False, current
+        if owner_gate and not owner_gate(conn, sum(item[3] for item in pending)):
             return False, current
         conn.executemany("INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?)", pending)
         return True, current
@@ -377,6 +398,7 @@ def rollback_batch_start(path: str, run_ids: list[str]) -> None:
         conn.execute(f"DELETE FROM run_reports WHERE run_id IN ({marks})", run_ids)
         conn.execute(f"DELETE FROM budget_ledger WHERE run_id IN ({marks})", run_ids)
         conn.execute(f"DELETE FROM budget_reservations WHERE run_id IN ({marks})", run_ids)
+        conn.execute(f"DELETE FROM run_slots WHERE run_id IN ({marks})", run_ids)
 
 
 def spent_today(path: str) -> float:

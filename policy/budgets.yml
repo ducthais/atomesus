@@ -15,6 +15,9 @@ per_run:
 per_day:
   max_usd: 2.00             # tổng chi phí mọi run trong ngày (quét dữ liệu + LLM); cổng budget cộng dồn
   max_batch_runs: 20        # số pipeline tối đa trong một yêu cầu tạo theo lô
+per_user:                   # trần của từng người dùng mỗi ngày UTC, áp cùng trần chung per_day (ADR-0001 D10)
+  max_usd_per_day: 0.30     # chi phí (LLM + quét dữ liệu) các run của một người; run hệ thống tính cho chủ pipeline
+  max_runs_per_day: 20      # số run mới một người tạo được trong ngày; hết lượt thì API trả 429. Admin không áp
 optimizer:                  # P13 (SPEC §9.3): luật tối ưu tất định, không gọi LLM
   incremental_min_rows: 10000   # table_to_incremental chỉ thử khi bảng nguồn chính có ít nhất ngần này dòng
   rerun_samples: 5              # chạy lại model gold ngần này lần sau lần build đầu (trung vị; hai dải đo không chồng nhau)

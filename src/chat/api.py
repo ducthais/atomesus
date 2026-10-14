@@ -18,6 +18,7 @@ from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
 from src.run_report.access import viewable_run
 from src.run_report.models import RunReport
+from src.run_report.quota import claim_runs, release_runs
 
 router = APIRouter(tags=["chat"])
 
@@ -45,10 +46,16 @@ def post_chat(
         if user["role"] != "Engineer":
             raise HTTPException(403, "Chỉ Engineer được tạo pipeline từ chat.")
         sources = _checked_sources(AgentRunRequest(request=message, sources=body.sources), user, deps)
-        if sources is None:
-            report = plan_agent(message, user["id"], deps, config.store_path)
-        else:
-            report = plan_agent(message, user["id"], deps, config.store_path, sources=sources)
+        # Hết lượt run trong ngày (per_user.max_runs_per_day) → 429 trước khi gọi LLM lập kế hoạch. Lượt giữ đến khi
+        # run đã vào sổ (lúc đó run tự được đếm) hoặc lập kế hoạch lỗi.
+        slots = claim_runs(config.store_path, user, deps.policy.budgets)
+        try:
+            if sources is None:
+                report = plan_agent(message, user["id"], deps, config.store_path)
+            else:
+                report = plan_agent(message, user["id"], deps, config.store_path, sources=sources)
+        finally:
+            release_runs(config.store_path, slots)
         intent, reply = "new_request", answers.created_reply(report)
     elif answers.intent(message) == "revise":
         report = _existing_run(config.store_path, body.run_id, user)
