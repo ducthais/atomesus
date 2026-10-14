@@ -39,6 +39,36 @@ def database(path: str):
                 " name TEXT NOT NULL, password_hash TEXT NOT NULL, verification_hash TEXT NOT NULL,"
                 " expires REAL NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)"
             )
+            pending_columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_registrations)")}
+            if "invite_hash" not in pending_columns:
+                # Đăng ký qua link mời: hash token mời, tài khoản tạo ra là Reviewer (xem api.verify_registration).
+                conn.execute("ALTER TABLE pending_registrations ADD COLUMN invite_hash TEXT")
+            # Engineer ↔ Reviewer đã liên kết (nhiều-nhiều, ADR-0001 D1). Cặp demo minh ↔ an không ghi ở đây.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS reviewer_links ("
+                " engineer_id TEXT NOT NULL, reviewer_id TEXT NOT NULL, created_at REAL NOT NULL,"
+                " PRIMARY KEY (engineer_id, reviewer_id))"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS reviewer_links_reviewer ON reviewer_links(reviewer_id)")
+            # Lời mời Reviewer: chỉ lưu sha256 của token, dùng một lần, ghi người đã dùng.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS reviewer_invites ("
+                " token_hash TEXT PRIMARY KEY, engineer_id TEXT NOT NULL, created_at REAL NOT NULL,"
+                " expires REAL NOT NULL, used_by TEXT, used_at REAL)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS reviewer_invites_engineer ON reviewer_invites(engineer_id)")
+            # Chủ của mỗi tên model (job Dagster, bảng gold dùng chung tên): giữ trước khi deploy, khóa chính chặn hai
+            # chủ cùng giữ một tên (xem src.run_report.access.claim_model).
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS model_owners ("
+                " model_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL, claimed_at REAL NOT NULL)"
+            )
+            # Chủ của run hệ thống (Day 2) ghi lúc tạo, để xét quyền đọc thẳng thay vì lần theo chuỗi run gốc (xem
+            # src.run_report.access.record_system_run_owner).
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_owners ("
+                " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, recorded_at REAL NOT NULL)"
+            )
             # Lần đăng ký gần nhất của mỗi IP (giới hạn 1 tài khoản / IP / cửa sổ, xem api.register).
             conn.execute("CREATE TABLE IF NOT EXISTS registration_ips (ip TEXT PRIMARY KEY, at REAL NOT NULL)")
             conn.execute(
@@ -122,24 +152,33 @@ def update_user_role(path: str, user_id: str, role: str) -> dict[str, str] | Non
 
 
 def save_pending_registration(
-    path: str, *, email: str, username: str, name: str, password_hash: str, verification_hash: str, expires: float
+    path: str,
+    *,
+    email: str,
+    username: str,
+    name: str,
+    password_hash: str,
+    verification_hash: str,
+    expires: float,
+    invite_hash: str | None = None,
 ) -> None:
     with database(path) as conn:
         conn.execute("DELETE FROM pending_registrations WHERE expires < ?", (time.time(),))
         conn.execute(
-            "INSERT INTO pending_registrations (email, username, name, password_hash, verification_hash, expires, attempts)"
-            " VALUES (?, ?, ?, ?, ?, ?, 0)"
+            "INSERT INTO pending_registrations"
+            " (email, username, name, password_hash, verification_hash, expires, attempts, invite_hash)"
+            " VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
             " ON CONFLICT(email) DO UPDATE SET username=excluded.username, name=excluded.name,"
             " password_hash=excluded.password_hash, verification_hash=excluded.verification_hash,"
-            " expires=excluded.expires, attempts=0",
-            (email, username, name, password_hash, verification_hash, expires),
+            " expires=excluded.expires, attempts=0, invite_hash=excluded.invite_hash",
+            (email, username, name, password_hash, verification_hash, expires, invite_hash),
         )
 
 
 def get_pending_registration(path: str, email: str) -> tuple[Any, ...] | None:
     with database(path) as conn:
         return conn.execute(
-            "SELECT email, username, name, password_hash, verification_hash, expires, attempts"
+            "SELECT email, username, name, password_hash, verification_hash, expires, attempts, invite_hash"
             " FROM pending_registrations WHERE email = ? COLLATE NOCASE",
             (email,),
         ).fetchone()
@@ -179,6 +218,149 @@ def release_registration_slot(path: str, ip: str) -> None:
     """Trả lại lượt khi yêu cầu không gửi được mã (lỗi SMTP), để người dùng thử lại ngay."""
     with database(path) as conn:
         conn.execute("DELETE FROM registration_ips WHERE ip = ?", (ip,))
+
+
+def create_invite(path: str, engineer_id: str, token_hash: str, created_at: float, expires: float, limit: int) -> bool:
+    """Ghi lời mời mới; False khi Engineer đã có `limit` lời mời còn hạn chưa dùng (chống spam bảng)."""
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        active = conn.execute(
+            "SELECT COUNT(*) FROM reviewer_invites WHERE engineer_id = ? AND used_at IS NULL AND expires > ?",
+            (engineer_id, created_at),
+        ).fetchone()[0]
+        if active >= limit:
+            return False
+        conn.execute(
+            "INSERT INTO reviewer_invites (token_hash, engineer_id, created_at, expires) VALUES (?, ?, ?, ?)",
+            (token_hash, engineer_id, created_at, expires),
+        )
+    return True
+
+
+def _invite_state(conn: sqlite3.Connection, token_hash: str, now: float) -> tuple[str, str | None]:
+    """("ok" | "missing" | "expired" | "used", engineer_id). Chỉ API gọi nội bộ; không trả engineer_id cho client."""
+    row = conn.execute(
+        "SELECT engineer_id, expires, used_at FROM reviewer_invites WHERE token_hash = ?", (token_hash,)
+    ).fetchone()
+    if row is None:
+        return "missing", None
+    if row[2] is not None:
+        return "used", row[0]
+    if row[1] <= now:
+        return "expired", row[0]
+    return "ok", row[0]
+
+
+def invite_state(path: str, token_hash: str, now: float) -> str:
+    with database(path) as conn:
+        return _invite_state(conn, token_hash, now)[0]
+
+
+def _use_invite(conn: sqlite3.Connection, token_hash: str, engineer_id: str, reviewer_id: str, now: float) -> None:
+    conn.execute(
+        "UPDATE reviewer_invites SET used_by = ?, used_at = ? WHERE token_hash = ?", (reviewer_id, now, token_hash)
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO reviewer_links (engineer_id, reviewer_id, created_at) VALUES (?, ?, ?)",
+        (engineer_id, reviewer_id, now),
+    )
+
+
+def accept_invite(path: str, token_hash: str, reviewer_id: str, now: float) -> str:
+    """Reviewer đã có tài khoản dùng lời mời: kiểm, đánh dấu đã dùng và tạo liên kết trong cùng một giao dịch ghi."""
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        state, engineer_id = _invite_state(conn, token_hash, now)
+        if state == "ok" and engineer_id:
+            _use_invite(conn, token_hash, engineer_id, reviewer_id, now)
+    return state
+
+
+def create_invited_reviewer(
+    path: str, token_hash: str, now: float, *, user_id: str, username: str, name: str, password_hash: str, email: str
+) -> tuple[str, dict[str, str | None] | None]:
+    """Đăng ký qua link mời: tạo Reviewer, dùng lời mời và liên kết trong một giao dịch, để không bao giờ có
+    Reviewer mồ côi (đã tạo tài khoản nhưng lời mời vừa bị người khác dùng). Trùng email/username: IntegrityError."""
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        state, engineer_id = _invite_state(conn, token_hash, now)
+        if state != "ok" or not engineer_id:
+            return state, None
+        conn.execute(
+            "INSERT INTO users (id, username, name, role, password_hash, created_at, email)"
+            " VALUES (?, ?, ?, 'Reviewer', ?, ?, ?)",
+            (user_id, username, name, password_hash, now, email),
+        )
+        _use_invite(conn, token_hash, engineer_id, user_id, now)
+    return "ok", {"id": user_id, "username": username, "name": name, "role": "Reviewer", "email": email}
+
+
+def linked_engineers(path: str, reviewer_id: str) -> set[str]:
+    with database(path) as conn:
+        rows = conn.execute("SELECT engineer_id FROM reviewer_links WHERE reviewer_id = ?", (reviewer_id,)).fetchall()
+    return {row[0] for row in rows}
+
+
+def list_linked_reviewers(path: str, engineer_id: str) -> list[dict[str, Any]]:
+    """Reviewer đã liên kết với Engineer; Reviewer là tài khoản hệ thống (an) thì không có dòng trong `users`."""
+    with database(path) as conn:
+        rows = conn.execute(
+            "SELECT l.reviewer_id, u.username, u.name, l.created_at FROM reviewer_links l"
+            " LEFT JOIN users u ON u.id = l.reviewer_id WHERE l.engineer_id = ? ORDER BY l.created_at, l.reviewer_id",
+            (engineer_id,),
+        ).fetchall()
+    return [{"id": row[0], "username": row[1], "name": row[2], "linked_at": row[3]} for row in rows]
+
+
+def remove_reviewer_link(path: str, engineer_id: str, reviewer_id: str) -> bool:
+    with database(path) as conn:
+        return bool(
+            conn.execute(
+                "DELETE FROM reviewer_links WHERE engineer_id = ? AND reviewer_id = ?", (engineer_id, reviewer_id)
+            ).rowcount
+        )
+
+
+def claim_model(path: str, model: str, owner_id: str, now: float) -> str:
+    """Giữ tên `model` cho `owner_id` nếu chưa ai giữ; trả chủ đang giữ (là `owner_id` khi giữ được). Một câu INSERT trên
+    khóa chính nên hai người giữ cùng lúc chỉ một người thắng."""
+    with database(path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO model_owners (model_name, owner_id, claimed_at) VALUES (?, ?, ?)",
+            (model, owner_id, now),
+        )
+        return conn.execute("SELECT owner_id FROM model_owners WHERE model_name = ?", (model,)).fetchone()[0]
+
+
+def get_model_owner(path: str, model: str) -> str | None:
+    with database(path) as conn:
+        row = conn.execute("SELECT owner_id FROM model_owners WHERE model_name = ?", (model,)).fetchone()
+    return row[0] if row else None
+
+
+def record_run_owner(path: str, run_id: str, owner_id: str, now: float) -> None:
+    """Ghi chủ của run hệ thống một lần; ghi lại không đổi chủ đã ghi."""
+    with database(path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO run_owners (run_id, owner_id, recorded_at) VALUES (?, ?, ?)", (run_id, owner_id, now)
+        )
+
+
+def get_run_owner(path: str, run_id: str) -> str | None:
+    with database(path) as conn:
+        row = conn.execute("SELECT owner_id FROM run_owners WHERE run_id = ?", (run_id,)).fetchone()
+    return row[0] if row else None
+
+
+def list_run_owners(path: str) -> dict[str, str]:
+    with database(path) as conn:
+        return dict(conn.execute("SELECT run_id, owner_id FROM run_owners").fetchall())
 
 
 def save_connection(path: str, metadata: dict[str, Any], password_encrypted: str) -> None:

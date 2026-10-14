@@ -11,7 +11,7 @@
 Chỉ xét các lần chạy sau lần deploy hiện tại: bản sửa vừa được duyệt có đường cơ sở mới, số đo của bản cũ không tính.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime, timedelta
 
 from src.agents.nodes.common import AgentDeps
@@ -20,11 +20,18 @@ from src.monitor import alerts, detectors, runs
 from src.pipeline.settings import PipelineSettings
 from src.policy.models import Policy
 from src.run_report import RunReport
+from src.run_report.access import record_system_run_owner, run_owner
 from src.run_report.store import list_run_reports
 
 Launch = Callable[[RunReport, dict], RunReport]  # tạo run sửa, đưa việc chạy nền đi, trả run vừa ghi
 Submit = Callable[[Callable[[], object]], None]  # cách chạy nền: BackgroundTasks.add_task, luồng riêng...
 RECENT_RUNS = 1000
+
+
+def pipeline_owner(store_path: str, parent: RunReport) -> str | None:
+    """Chủ pipeline ghi vào cảnh báo: bản đang deploy có thể là run sửa (`system`), nên lần về chủ của run gốc. None:
+    pipeline cũ không rõ chủ, cảnh báo chỉ Admin và cặp demo thấy; UNKNOWN (không lần ra run gốc): chỉ Admin thấy."""
+    return run_owner(store_path, parent.run_id)
 
 
 def deployed_at(report: RunReport) -> datetime:
@@ -78,11 +85,20 @@ def overview(settings: PipelineSettings, policy: Policy, now: datetime | None = 
     return result
 
 
-def check(settings: PipelineSettings, policy: Policy, launch: Launch, now: datetime | None = None) -> list[dict]:
-    """Chạy 4 luật cho mọi pipeline đã deploy. Trả danh sách việc đã làm (cảnh báo, run sửa, bỏ qua vì cooldown)."""
+def check(
+    settings: PipelineSettings,
+    policy: Policy,
+    launch: Launch,
+    now: datetime | None = None,
+    models: Collection[str] | None = None,
+) -> list[dict]:
+    """Chạy 4 luật cho mọi pipeline đã deploy (hoặc chỉ `models`, khi người dùng tự bấm: không đụng pipeline người
+    khác). Trả danh sách việc đã làm (cảnh báo, run sửa, bỏ qua vì cooldown)."""
     now = now or datetime.now(UTC)
     actions = []
     for model in runs.deployed_models(settings.deploy_dir):
+        if models is not None and model not in models:
+            continue
         parent = runs.deployed_report(settings.store_path, model)
         if parent is None or parent.domain not in policy.objectives:
             continue
@@ -97,7 +113,7 @@ def check(settings: PipelineSettings, policy: Policy, launch: Launch, now: datet
                 "source_stalled",
                 f"Pipeline `{model}`: {finding.detail}. Đây là sự cố nguồn, không tạo bản sửa.",
                 finding.evidence(),
-                owner=parent.created_by,
+                owner=pipeline_owner(settings.store_path, parent),
                 quiet_hours=cooldown,
                 now=now,
             )
@@ -119,7 +135,7 @@ def check(settings: PipelineSettings, policy: Policy, launch: Launch, now: datet
 def follow_up(report: RunReport, parent: RunReport, store_path: str, now: datetime | None = None) -> dict | None:
     """Sau khi run sửa kết thúc: gắn cờ khi không có bản tốt hơn, mời người vào sửa khi run dừng giữa chừng."""
     model = (report.regression or {}).get("model") or "unknown"
-    owner = parent.created_by
+    owner = pipeline_owner(store_path, parent)
     if report.status == "READY_FOR_REVIEW":
         return None  # đã nằm trong hàng đợi review
     if report.status == "NO_IMPROVEMENT":
@@ -151,10 +167,11 @@ def follow_up(report: RunReport, parent: RunReport, store_path: str, now: dateti
 
 
 def launcher(deps: AgentDeps, store_path: str, submit: Submit) -> Launch:
-    """Launch thật: ghi run sửa, chạy nền (graph + so sánh), xong thì gắn cờ / mời người nếu cần."""
+    """Launch thật: ghi run sửa kèm chủ pipeline, chạy nền (graph + so sánh), xong thì gắn cờ / mời người nếu cần."""
 
     def launch(parent: RunReport, evidence: dict) -> RunReport:
         started, job = start_regression(parent, evidence, deps, store_path)
+        record_system_run_owner(store_path, started.run_id, parent.run_id)
         submit(lambda: follow_up(job(), parent, store_path))
         return started
 

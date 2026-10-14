@@ -96,7 +96,9 @@ async def test_catalog_scopes_domains_and_all_table_metadata(client, user_domain
     [
         ("minh", "Engineer", {DOMAIN_A}),
         ("engineer-b", "Engineer", {DOMAIN_B}),
-        ("an", "Reviewer", {DOMAIN_A, DOMAIN_B}),
+        # Reviewer demo chỉ liên kết với minh: không thấy domain của engineer-b (ADR-0001 D2).
+        ("an", "Reviewer", {DOMAIN_A}),
+        ("admin", "Admin", {DOMAIN_A, DOMAIN_B}),
     ],
 )
 async def test_policy_preserves_yaml_and_exposes_only_safe_user_metadata(
@@ -230,13 +232,13 @@ async def test_selected_catalog_keeps_connection_error_handling(client, user_dom
 async def test_monitor_day2_and_reviewer_rework_use_all_user_domains(client, user_domains, monkeypatch):
     policies = []
 
-    def check(config, policy, launch):
+    def check(config, policy, launch, models=None):
         policies.append(policy)
         return []
 
     monkeypatch.setattr(monitor.day2, "check", check)
     monkeypatch.setattr(monitor.day2, "overview", lambda config, policy: check(config, policy, None))
-    monkeypatch.setattr(monitor.runs, "collect", lambda config, policy: check(config, policy, None))
+    monkeypatch.setattr(monitor.runs, "collect", lambda config, policy, models=None: check(config, policy, None))
     assert (await client.post("/api/v1/monitor/check")).status_code == 200
     assert (await client.get("/api/v1/monitor/pipelines")).status_code == 200
     assert (await client.post("/api/v1/monitor/collect")).status_code == 200

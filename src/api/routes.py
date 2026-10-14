@@ -21,9 +21,10 @@ from src.codegen.sandbox import SUPPORTED_KINDS
 from src.pipeline.auth import current_user, settings
 from src.pipeline.postgres import SourceUnavailableError
 from src.pipeline.settings import PipelineSettings
-from src.policy import PolicyError, effective_policy
+from src.policy import PolicyError
 from src.run_report import RunReport
-from src.run_report.store import get_run_report, is_run_cancelled
+from src.run_report.access import policy_for, viewable_run
+from src.run_report.store import is_run_cancelled
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -74,7 +75,7 @@ def agent_deps(config: PipelineSettings = Depends(settings), user: dict = Depend
     from src.agents import budget
 
     try:
-        policy = effective_policy(config, owner_id=user["id"] if user["role"] == "Engineer" else None)
+        policy = policy_for(user, config)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
     return AgentDeps(
@@ -107,6 +108,12 @@ def _checked_sources(body: AgentRunRequest, user: dict, deps: AgentDeps) -> list
     return [choice.model_dump() for choice in body.sources]
 
 
+def _checked_parent(body: AgentRunRequest, user: dict, store_path: str) -> None:
+    """Run gốc (Sửa & chạy lại) làm bản so sánh nên phải là run người dùng được thấy; không thấy thì 404."""
+    if body.parent_run_id is not None:
+        viewable_run(store_path, body.parent_run_id, user)
+
+
 @router.post("/runs", status_code=201, response_model=RunReport)
 def create_agent_run(
     body: AgentRunRequest,
@@ -120,6 +127,7 @@ def create_agent_run(
     Trả ngay run ở trạng thái GENERATING; lập kế hoạch chạy nền, tiến độ đọc lại qua GET /runs/{run_id}.
     """
     sources = _checked_sources(body, user, deps)
+    _checked_parent(body, user, config.store_path)
     started, job = start_agent(body.request.strip(), user["id"], deps, config.store_path, sources, body.parent_run_id)
     background.add_task(job)
     return started
@@ -159,6 +167,8 @@ def create_agent_run_batch(
             f"Một mẻ tối đa {estimate['max_batch_runs']} pipeline theo budgets.yml per_day.max_batch_runs.",
         )
     checked = [(item, _checked_sources(item, user, deps)) for item in body.requests]
+    for item in body.requests:
+        _checked_parent(item, user, config.store_path)
     run_ids = [str(uuid4()) for _ in checked]
     reservation_usd = estimate["reservation_usd_per_run"]
     reservations = [(run_id, 1, "llm:plan:1", reservation_usd) for run_id in run_ids]
@@ -217,9 +227,7 @@ def confirm_run_plan(
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
     """Cổng HITL 1 (P2): Engineer tạo run xác nhận kế hoạch; viết Spec, sinh code và chạy thử ở nền."""
-    report = get_run_report(config.store_path, run_id)
-    if report is None:
-        raise HTTPException(404, f"Không tìm thấy run {run_id}")
+    report = viewable_run(config.store_path, run_id, user)
     if user["role"] != "Engineer" or report.created_by != user["id"]:
         raise HTTPException(403, "Chỉ Engineer tạo run được xác nhận kế hoạch.")
     try:
@@ -254,9 +262,7 @@ def continue_draft(
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
     """Kiểm tra lại Spec đã sửa bằng đúng các cổng của agent (lỗi trả về ngay), rồi sinh code và chạy thử ở nền."""
-    draft = get_run_report(config.store_path, run_id)
-    if draft is None:
-        raise HTTPException(404, f"Không tìm thấy run {run_id}")
+    draft = viewable_run(config.store_path, run_id, user)
     if draft.created_by != user["id"]:
         raise HTTPException(403, "Chỉ người tạo bản nháp được chạy tiếp.")
     if draft.status != "DRAFT" or draft.spec is None:

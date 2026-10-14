@@ -16,6 +16,8 @@ USERS = {
     "admin": {"id": "admin", "name": "Quản trị viên", "role": "Admin"},
 }
 ACCOUNTS = {"engineer": "minh", "reviewer": "an", "admin": "admin"}
+# Cặp demo luôn coi là Engineer ↔ Reviewer đã liên kết, không ghi vào bảng reviewer_links (ADR-0001 D1).
+DEMO_ENGINEER, DEMO_REVIEWER = "minh", "an"
 COOKIE = "pipeline_session"
 # Cookie phải gửi kèm mọi API dưới /api/v1, không chỉ /pipeline.
 COOKIE_PATH = "/api/v1"

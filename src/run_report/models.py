@@ -243,8 +243,11 @@ class RunReport(_Contract):
     run_id: str = Field(min_length=1)
     version: int = Field(ge=1)
     domain: str = Field(min_length=1)
-    created_by: str = Field(
-        min_length=1, description="Engineer tạo run, lấy từ phiên đăng nhập; 'system' với run tự động"
+    created_by: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Engineer tạo run, lấy từ phiên đăng nhập; 'system' với run tự động; null với dữ liệu cũ không "
+        "ghi người tạo (chỉ Admin và cặp demo thấy, xem src.run_report.access)",
     )
     trigger: Trigger
     parent_run_id: str | None = None

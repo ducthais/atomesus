@@ -88,6 +88,12 @@ def list_alerts(path: str, model: str | None = None, open_only: bool = True, lim
     return [_row(row) for row in rows]
 
 
+def get_alert(path: str, alert_id: int) -> dict | None:
+    with _database(path) as conn:
+        found = conn.execute(f"SELECT {', '.join(COLUMNS)} FROM pipeline_alerts WHERE id = ?", (alert_id,)).fetchone()
+    return _row(found) if found else None
+
+
 def resolve_alert(path: str, alert_id: int, now: datetime | None = None) -> dict | None:
     """Đánh dấu đã xử lý. Không có cảnh báo đó → None."""
     with _database(path) as conn:

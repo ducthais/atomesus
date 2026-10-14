@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from src.pipeline.auth import current_user, settings
 from src.pipeline.settings import PipelineSettings
-from src.policy import effective_policy
 from src.policy.loader import POLICY_DIR, POLICY_FILES, PolicyError
+from src.run_report.access import policy_for
 
 router = APIRouter(prefix="/policy", tags=["policy"], dependencies=[Depends(current_user)])
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/policy", tags=["policy"], dependencies=[Depends(curr
 def read_policy(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
     """Nội dung 3 file chính sách (chỉ đọc) và các trần UI cần hiển thị, đọc lại mỗi lần (NFR-04)."""
     try:
-        policy = effective_policy(config, owner_id=user["id"] if user["role"] == "Engineer" else None)
+        policy = policy_for(user, config)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
     per_run = policy.budgets.per_run

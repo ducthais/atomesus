@@ -5,6 +5,7 @@ Chỉ đọc: lần materialize gần nhất của từng asset, run gần nhấ
 tên dataset `gold.fct_daily_sales` trong catalog.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import httpx
@@ -71,6 +72,7 @@ def parse_status(data: dict) -> dict[str, dict]:
                 schedule["pipelineName"],
                 {
                     "name": schedule["name"],
+                    "job": schedule["pipelineName"],
                     "cron": schedule["cronSchedule"],
                     "timezone": schedule["executionTimezone"],
                     "running": running,
@@ -103,6 +105,29 @@ def parse_status(data: dict) -> dict[str, dict]:
             "schedule": next((schedules[job] for job in jobs if job in schedules), None),
         }
     return assets
+
+
+def filter_status(assets: dict[str, dict], visible: Callable[[str], bool]) -> dict[str, dict]:
+    """Chỉ giữ job người dùng được thấy (`visible(job)`). Asset không còn job nào bị bỏ. Asset dùng chung với job
+    không được thấy thì bỏ cả lần chạy, lịch và lần materialize không chắc thuộc job được thấy."""
+    result = {}
+    for key, asset in assets.items():
+        jobs = [job for job in asset["jobs"] if visible(job)]
+        if not jobs:
+            continue
+        if len(jobs) == len(asset["jobs"]):
+            result[key] = asset
+            continue
+        run = asset["last_run"] if asset["last_run"] and visible(asset["last_run"]["job"]) else None
+        own_materialization = run is not None and asset["last_materialized_run_id"] == run["run_id"]
+        result[key] = {
+            "jobs": jobs,
+            "last_materialized_at": asset["last_materialized_at"] if own_materialization else None,
+            "last_materialized_run_id": asset["last_materialized_run_id"] if own_materialization else None,
+            "last_run": run,
+            "schedule": asset["schedule"] if asset["schedule"] and visible(asset["schedule"]["job"]) else None,
+        }
+    return result
 
 
 def fetch_status(url: str, timeout: float = 3.0) -> dict[str, dict]:

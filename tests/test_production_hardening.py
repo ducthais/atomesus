@@ -378,20 +378,26 @@ def test_abandon_skips_run_that_progressed_since_listing(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_reviewer_cannot_call_monitor_or_catalog_mutations(client, tmp_path, monkeypatch):
     from src.main import app
+    from src.monitor import alerts
     from src.pipeline import auth
 
     config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
     app.dependency_overrides[auth.settings] = lambda: config
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
+    # Cảnh báo của minh: an (Reviewer demo) thấy được nhưng không được xử lý. Cảnh báo không thấy được là 404 trước khi
+    # xét vai, không lộ cảnh báo đó có tồn tại.
+    alert = alerts.raise_alert(config.store_path, "daily_sales", "source_stalled", "Nguồn ngừng", owner="minh")
     try:
         await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
         for url in (
             "/api/v1/monitor/collect",
             "/api/v1/monitor/check",
-            "/api/v1/monitor/alerts/1/resolve",
+            f"/api/v1/monitor/alerts/{alert['id']}/resolve",
             "/api/v1/catalog/datasets/sales/fct_daily_sales/reconcile",
         ):
             assert (await client.post(url)).status_code == 403, url
+        assert alerts.get_alert(config.store_path, alert["id"])["resolved_at"] is None
+        assert (await client.post(f"/api/v1/monitor/alerts/{alert['id'] + 1}/resolve")).status_code == 404
     finally:
         app.dependency_overrides.pop(auth.settings, None)
 

@@ -13,7 +13,7 @@ Chỉ đọc: không chạy, không bật / tắt pipeline nào. Thu lại nhi�
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -153,13 +153,17 @@ def collect(
     runs: Callable[[str], list[dict]] | None = None,
     estimate: Callable | None = None,
     counts: Callable | None = None,
+    models: Collection[str] | None = None,
 ) -> list[dict]:
     """Ghi số đo của các lần chạy đã xong mà chưa ghi. Trả các dòng vừa ghi.
 
     `runs` / `estimate` / `counts` mặc định là fetch_runs, budget.estimate, source_records (chọn lúc gọi).
+    `models`: chỉ thu cho các pipeline này (người dùng tự bấm thì không đọc nguồn của pipeline người khác).
     """
     runs, estimate, counts = runs or fetch_runs, estimate or budget.estimate, counts or source_records
     deployed = set(deployed_models(settings.deploy_dir))
+    if models is not None:
+        deployed &= set(models)
     done = recorded(settings.store_path)
     pending = [
         r
