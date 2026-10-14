@@ -18,7 +18,7 @@ from src.pipeline import store
 from src.pipeline.auth import USERS
 from src.policy.models import Budgets
 from src.run_report.access import LEGACY, UNKNOWN, _owner, run_owner
-from src.run_report.store import OwnerGate, _database
+from src.run_report.store import Clock, OwnerGate, _database, utcnow
 
 
 def _day(now: datetime) -> str:
@@ -88,10 +88,15 @@ def _spent(conn: sqlite3.Connection, owners: _Owners, owner: str, day: str) -> f
 
 
 def _runs(conn: sqlite3.Connection, owners: _Owners, owner: str, day: str) -> int:
-    """Số run tạo trong ngày `day` (gồm lượt đã giữ, chưa vào sổ) thuộc `owner`."""
+    """Số run tạo trong ngày `day` (gồm lượt đã giữ, chưa vào sổ) thuộc `owner`.
+
+    Run có lượt thuộc ngày của lượt (lúc giữ, đã trong khóa ghi), không theo created_at do nơi tạo đóng dấu sau đó:
+    lượt giữ lúc 23:59:59 mà run vào sổ sau 0:00 vẫn chỉ tính cho ngày đã kiểm tra trần. Run không có lượt (dữ liệu
+    trước hạn mức, run vào sổ dưới id khác) tính theo created_at."""
     rows = conn.execute(
-        "SELECT run_id FROM run_reports WHERE substr(created_at, 1, 10) = ?"
-        " UNION SELECT run_id FROM run_slots WHERE substr(reserved_at, 1, 10) = ?",
+        "SELECT run_id FROM run_slots WHERE substr(reserved_at, 1, 10) = ?"
+        " UNION SELECT run_id FROM run_reports WHERE substr(created_at, 1, 10) = ?"
+        " AND run_id NOT IN (SELECT run_id FROM run_slots)",
         (day, day),
     ).fetchall()
     return sum(owners.of(conn, row[0]) == owner for row in rows)
@@ -102,8 +107,8 @@ def cost_gate(store_path: str, owner: str, limit: float) -> tuple[OwnerGate, dic
     `spent` (số của `owner` trước khoản này) khi cổng đã chạy, để nơi gọi ghi rõ lý do."""
     owners, seen = _Owners(store_path), {}
 
-    def gate(conn: sqlite3.Connection, usd: float) -> bool:
-        seen["spent"] = _spent(conn, owners, owner, _day(datetime.now(UTC)))
+    def gate(conn: sqlite3.Connection, usd: float, day: str) -> bool:
+        seen["spent"] = _spent(conn, owners, owner, day)
         return seen["spent"] + usd <= limit
 
     return gate, seen
@@ -128,22 +133,25 @@ def _exhausted(limit: int, used: int, count: int, now: datetime) -> RunQuotaExce
     return RunQuotaExceeded(detail, now)
 
 
-def _claim(store_path: str, owner: str, limit: int, run_ids: list[str], now: datetime) -> int | None:
-    """Ghi lượt cho `run_ids` của `owner` trong một giao dịch ghi; không đủ lượt thì không ghi, trả số đã dùng."""
+def _claim(store_path: str, owner: str, limit: int, run_ids: list[str], clock: Clock) -> tuple[int | None, datetime]:
+    """Ghi lượt cho `run_ids` của `owner` trong một giao dịch ghi; không đủ lượt thì không ghi, trả số đã dùng.
+
+    Thời điểm lấy một lần sau khi đã giữ khóa ghi (chờ khóa qua nửa đêm UTC thì đếm và ghi cùng ngày mới), trả kèm."""
     owners = _Owners(store_path)
     with _database(store_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        now = clock()
         used = _runs(conn, owners, owner, _day(now))
         if used + len(run_ids) > limit:
-            return used
+            return used, now
         conn.executemany(
             "INSERT INTO run_slots (run_id, owner_id, reserved_at) VALUES (?, ?, ?)",
             [(run_id, owner, now.isoformat()) for run_id in run_ids],
         )
-    return None
+    return None, now
 
 
-def claim_runs(store_path: str, user: dict, budgets: Budgets, count: int = 1) -> list[str]:
+def claim_runs(store_path: str, user: dict, budgets: Budgets, count: int = 1, clock: Clock = utcnow) -> list[str]:
     """Giữ lượt cho `count` run mới của `user` trước khi gọi LLM hay ghi run; trả run_id đã giữ.
 
     Hết lượt (budgets.yml per_user.max_runs_per_day) → 429, không giữ lượt nào. Admin không giới hạn theo người dùng.
@@ -152,14 +160,14 @@ def claim_runs(store_path: str, user: dict, budgets: Budgets, count: int = 1) ->
     owner = limited_owner(store_path, user["id"])
     if owner is None:
         return run_ids
-    limit, now = budgets.per_user.max_runs_per_day, datetime.now(UTC)
-    used = _claim(store_path, owner, limit, run_ids, now)
+    limit = budgets.per_user.max_runs_per_day
+    used, now = _claim(store_path, owner, limit, run_ids, clock)
     if used is not None:
         raise _exhausted(limit, used, count, now)
     return run_ids
 
 
-def claim_system_run(store_path: str, parent_run_id: str, budgets: Budgets, what: str) -> str:
+def claim_system_run(store_path: str, parent_run_id: str, budgets: Budgets, what: str, clock: Clock = utcnow) -> str:
     """Giữ lượt cho một run hệ thống (run sửa Day 2), tính cho chủ pipeline của `parent_run_id`; trả run_id đã giữ.
 
     Chủ đã hết lượt → RunQuotaExceeded, không giữ lượt nào. Chủ là Admin / không rõ chủ thì chỉ chịu trần chung.
@@ -168,8 +176,9 @@ def claim_system_run(store_path: str, parent_run_id: str, budgets: Budgets, what
     owner = run_quota_owner(store_path, parent_run_id)
     if owner is None:
         return run_id
-    limit, now = budgets.per_user.max_runs_per_day, datetime.now(UTC)
-    if _claim(store_path, owner, limit, [run_id], now) is not None:
+    limit = budgets.per_user.max_runs_per_day
+    used, now = _claim(store_path, owner, limit, [run_id], clock)
+    if used is not None:
         raise RunQuotaExceeded(
             f"Chủ pipeline đã dùng hết {limit} run hôm nay (budgets.yml per_user.max_runs_per_day); "
             f"không tạo {what}, thử lại sau 0:00 UTC.",

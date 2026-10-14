@@ -565,6 +565,105 @@ def test_previous_day_reservation_is_rebooked_against_todays_global_cap(tmp_path
     assert budget.spent_today(config) == pytest.approx(1.995)
 
 
+class _Midnight:
+    """Đồng hồ giả: 23:59:59.999 hôm qua cho tới khi `cross()`, sau đó 0:00:00.001 hôm nay (ngày của sổ thật)."""
+
+    def __init__(self):
+        midnight = datetime.combine(datetime.now(UTC).date(), datetime.min.time(), UTC)
+        self.now, self.after = midnight - timedelta(milliseconds=1), midnight + timedelta(milliseconds=1)
+        self.read = []
+
+    def cross(self):
+        self.now = self.after
+
+    def __call__(self) -> datetime:
+        self.read.append(self.now)
+        return self.now
+
+
+def _while_locked(store_path: str, clock: _Midnight, calls: list) -> list:
+    """Chạy `calls` đồng thời khi một request khác đang giữ khóa ghi; nửa đêm UTC trôi qua trong lúc các request chờ."""
+    import sqlite3
+
+    outcomes = []
+
+    def run(call):
+        try:
+            outcomes.append(call())
+        except Exception as exc:
+            outcomes.append(getattr(exc, "status_code", exc))
+
+    holder = sqlite3.connect(store_path, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    threads = [threading.Thread(target=run, args=(call,)) for call in calls]
+    for thread in threads:
+        thread.start()
+    time.sleep(0.3)  # các request đã gọi và đang chờ khóa
+    clock.cross()
+    holder.execute("COMMIT")
+    holder.close()
+    for thread in threads:
+        thread.join()
+    assert clock.read and set(clock.read) == {clock.after}, "chỉ đọc giờ sau khi đã giữ khóa ghi"
+    return outcomes
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_reservations_waiting_across_midnight_use_the_new_days_totals(tmp_path, batch):
+    from src.run_report.store import reserve_budget, reserve_budget_batch
+
+    config = _settings(tmp_path)
+    _run(config.store_path, "a0", "minh", usd=0.29)
+    for run_id in ("a1", "a2"):
+        _run(config.store_path, run_id, "minh")
+    clock = _Midnight()
+
+    def reserve(run_id):
+        gate, _seen = quota.cost_gate(config.store_path, "minh", 0.30)
+        if batch:
+            return lambda: reserve_budget_batch(config.store_path, [(run_id, 1, "llm:plan:1", 0.006)], 2.0, gate, clock)
+        return lambda: reserve_budget(config.store_path, run_id, 1, "llm:plan:1", 0.006, 2.0, gate, clock)
+
+    outcomes = _while_locked(config.store_path, clock, [reserve("a1"), reserve("a2")])
+
+    assert sorted(accepted for accepted, _spent in outcomes) == [False, True]
+    assert quota.spent_today(config.store_path, "minh") == pytest.approx(0.296)
+    with _database(config.store_path) as conn:
+        days = [row[0][:10] for row in conn.execute("SELECT reserved_at FROM budget_reservations")]
+    assert days == [clock.after.date().isoformat()], "khoản giữ ghi cùng ngày với tổng đã kiểm tra"
+
+
+def test_run_claim_waiting_across_midnight_counts_the_new_days_runs(tmp_path):
+    config = _settings(tmp_path)
+    budgets = _with_per_user(load_policy(), max_runs_per_day=1).budgets
+    _run(config.store_path, "a1", "minh")  # đã dùng 1 run hôm nay
+    clock = _Midnight()
+
+    outcomes = _while_locked(
+        config.store_path,
+        clock,
+        [lambda: quota.claim_runs(config.store_path, auth.USERS["minh"], budgets, clock=clock)],
+    )
+
+    assert outcomes == [429]
+    assert _slots(config.store_path) == []
+
+
+def test_run_claimed_before_midnight_counts_for_the_claimed_day_only(tmp_path):
+    config = _settings(tmp_path)
+    budgets = _with_per_user(load_policy(), max_runs_per_day=1).budgets
+    minh, clock = auth.USERS["minh"], _Midnight()
+
+    [late] = quota.claim_runs(config.store_path, minh, budgets, clock=clock)  # 23:59:59.999 hôm qua
+    _run(config.store_path, late, "minh")  # vào sổ sau 0:00, created_at hôm nay
+    clock.cross()
+
+    assert quota.usage(config.store_path, minh, budgets)["runs"]["used"] == 0, "lượt thuộc ngày đã kiểm tra trần"
+    assert len(quota.claim_runs(config.store_path, minh, budgets, clock=clock)) == 1
+    with pytest.raises(quota.RunQuotaExceeded):
+        quota.claim_runs(config.store_path, minh, budgets, clock=clock)
+
+
 def _regression_runs(store_path: str) -> list[str]:
     with _database(store_path) as conn:
         query = "SELECT run_id FROM run_reports WHERE json_extract(report, '$.trigger') = 'regression'"
