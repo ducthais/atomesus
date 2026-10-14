@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CircleAlert, GitBranch, ListPlus, RotateCcw, Sparkles } from 'lucide-react';
+import { BookOpen, CircleAlert, GitBranch, ListPlus, RotateCcw, Sparkles } from 'lucide-react';
 import { currentUser, getCatalog, getComparison, runFiles, runMessages } from '@/lib/catalog/source';
 import { STAGES, STAGE_IDS, canReview, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
@@ -92,6 +92,11 @@ export default async function RunPage({ params, searchParams }: { params: Promis
     {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>{run.status === 'DEPLOY_FAILED' ? 'Triển khai lỗi' : `Run dừng ở “${STAGES[run.stage]}”`}</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
     {run.status === 'CANCELLED' && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>Run đã được Engineer hủy ở phase “{STAGES[run.stage]}”. Bằng chứng đã ghi trước đó vẫn được giữ lại.</span></div>}
     {run.status === 'NO_IMPROVEMENT' && <div className="callout warn"><Sparkles size={16} aria-hidden /><div><strong>Không có bản tốt hơn</strong><p>{run.optimization?.verdict?.reason ?? 'Bản đề xuất không cải thiện pipeline đang chạy nên không được chuyển sang hàng đợi duyệt.'}</p></div></div>}
+
+    {run.brief && run.brief.length > 0 && <Panel title={<><BookOpen size={16} aria-hidden /> Pipeline này làm gì</>}>
+      <ul className="plain" style={{ overflowWrap: 'anywhere' }}>{run.brief.map(line => <li key={line}>{line}</li>)}</ul>
+      <p className="muted small">Tóm tắt từ RunReport. Căn cứ duyệt vẫn là diff và bằng chứng trong các tab bên dưới.</p>
+    </Panel>}
 
     {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={progressFrom} specRetries={run.specRetries} />}
 

@@ -6,6 +6,8 @@
 import type { Check, Log, Plan } from '../studio.ts';
 import type { ConnectionSchema, ConnectionTable, UserConnection } from '../user-connections.ts';
 import type { LinkedReviewer } from '../invite.ts';
+import type { RunReport } from '../postgres-api.ts';
+import { runSummary } from './explain.ts';
 import type { CatalogRun, Dataset, Domain, GlossaryTerm, Orchestration, Person, PolicyFile, Relationship, Snapshot } from './types.ts';
 
 export const PEOPLE: Person[] = [
@@ -228,6 +230,16 @@ for (const domain of DOMAINS) domain.datasets = DATASETS.filter(d => d.domain ==
 const plan = (p: Partial<Plan>): Plan => ({ sources: [], tables: [], primaryKey: '—', cursor: '—', metric: '—', schedule: '—', writeMode: '—', model: '—', filters: '', ...p });
 const check = (id: string, name: string, state: Check['state'], value: string, detail: string): Check => ({ id, name, state, value, detail });
 const log = (id: string, stage: number, level: Log['level'], message: string, at: string, detail?: string): Log => ({ id, stage, level, message, at, detail });
+/** Tóm tắt đầu trang run: chạy đúng runSummary trên RunReport rút gọn (kế hoạch + cổng budget/post_run), như run thật. */
+const brief = (sources: [string, string][], model: string, extra: { cron?: string; goldRows?: number; usd?: number; optimizer?: RunReport['optimizer'] } = {}) => runSummary({
+  run_id: '', version: 1, domain: 'sales', created_by: 'minh', created_at: '', user_request: '', status: '', stage_reached: '', spec: null,
+  plan: { model_name: model, schedule: extra.cron, sources: sources.map(([source_ref, object]) => ({ id: object, source_ref, object })) },
+  gates: [
+    ...(extra.usd !== undefined ? [{ name: 'budget', result: 'pass' as const, detail: '', observed: { usd: extra.usd } }] : []),
+    ...(extra.goldRows !== undefined ? [{ name: 'post_run', result: 'pass' as const, detail: '', observed: { gold_rows: extra.goldRows } }] : []),
+  ],
+  checks: [], timing: { baseline_sec: null, optimized_sec: null }, optimizer: extra.optimizer, error_trace: [], approval: null,
+});
 
 const dagster = (model: string) => `from dagster import AssetExecutionContext, Definitions, ScheduleDefinition, define_asset_job
 from dagster_dbt import DbtCliResource, dbt_assets
@@ -281,6 +293,8 @@ export const RUNS: CatalogRun[] = [
     request: 'Tính doanh thu và số đơn hàng theo từng ngày đặt hàng', version: 1, filesHash: 'sha256:5f2a9c81d04be7a3c6e1', status: 'DEPLOYED', stage: 14,
     plan: plan({ sources: ['postgres · sales_pg'], tables: ['orders'], primaryKey: 'order_id', cursor: 'không có', metric: 'revenue = SUM(amount_vnd); order_count = COUNT(DISTINCT order_id)', schedule: '0 2 * * *', writeMode: 'replace', model: 'fct_daily_revenue' }),
     summary: 'Đọc sales_raw.orders, ép kiểu amount_text và ordered_at_text ở staging, gộp theo order_date ở gold.',
+    brief: brief([['sales_pg', 'orders']], 'fct_daily_revenue', { cron: '0 2 * * *', goldRows: 365, usd: 0.0031,
+      optimizer: [{ rule: 'incremental', applied: true, before_sec: 0.2155, after_sec: 0.1405 }] }),
     checks: [
       check('row_reconcile:orders', 'Đối soát dòng · orders', 'pass', '12.480 → 12.480', 'Số dòng nguồn → bronze'),
       check('idempotent:orders', 'Idempotent · orders', 'pass', '0 dòng mới', 'Chạy lần 2 không phát sinh dòng mới'),
@@ -347,6 +361,7 @@ models:
     request: 'Tổng doanh thu và số đơn hàng của từng khách hàng, kèm tên khách hàng', version: 1, filesHash: 'sha256:a91e04c7f3d25b8e0c44', status: 'READY_FOR_REVIEW', stage: 14,
     plan: plan({ sources: ['postgres · sales_pg', 'postgres · sales_pg'], tables: ['orders', 'customers'], primaryKey: 'order_id | customer_id', cursor: 'không có | không có', metric: 'revenue = SUM(amount_vnd); order_count = COUNT(DISTINCT order_id)', schedule: '0 3 * * *', writeMode: 'replace | replace', model: 'fct_customer_revenue' }),
     summary: 'Join stg orders với stg customers theo customer_id, gộp theo khách hàng.',
+    brief: brief([['sales_pg', 'orders'], ['sales_pg', 'customers']], 'fct_customer_revenue', { cron: '0 3 * * *', goldRows: 3102, usd: 0.0044 }),
     checks: [
       check('row_reconcile:orders', 'Đối soát dòng · orders', 'pass', '12.480 → 12.480', 'Số dòng nguồn → bronze'),
       check('row_reconcile:customers', 'Đối soát dòng · customers', 'pass', '3.150 → 3.150', 'Số dòng nguồn → bronze'),
@@ -394,6 +409,7 @@ group by c.customer_id, c.full_name
     request: 'Ghép đơn hàng Postgres với thanh toán từ REST API, tính doanh thu theo ngày', version: 1, filesHash: '', status: 'NEEDS_HUMAN', stage: 3,
     plan: plan({ sources: ['sales_pg', 'sales_api'], tables: ['orders', 'payments'], model: 'fct_daily_paid_revenue', schedule: '0 2 * * *' }),
     summary: 'Cần sales_api.payments, nguồn REST API chưa đọc được.',
+    brief: brief([['sales_pg', 'orders'], ['sales_api', 'payments']], 'fct_daily_paid_revenue', { cron: '0 2 * * *' }),
     checks: [], logs: [
       log('n1', 1, 'info', 'Kế hoạch: 2 nguồn (sales_pg.orders, sales_api.payments)', '2026-10-02T03:40:10Z'),
       log('n2', 3, 'error', 'chưa hỗ trợ đọc nguồn rest_api \'sales_api\' ở Sprint 1', '2026-10-02T03:40:12Z', 'Nguồn: sales_api'),
@@ -406,6 +422,7 @@ group by c.customer_id, c.full_name
     request: 'Đếm khách hàng mới theo tháng, gộp khách hàng của sales và marketing', version: 1, filesHash: '', status: 'BLOCKED_SEMANTIC_CONFLICT', stage: 5,
     plan: plan({ sources: ['sales_pg', 'mkt_api'], tables: ['customers', 'leads'], model: 'fct_new_customers_monthly' }),
     summary: 'Gộp thực thể customer ở hai domain.',
+    brief: brief([['sales_pg', 'customers'], ['mkt_api', 'leads']], 'fct_new_customers_monthly'),
     checks: [check('gate:semantic', 'Ngữ nghĩa', 'fail', 'Không đạt', "'customer' có định nghĩa khác nhau ở sales và marketing; conformed_dimensions rỗng")],
     logs: [log('p1', 5, 'error', "Thực thể 'customer' trùng tên ở sales và marketing", '2026-10-02T04:05:31Z', 'sales: tài khoản đã ký hợp đồng\nmarketing: người để lại email')],
     specRetries: 0, sqlRetries: 0, llmCalls: 2, updatedAt: '2026-10-02T04:05:31Z', usd: 0, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 0, assets: [], approval: null,

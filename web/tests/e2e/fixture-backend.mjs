@@ -125,9 +125,36 @@ function readyReport(index, request) {
   };
 }
 
+// Run có sẵn cho màn duyệt: tóm tắt đủ dữ liệu với tên dài và bảng cùng tên ở hai kết nối, và một run thiếu dữ liệu.
+// Để riêng khỏi `reports` để số thứ tự run của mẻ (batch001…) không đổi.
+const LONG_MODEL = 'fct_doanh_thu_theo_ngay_cua_tung_cua_hang_khu_vuc_mien_nam_va_mien_bac_sau_khi_tru_hoan_tien';
+const seeded = [
+  (() => {
+    const report = readyReport(0, 'Doanh thu theo ngày của từng cửa hàng hai miền');
+    const [orders] = report.spec.sources;
+    const sources = ['kho_ban_hang_mien_dong_postgres', 'kho_ban_hang_mien_tay_postgres'].map((ref, i) => ({
+      ...orders, id: `orders_${i}`, source_ref: ref, table: 'don_hang_da_xac_nhan_kem_thanh_toan', target: { table: `${LONG_MODEL}__orders_${i}` },
+    }));
+    return {
+      ...report, run_id: 'summary1-0000-4000-8000-000000000000', source_scope: null,
+      plan: { ...report.plan, model_name: LONG_MODEL, schedule: '*/45 * * * *' },
+      spec: { ...report.spec, sources, transform: { ...report.spec.transform, model_name: LONG_MODEL }, schedule: { cron: '*/45 * * * *' } },
+      gates: report.gates.map(g => g.name === 'post_run' ? { ...g, observed: { ...g.observed, gold_rows: 1234567 } } : g),
+      checks: report.checks.filter(c => c.source_id === null),
+      optimizer: [{ rule: 'incremental', applied: true, before_sec: 0.2155, after_sec: 0.1405, reason: 'nhanh hơn' }],
+    };
+  })(),
+  {
+    ...readyReport(0, 'Đếm khách hàng mới theo tháng'), run_id: 'summary2-0000-4000-8000-000000000000',
+    status: 'NEEDS_HUMAN', stage_reached: 'plan', spec: null, files: {}, files_hash: null, gates: [], checks: [], cost: undefined,
+    plan: { domain: 'sales', model_name: 'fct_new_customers_monthly', sources: [{ id: 'customers', source_ref: 'sales_pg', object: 'customers' }] },
+    error_trace: [{ stage: 'plan', error: 'Thiếu bảng customers trong nguồn.' }],
+  },
+];
+
 function findReport(rawId) {
   const id = decodeURIComponent(rawId);
-  return reports.find(report => report.run_id === id || report.run_id.startsWith(id));
+  return [...seeded, ...reports].find(report => report.run_id === id || report.run_id.startsWith(id));
 }
 
 const server = createServer(async (request, response) => {
@@ -176,7 +203,7 @@ const server = createServer(async (request, response) => {
       },
     });
   }
-  if (path === '/api/v1/runs' && request.method === 'GET') return json(response, 200, reports);
+  if (path === '/api/v1/runs' && request.method === 'GET') return json(response, 200, [...seeded, ...reports]);
 
   const filesMatch = /^\/api\/v1\/runs\/([^/]+)\/files$/.exec(path);
   if (filesMatch && request.method === 'GET') {
