@@ -13,8 +13,15 @@ READY_RUN_ID = "3f6c1a2e-8b4d-4c7a-9e21-0d5b7a1c9f10"
 
 @pytest.fixture
 def store_path(tmp_path, monkeypatch):
-    """Sổ bằng chứng SQLite tạm, nạp sẵn các RunReport mẫu trong fixtures/run_reports."""
-    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+    """Sổ bằng chứng SQLite tạm, nạp sẵn các RunReport mẫu trong fixtures/run_reports.
+
+    Chế độ deploy pr: các test Deploy cũ kiểm luồng pull request; test chế độ direct tự đổi `deploy_mode`."""
+    config = PipelineSettings(
+        _env_file=None,
+        store_path=str(tmp_path / "runs.sqlite3"),
+        deploy_mode="pr",
+        release_dir=str(tmp_path / "releases"),
+    )
     for path in FIXTURES_DIR.glob("*.json"):
         save_run_report(config.store_path, RunReport.model_validate_json(path.read_text(encoding="utf-8")))
     app.dependency_overrides[auth.settings] = lambda: config
@@ -375,6 +382,190 @@ async def test_deploy_after_merge_returns_run_without_calling_github(logged_in, 
 
     assert response.status_code == 200 and response.json()["deployment"]["state"] == "merged"
     assert len(github.requests) == calls
+
+
+@pytest.fixture
+def direct_mode(store_path):
+    """Chế độ deploy direct (mặc định của PipelineSettings): Deploy ghi bundle vào hộp thư release."""
+    config = app.dependency_overrides[auth.settings]()
+    config.deploy_mode = "direct"
+    return config
+
+
+def _bundles(config, folder: str = "inbox") -> list[str]:
+    from pathlib import Path
+
+    path = Path(config.release_dir) / folder
+    return sorted(entry.name for entry in path.iterdir()) if path.is_dir() else []
+
+
+def test_direct_is_the_default_deploy_mode():
+    assert PipelineSettings(_env_file=None).deploy_mode == "direct"
+
+
+@pytest.mark.asyncio
+async def test_direct_deploy_writes_signed_bundle_without_github(
+    logged_in, approved_run, github, direct_mode, store_path, tmp_path
+):
+    import json
+    from pathlib import Path
+
+    from src.deployer.manifest import hash_files, verify_manifest
+    from src.run_report.store import get_run_files
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["status"] == "APPROVED" and report["stage_reached"] == "deploy" and report["deployment"] is None
+    assert github.requests == [], "chế độ direct không gọi GitHub"
+    name = f"{READY_RUN_ID}-v{approved_run.version}"
+    assert _bundles(direct_mode) == [name] and not [p for p in Path(direct_mode.release_dir).rglob(".tmp-*")]
+    folder = Path(direct_mode.release_dir) / "inbox" / name
+    files = get_run_files(store_path, READY_RUN_ID, approved_run.version)
+    written = {
+        path.relative_to(folder).as_posix(): path.read_bytes().decode()
+        for path in folder.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    assert written == files, "bundle chứa đúng bộ file đã duyệt, không thêm không bớt"
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    verify_manifest(manifest, written)
+    assert manifest["files"] == hash_files(files)[0] and manifest["files_hash"] == approved_run.files_hash
+    assert (manifest["run_id"], manifest["version"]) == (READY_RUN_ID, approved_run.version)
+    assert manifest["model_name"] == "fct_daily_orders" and manifest["reviewer"] == approved_run.approval.reviewer
+    stored = (await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")).json()
+    assert stored["status"] == "APPROVED" and stored["stage_reached"] == "deploy"
+    assert not (tmp_path / "dagster_local").exists(), "backend không tự cài lên Dagster"
+
+    again = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert again.status_code == 200 and _bundles(direct_mode) == [name], "bấm Deploy lại không ghi bundle thứ hai"
+
+
+@pytest.mark.asyncio
+async def test_direct_deploy_keeps_role_signature_and_files_checks(
+    client, logged_in, approved_run, direct_mode, store_path
+):
+    from src.run_report.store import get_run_files, save_run_files
+
+    files = get_run_files(store_path, READY_RUN_ID, approved_run.version)
+    save_run_files(store_path, READY_RUN_ID, approved_run.version, {**files, next(iter(files)): "-- sửa\n"})
+    tampered = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+    assert tampered.status_code == 409 and "files_hash" in tampered.json()["detail"]
+    save_run_files(store_path, READY_RUN_ID, approved_run.version, files)
+
+    corrupted = approved_run.model_copy(
+        update={"approval": approved_run.approval.model_copy(update={"files_hash": "sha256:" + "0" * 64})}
+    )
+    save_run_report(store_path, corrupted)
+    signature = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+    assert signature.status_code == 409 and "Chữ ký duyệt" in signature.json()["detail"]
+    save_run_report(store_path, approved_run)
+
+    await client.delete("/api/v1/pipeline/session")
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+    engineer = await client.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+    assert engineer.status_code == 403
+    assert _bundles(direct_mode) == [], "không qua kiểm tra thì không ghi bundle"
+
+
+@pytest.mark.asyncio
+async def test_direct_deploy_requires_approved_status(logged_in, generated_run, direct_mode):
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 409 and "READY_FOR_REVIEW" in response.json()["detail"]
+    assert _bundles(direct_mode) == []
+
+
+@pytest.mark.asyncio
+async def test_direct_deploy_claims_model_name_before_writing_bundle(
+    logged_in, approved_run, direct_mode, store_path, monkeypatch
+):
+    import importlib
+    import shutil
+    from pathlib import Path
+
+    from src.run_report.access import model_owner
+
+    router = importlib.import_module("src.run_report.router")  # gói src.run_report cũng có thuộc tính `router`
+
+    claimed = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+    assert claimed.status_code == 200 and model_owner(store_path, "fct_daily_orders") is not None
+
+    monkeypatch.setattr(router, "claim_model", lambda *_args: "fct_daily_orders")
+    shutil.rmtree(Path(direct_mode.release_dir) / "inbox")
+
+    taken = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert taken.status_code == 409
+    assert taken.json()["detail"] == "Tên pipeline fct_daily_orders đã có người dùng khác dùng, hãy đổi tên model."
+    assert _bundles(direct_mode) == []
+
+
+@pytest.mark.asyncio
+async def test_direct_deploy_disk_error_keeps_approved_and_records_error(
+    logged_in, approved_run, direct_mode, monkeypatch
+):
+    import importlib
+
+    router = importlib.import_module("src.run_report.router")
+
+    def full_disk(*_args):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(router, "write_bundle", full_disk)
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 503 and "hộp thư release" in response.json()["detail"]
+    stored = (await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")).json()
+    assert stored["status"] == "APPROVED" and stored["error_trace"][-1]["stage"] == "deploy"
+
+
+@pytest.mark.asyncio
+async def test_direct_deploy_end_to_end_with_deployer_callback(logged_in, approved_run, direct_mode, monkeypatch):
+    """Deploy ghi bundle → deployer cài → callback ký HMAC (không có commit_sha) → DEPLOYED, không cần merge."""
+    import asyncio
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    from src.api import webhooks
+    from src.deployer import install, service
+
+    assert (await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")).status_code == 200
+    installed = []
+
+    def fake_install(model, files, deploy_dir, verify):
+        installed.append((model, sorted(files)))
+        return Path(deploy_dir) / model
+
+    monkeypatch.setattr(install, "install_project", fake_install)
+    secret = "khoa-callback-e2e-7f3a9c1d"
+    app.dependency_overrides[webhooks.deployer_settings] = lambda: webhooks.DeployerSettings(secret=SecretStr(secret))
+    config = service.Config(
+        repo_url="",
+        secret=secret,
+        deploy_dir=str(Path(direct_mode.release_dir).parent / "deploy"),
+        state_dir=str(Path(direct_mode.release_dir).parent / "deployer"),
+        release_dir=direct_mode.release_dir,
+    )
+    backend = TestClient(app)  # không chạy lifespan: chỉ cần route callback
+
+    def post(url, body, headers):
+        return backend.post(url.removeprefix(config.backend_url), content=body, headers=headers).status_code
+
+    try:
+        summary = await asyncio.to_thread(service.run_once, config, post=post, sleep=lambda _s: None)
+    finally:
+        app.dependency_overrides.pop(webhooks.deployer_settings, None)
+
+    assert summary["pending"] == 0 and installed and installed[0][0] == "fct_daily_orders"
+    assert _bundles(direct_mode) == [] and _bundles(direct_mode, "done") == [f"{READY_RUN_ID}-v{approved_run.version}"]
+    stored = (await logged_in.get(f"/api/v1/runs/{READY_RUN_ID}")).json()
+    assert stored["status"] == "DEPLOYED" and stored["stage_reached"] == "deploy"
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +29,12 @@ class PipelineSettings(BaseSettings):
     # deploy mở pull request vào repo pipeline, cấu hình PIPELINE_GITHUB_* nằm riêng ở src/codegen/github.py để token
     # không đi theo PipelineSettings vào agent và sandbox.
     deploy_dir: str = "data/dagster_local"
+    # Cách nút Deploy đưa bản đã duyệt lên production (ADR D6). direct: ghi bundle bất biến vào hộp thư release
+    # (<release_dir>/inbox), service deployer cài thẳng, không cần GitHub. pr: mở pull request vào repo pipeline, cài
+    # sau khi có người merge.
+    deploy_mode: Literal["direct", "pr"] = "direct"
+    # Hộp thư release dùng chung với deployer: backend chỉ ghi inbox/, deployer chuyển bundle sang done/ / rejected/.
+    release_dir: str = "data/releases"
     # Dagster local (make dagster): trang dataset đọc trạng thái run qua GraphQL ở đây.
     dagster_url: str = "http://127.0.0.1:3070"
     # Warehouse DuckDB mà Dagster local ghi bronze / staging / gold (scripts/dagster_local.py).

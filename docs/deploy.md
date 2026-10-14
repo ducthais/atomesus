@@ -190,9 +190,22 @@ link-local, reserved, multicast và service nội bộ (`postgres`, `backend`, `
 `caddy`) bị chặn. `PIPELINE_CONNECTION_ALLOW_PRIVATE=1` chỉ có hiệu lực ở `development`/`test`; staging/production
 luôn bỏ qua biến này. Sổ kết nối này chưa bao gồm chọn schema/bảng hoặc chạy pipeline bằng `conn:<id>`.
 
-## 6. Bật deployer: đưa pipeline đã merge lên Dagster production
+## 6. Bật deployer: đưa pipeline đã duyệt lên Dagster production
 
-Pipeline chỉ lên Dagster production qua repo pipeline (SPEC §9.5): Reviewer bấm Deploy → backend mở pull request → CI
+**Chế độ Deploy** (`PIPELINE_DEPLOY_MODE`, ADR D6; compose truyền cùng giá trị cho `backend` và `deployer`):
+
+- `direct` (mặc định): Reviewer bấm Deploy → backend giữ mọi kiểm tra (quyền, chữ ký duyệt khớp `files_hash`, giữ tên
+  model) rồi ghi bundle bất biến `data/releases/inbox/<run_id>-v<version>/` (đúng 4 + N file đã duyệt và
+  `manifest.json`, ghi vào thư mục tạm rồi rename). Run giữ `APPROVED`, `stage_reached=deploy` tới khi deployer báo.
+  Mỗi chu kỳ deployer kiểm manifest và sha256 từng file, cài + chạy thử như dưới đây, báo callback (không có
+  `commit_sha`) rồi chuyển bundle sang `done/`; bundle sai (bị sửa, thiếu/thừa file) báo `failed` → `DEPLOY_FAILED`
+  và chuyển sang `rejected/`. Không cần GitHub token, repo pipeline, deploy key hay `DEPLOYER_REPO_URL`; chỉ cần
+  `PIPELINE_DEPLOYER_SECRET` (bước 2). Backend chỉ ghi `inbox/`. Nếu `data/releases` chưa có, tạo trước khi
+  `up -d` để thư mục thuộc uid 1000: `mkdir -p ~/atomesus/data/releases` (Docker tự tạo thì thuộc root, deployer
+  không chuyển được bundle; sửa bằng `sudo chown -R 1000:1000 ~/atomesus/data/releases`).
+- `pr`: luồng repo pipeline bên dưới (bước 1–2 đầy đủ).
+
+Ở chế độ `pr`, pipeline chỉ lên Dagster production qua repo pipeline (SPEC §9.5): Reviewer bấm Deploy → backend mở pull request → CI
 kiểm manifest → người có quyền merge → service `deployer` trên VM kéo nhánh mặc định (mặc định mỗi 60 giây), kiểm
 manifest lần nữa, cài vào volume `dagster_code` (nguyên tử, giữ bản trước tới khi xác nhận xong). Deployer ghi mốc thời
 gian ngay trước khi thay thư mục pipeline, rồi hỏi GraphQL `workspaceOrError`: chỉ khi location có `loadStatus=LOADED`,
@@ -251,7 +264,8 @@ Repo pipeline → **Settings → Deploy keys → Add deploy key**: dán nội du
 
 | Biến | Giá trị |
 |---|---|
-| `DEPLOYER_REPO_URL` | URL SSH repo pipeline, vd. `git@github.com:<owner>/atomesus-pipelines.git` |
+| `PIPELINE_DEPLOY_MODE` | tùy chọn, `direct` (mặc định, cài từ hộp thư release) hoặc `pr` (cài từ repo pipeline sau merge) |
+| `DEPLOYER_REPO_URL` | chỉ chế độ `pr`: URL SSH repo pipeline, vd. `git@github.com:<owner>/atomesus-pipelines.git` |
 | `PIPELINE_DEPLOYER_SECRET` | `openssl rand -hex 32`; backend đọc cùng biến này từ `.env` để kiểm chữ ký callback |
 | `DEPLOYER_INTERVAL_SEC` | tùy chọn, chu kỳ kéo repo (mặc định `60`, tối thiểu `5`) |
 | `DEPLOYER_DAGSTER_URL` | tùy chọn, URL GraphQL nội bộ của Dagster, mặc định `http://dagster:3070` (deployer thêm `/graphql`) |
@@ -260,7 +274,8 @@ Repo pipeline → **Settings → Deploy keys → Add deploy key**: dán nội du
 | `DEPLOYER_KNOWN_HOSTS` | tùy chọn cho Git host khác: đường dẫn **trong container**, vd. `/run/secrets/deployer/known_hosts`; đặt file khóa host đã xác minh vào `DEPLOYER_SSH_DIR`. Mặc định dùng khóa GitHub ghim trong image. |
 
 Compose đặt `DEPLOYER_SSH_KEY=/run/secrets/deployer/deploy_key`, `DEPLOYER_STATE_DIR=/app/state`,
-`PIPELINE_DEPLOY_DIR=/app/data/dagster_local` và `DEPLOYER_BACKEND_URL=http://backend:8000`. Khi chạy script ngoài
+`PIPELINE_DEPLOY_DIR=/app/data/dagster_local`, `PIPELINE_RELEASE_DIR=/app/data/releases` (cả backend) và
+`DEPLOYER_BACKEND_URL=http://backend:8000`. Khi chạy script ngoài
 Compose có thể cấu hình các biến này; khóa SSH luôn đọc từ file, không truyền nội dung khóa trong dòng lệnh.
 
 Deployer không ghi URL repo, khóa hay secret ra log.

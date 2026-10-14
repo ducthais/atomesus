@@ -39,7 +39,8 @@ def store_path(tmp_path):
     """Sổ bằng chứng tạm nạp RunReport mẫu; secret giả; agent của vòng P4 dùng LLM và sandbox giả."""
     from tests.test_agents.test_graph import SPEC, FakeLLM, deps
 
-    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+    # Webhook GitHub chỉ có ở chế độ deploy pr.
+    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"), deploy_mode="pr")
     for path in FIXTURES_DIR.glob("*.json"):
         save_run_report(config.store_path, RunReport.model_validate_json(path.read_text(encoding="utf-8")))
     llm = FakeLLM(SPEC)
