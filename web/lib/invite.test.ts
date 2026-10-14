@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { INVITE_GONE, INVITE_INVALID, INVITE_SESSION, inviteErrorMessage, inviteTokenFromPath, inviteUrl, inviteView, isInviteToken, reviewerAccount, safeNext } from './invite.ts';
 import { LINKED_REVIEWERS } from './catalog/mock.ts';
 
-const TOKEN = 'Abc_def-1234567890XYZabc_def-1234567890XYZ'; // dạng secrets.token_urlsafe(32)
+const TOKEN = `test-invite-token-${'x'.repeat(24)}`; // token giả, cùng bảng ký tự với secrets.token_urlsafe
 
 test('lời mời: token hợp lệ đúng dạng token_urlsafe 16–128 ký tự', () => {
   assert.equal(isInviteToken(TOKEN), true);
