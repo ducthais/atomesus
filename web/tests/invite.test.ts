@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INVITE_GONE, INVITE_INVALID, INVITE_SESSION, inviteErrorMessage, inviteTokenFromPath, inviteUrl, inviteView, isInviteToken, reviewerAccount, safeNext } from './invite.ts';
-import { LINKED_REVIEWERS } from './catalog/mock.ts';
+import { INVITE_GONE, INVITE_INVALID, INVITE_SESSION, inviteErrorMessage, inviteTokenFromPath, inviteUrl, inviteView, isInviteToken, reviewerAccount, safeNext } from '../lib/invite.ts';
+import { LINKED_REVIEWERS } from '../lib/catalog/mock.ts';
 
 const TOKEN = `test-invite-token-${'x'.repeat(24)}`; // token giả, cùng bảng ký tự với secrets.token_urlsafe
 
