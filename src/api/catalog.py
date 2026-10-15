@@ -202,7 +202,7 @@ def reconcile_deployed(
         raise HTTPException(404, f"Không có pipeline đã duyệt nào tạo gold.{model} trong domain {domain}.")
     base = {"run_id": report.run_id, "model": model, "checked_at": datetime.now(UTC).isoformat()}
     try:
-        with duckdb.connect(config.warehouse_path, read_only=True) as db:
+        with duckdb.connect(config.warehouse_for(model), read_only=True) as db:
             gold = reference.read_gold(db, model)
     except duckdb.CatalogException:
         return {

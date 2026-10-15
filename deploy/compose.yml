@@ -12,12 +12,11 @@ x-build: &build
   context: ..
   dockerfile: Dockerfile
 
+# Không đặt env_file ở đây (lỗi N1): chỉ backend đọc ../.env (OpenAI key, token GitHub, mật khẩu…). Dagster và mock
+# API chỉ nhận đúng biến mình cần, khai báo ở `environment` của từng service.
 x-app: &app
   build: *build
   image: atomesus-app
-  env_file: ../.env
-  volumes:
-    - ../data:/app/data
   restart: unless-stopped
 
 services:
@@ -41,7 +40,7 @@ services:
   mock-api:
     <<: *app
     command: ["uvicorn", "infra.mock_api.app:app", "--host", "0.0.0.0", "--port", "8100"]
-    volumes: []
+    # Dữ liệu cố định trong image, không cần biến môi trường nào, không mount data/.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/sales/openapi.json')"]
       interval: 30s
@@ -50,6 +49,7 @@ services:
 
   backend:
     <<: *app
+    env_file: ../.env
     environment:
       # direct (mặc định): Deploy ghi bundle vào ../data/releases/inbox, deployer cài; pr: mở pull request (mục 6).
       PIPELINE_DEPLOY_MODE: ${PIPELINE_DEPLOY_MODE:-direct}
@@ -66,12 +66,23 @@ services:
   dagster:
     <<: *app
     command: ["python", "scripts/dagster_local.py"]
+    # Không đọc ../.env (lỗi N1): không có OPENAI_API_KEY, PIPELINE_GITHUB_*, secret của deployer hay mật khẩu đăng
+    # nhập. Chỉ các biến scripts/dagster_local.py cần để chạy pipeline và vòng Day 2 (collect, tất định). Tiến trình
+    # Dagster con còn nhận ít hơn nữa: không có PIPELINE_CONNECTION_KEY (xem child_env trong dagster_local.py).
     environment:
+      APP_ENV: ${APP_ENV:-staging}
       DAGSTER_HOST: 0.0.0.0
       DAGSTER_PORT: "3070"
       DAGSTER_CODE_READONLY: "1"
-      PIPELINE_CONNECTION_KEY: ${PIPELINE_CONNECTION_KEY:-}
+      PIPELINE_CONNECTION_KEY: ${PIPELINE_CONNECTION_KEY:-}  # giải mã kết nối Postgres người dùng đã lưu
+      PIPELINE_DATABASE_URL: ${PIPELINE_DATABASE_URL:?Set PIPELINE_DATABASE_URL}  # tài khoản chỉ đọc pipeline_reader
+      PIPELINE_MOCK_API_URL: ${PIPELINE_MOCK_API_URL:-http://mock-api:8100}
+      PIPELINE_WAREHOUSE_TIMEZONE: ${PIPELINE_WAREHOUSE_TIMEZONE:-UTC}
+      PIPELINE_AZURE_STORAGE_CONNECTION_STRING: ${PIPELINE_AZURE_STORAGE_CONNECTION_STRING:-}  # ước tính chi phí
+      PIPELINE_AZURE_STORAGE_CONTAINER: ${PIPELINE_AZURE_STORAGE_CONTAINER:-}
+      DAGSTER_MAX_CONCURRENT_RUNS: ${DAGSTER_MAX_CONCURRENT_RUNS:-1}
     volumes:
+      # Đọc-ghi: lịch sử Dagster, warehouse từng pipeline, và runs.sqlite3 (vòng Day 2 ghi số đo, cảnh báo).
       - ../data:/app/data
       # Chỉ deployer ghi; workspace.yaml đổi thì Dagster tự khởi động lại. Kết quả dbt từng lần chạy ghi vào
       # data/dagster_home/dbt_target (scripts/dagster_local.py), không ghi vào code location.

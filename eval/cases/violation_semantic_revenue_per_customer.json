@@ -5,5 +5,5 @@
   "request": "Tổng tiền mỗi khách đã chi trong tháng",
   "sources": null,
   "expected": { "status": "BLOCKED_SEMANTIC_CONFLICT" },
-  "note": "bí danh \"khách\" trỏ tới customer ở ba domain với ba định nghĩa khác nhau"
+  "note": "bí danh \"khách\" trỏ tới customer ở marketing và rental với hai định nghĩa khác nhau (sales ẩn, không tính)"
 }

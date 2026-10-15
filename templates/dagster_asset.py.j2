@@ -4,6 +4,7 @@
 [%- set name = model_name -%]
 """Dagster code location cho pipeline [[ name ]]. Sinh tự động từ Spec, không sửa tay."""
 
+import os
 from pathlib import Path
 
 from dagster import (
@@ -20,6 +21,12 @@ from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
 from ingestion.[[ name ]]_pipeline import pipeline, source
+
+# File DuckDB riêng của pipeline này (<WAREHOUSE_DIR>/[[ name ]].duckdb): dlt (bronze) và dbt (staging, gold) cùng ghi
+# vào đó, pipeline khác chạy cùng lúc không tranh khóa file. Dagster nạp mỗi code location và chạy mỗi run trong tiến
+# trình riêng, nên biến đặt ở đây chỉ áp cho pipeline này. Không có WAREHOUSE_DIR thì dùng WAREHOUSE_PATH như cũ.
+if os.environ.get("WAREHOUSE_DIR"):
+    os.environ["WAREHOUSE_PATH"] = str(Path(os.environ["WAREHOUSE_DIR"]) / [[ (name ~ ".duckdb") | pystr ]])
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DBT_PROJECT = DbtProject(project_dir=REPO_ROOT / "dbt_project", profiles_dir=REPO_ROOT / "dbt_project")
