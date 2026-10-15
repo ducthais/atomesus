@@ -12,7 +12,7 @@ class PipelineSettings(BaseSettings):
     connection_key: SecretStr = SecretStr("")
     # Chỉ cho phép nguồn nội bộ ở development/test; staging/production luôn chặn.
     connection_allow_private: bool = False
-    # Tài khoản local/demo. Production vẫn chặn đăng nhập này trong auth.demo_only.
+    # Tài khoản cài sẵn. Staging/production chỉ cho đăng nhập sau khi đổi khỏi các mật khẩu mặc định bên dưới.
     engineer_password: SecretStr = SecretStr("Engineer@123")
     reviewer_password: SecretStr = SecretStr("Reviewer@123")
     admin_password: SecretStr = SecretStr("Admin@123")

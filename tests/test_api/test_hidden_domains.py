@@ -9,9 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from src.api.routes import for_new_runs
+from src.main import app
 from src.pipeline import auth
 from src.pipeline.settings import PipelineSettings
 from src.policy import Policy, load_policy, without_hidden
+from src.run_report import FIXTURES_DIR, RunReport, save_run_report
 from src.run_report.access import policy_for
 from tests.test_agents.test_graph import deps, tiered_llm
 
@@ -91,3 +93,33 @@ async def test_new_run_batch_and_chat_reject_hidden_sources(engineer, path, body
 
     assert response.status_code == 422, response.text
     assert "'sales_pg' không có trong domains.yml" in response.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_clean_api_also_rejects_new_sales_runs(engineer):
+    await engineer.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+
+    response = await engineer.post(
+        "/api/v1/pipeline/runs",
+        json={"title": "Làm sạch đơn hàng", "columns": [{"from": "id", "as": "id", "type": "bigint"}]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Nguồn sales đã ngừng nhận thao tác mới; lịch sử run vẫn có thể xem."
+
+
+@pytest.mark.asyncio
+async def test_hidden_sales_run_remains_visible_in_history(engineer):
+    config = app.dependency_overrides[auth.settings]()
+    report = RunReport.model_validate_json(
+        (FIXTURES_DIR / "ready_for_review.json").read_text(encoding="utf-8")
+    ).model_copy(update={"run_id": "historical-sales-run", "created_by": "minh"})
+    save_run_report(config.store_path, report)
+    await engineer.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+
+    listing = await engineer.get("/api/v1/runs")
+    detail = await engineer.get("/api/v1/runs/historical-sales-run")
+
+    assert listing.status_code == 200
+    assert "historical-sales-run" in {item["run_id"] for item in listing.json()}
+    assert detail.status_code == 200 and detail.json()["domain"] == "sales"

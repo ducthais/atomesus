@@ -18,7 +18,7 @@ export type ExportFormat = 'csv' | 'xlsx';
 
 /** Lý do tải không được, theo mã lỗi backend (route tải chuyển về trang với `?export=<mã>`); không nhận chữ tùy ý từ URL. */
 export const EXPORT_ERROR: Record<string, string> = {
-  '413': 'Bảng có nhiều dòng hơn trần được tải (results.max_export_rows trong policy/budgets.yml). Vẫn xem được từng trang ở đây.',
+  '413': 'Bảng có nhiều dòng hơn hạn mức tải xuống. Bạn vẫn có thể xem từng trang ở đây.',
   '503': 'Pipeline đang chạy, thử lại sau ít phút.',
   '404': 'Không có kết quả này hoặc bạn không được xem.',
   '501': 'Chế độ mock chỉ tạo được file CSV.',

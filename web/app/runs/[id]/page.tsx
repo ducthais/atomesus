@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { BookOpen, CircleAlert, GitBranch, ListPlus, RotateCcw, Sparkles } from 'lucide-react';
 import { currentUser, getCatalog, getComparison, runFiles, runMessages } from '@/lib/catalog/source';
-import { STAGES, STAGE_IDS, canReview, shortId } from '@/lib/studio';
+import { STAGES, STAGE_IDS, canReview, friendlyTechnicalError, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
 import { RunResultView } from '../../_components/run-result';
 import { MappingEditor } from '../../_components/mapping-editor';
@@ -19,14 +19,14 @@ import { Empty, Facts, LayerBadge, PageHeader, Panel, Person, QualityIcon, Statu
 
 /** Luật áp dụng khi run dừng, để người đọc biết sửa ở đâu. */
 const RULES: Partial<Record<string, string>> = {
-  BLOCKED_AST: 'Cổng ast_guard (src/codegen/guard.py): biểu thức chỉ được dùng cột và hàm cho phép.',
-  BLOCKED_SEMANTIC_CONFLICT: 'policy/domains.yml: thực thể trùng tên ở hai domain, conformed_dimensions chưa công nhận.',
-  BLOCKED_BUDGET: 'policy/budgets.yml: per_run.max_bytes_scanned, max_usd.',
-  NEEDS_HUMAN: 'policy/budgets.yml (max_spec_attempts, max_llm_calls), objectives.yml (quality.max_reject_pct), hoặc nguồn chưa hỗ trợ.',
-  INFRA_ERROR: 'Kết nối nguồn hoặc nhà cung cấp LLM. Không phải lỗi của Spec.',
-  INTERNAL_ERROR: 'Lỗi của hệ thống (template/sandbox), không phải lỗi agent.',
+  BLOCKED_AST: 'Biểu thức chỉ được dùng các cột và hàm an toàn mà hệ thống cho phép.',
+  BLOCKED_SEMANTIC_CONFLICT: 'Hai miền dữ liệu đang dùng cùng một khái niệm nhưng chưa có định nghĩa chung.',
+  BLOCKED_BUDGET: 'Run vượt giới hạn dữ liệu hoặc chi phí đang được áp dụng.',
+  NEEDS_HUMAN: 'Run cần bạn kiểm tra mapping, chất lượng dữ liệu hoặc bổ sung nguồn trước khi tiếp tục.',
+  INFRA_ERROR: 'Không kết nối được nguồn dữ liệu hoặc dịch vụ xử lý. Bạn có thể thử lại sau.',
+  INTERNAL_ERROR: 'Hệ thống gặp lỗi khi tạo hoặc chạy pipeline. Bằng chứng đã có vẫn được giữ lại.',
 };
-const RECONCILE_RULE = 'kết quả chạy thử phải khớp phép tính lại thẳng trên nguồn (metric_reconcile, src/codegen/reference.py); lệch thì không chuyển cho Reviewer.';
+const RECONCILE_RULE = 'Kết quả chạy thử phải khớp với phép tính độc lập trên nguồn; nếu lệch, run chưa thể chuyển cho Reviewer.';
 const LEVEL_LABEL = { info: 'Thông tin', success: 'Đạt', warning: 'Cảnh báo', error: 'Lỗi' } as const;
 
 export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; base?: string; batch?: string; estimated?: string }> }) {
@@ -74,6 +74,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const eligible = canReview(run, user.role, user.id);
   const reviewReason = eligible ? 'Duyệt chỉ ghi chữ ký cho đúng bộ file này. Sau đó bấm Deploy để mở pull request.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
   const blocked = statusTone(run.status) === 'bad';
+  const displayError = run.error ? friendlyTechnicalError(run.error) : null;
   const canCancel = user.role === 'Engineer' && user.id === run.owner && ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'].includes(run.status);
   const canOptimize = user.role === 'Engineer' && run.status === 'DEPLOYED' && run.plan.model !== '—';
   const limits = policy.limits;
@@ -89,7 +90,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
 
     {Number.isInteger(batchCount) && batchCount >= 2 && <div className="callout good"><ListPlus size={16} aria-hidden /><span>Đã tạo trọn mẻ {batchCount} pipeline{Number.isFinite(batchUsd) ? ` · giữ chỗ ước tính $${batchUsd.toFixed(4)}` : ''}. Đây là run đầu tiên.</span></div>}
 
-    {blocked && run.error && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>{run.status === 'DEPLOY_FAILED' ? 'Triển khai lỗi' : `Run dừng ở “${STAGES[run.stage]}”`}</strong><p>{run.error}</p>{(run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Luật áp dụng: {run.error.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
+    {blocked && displayError && <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>{run.status === 'DEPLOY_FAILED' ? 'Triển khai lỗi' : `Run dừng ở “${STAGES[run.stage]}”`}</strong><p>{displayError}</p>{(run.error?.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]) && <p className="muted small">Hướng xử lý: {run.error?.startsWith('Đối chiếu độc lập') ? RECONCILE_RULE : RULES[run.status]}</p>}</div></div>}
     {run.status === 'CANCELLED' && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>Run đã được Engineer hủy ở phase “{STAGES[run.stage]}”. Bằng chứng đã ghi trước đó vẫn được giữ lại.</span></div>}
     {run.status === 'NO_IMPROVEMENT' && <div className="callout warn"><Sparkles size={16} aria-hidden /><div><strong>Không có bản tốt hơn</strong><p>{run.optimization?.verdict?.reason ?? 'Bản đề xuất không cải thiện pipeline đang chạy nên không được chuyển sang hàng đợi duyệt.'}</p></div></div>}
 

@@ -223,6 +223,12 @@ Nếu xóa thư mục mới lỗi, deployer cách ly nó ở tên `.tmp-…`, v�
 báo lỗi kèm nguyên nhân chạy thử. Deployer ghi lại `workspace.yaml` để Dagster nạp bản khôi phục, rồi báo `failed` với lý
 do ngắn. Callback (`POST /api/v1/deployments/callback`, ký HMAC) chuyển run sang `DEPLOYED` / `DEPLOY_FAILED`.
 
+Hợp đồng callback giữa deployer và backend dùng hai header: `X-Atomesus-Timestamp` là Unix time theo giây và
+`X-Atomesus-Signature` là `sha256=<hex HMAC-SHA256>`. Dữ liệu ký chính xác là
+`<timestamp ASCII>.<raw request body>` với khóa `PIPELINE_DEPLOYER_SECRET`. Backend chỉ nhận timestamp lệch tối đa 5 phút
+so với đồng hồ của backend; deployer tạo timestamp và chữ ký mới khi báo lại ở chu kỳ sau. Vì vậy hai máy/container phải
+đồng bộ giờ, và thay timestamp mà không ký lại sẽ bị từ chối `401`.
+
 CI đỏ đến sau khi PR đã merge chỉ ghi kết quả CI, không đưa run về P4: code đã ở nhánh mặc định, trạng thái production
 do callback deployer quyết định. Rollback khôi phục code; dữ liệu mà lần chạy thử đã ghi vào warehouse không được
 hoàn tác. Khi quá hạn hoặc mất phản hồi sau launch, deployer yêu cầu hủy run (tối đa thêm 3 giây cho yêu cầu dọn dẹp);

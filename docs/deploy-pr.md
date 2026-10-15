@@ -128,7 +128,8 @@ PIPELINE_GITHUB_WEBHOOK_SECRET=<secret-webhook-ngau-nhien>
 PIPELINE_DEPLOYER_SECRET=<secret-callback-ngau-nhien-khac-webhook>
 ```
 
-Deployer dùng cùng `PIPELINE_DEPLOYER_SECRET` để ký HMAC callback, URL callback nội bộ
+Deployer dùng cùng `PIPELINE_DEPLOYER_SECRET` để ký HMAC callback trên chuỗi
+`<X-Atomesus-Timestamp>.<raw body>`; backend chỉ nhận timestamp lệch tối đa 5 phút. URL callback nội bộ
 `http://backend:8000/api/v1/deployments/callback`, repo SSH và nhánh `main`. Tên biến cho đường dẫn SSH,
 clone dir, callback URL theo cấu hình service deployer được triển khai ở task DEPLOYER-PROD; bộ khung này không
 tự tạo service hoặc tự bật webhook. Backend production phải giữ các cổng an toàn `APP_ENV` và xác thực thật.

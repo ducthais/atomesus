@@ -5,6 +5,7 @@ RunReport nằm cùng file SQLite nhưng do `src.run_report.store` quản lý.
 
 import json
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -20,80 +21,117 @@ class UploadQuotaError(Exception):
     pass
 
 
+_SCHEMA_LOCK = threading.Lock()
+_INITIALIZED_DATABASES: dict[str, tuple[int, int]] = {}
+
+
+def _database_identity(path: str) -> tuple[str, tuple[int, int] | None]:
+    """Return a stable cache key and file identity; in-memory databases cannot share schema state."""
+    if path == ":memory:":
+        return path, None
+    resolved = Path(path).resolve()
+    stat = resolved.stat()
+    return str(resolved), (stat.st_dev, stat.st_ino)
+
+
+def _initialize_schema(conn: sqlite3.Connection) -> None:
+    """Create and migrate the authentication/source schema once for a database file."""
+    with conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT, expires REAL)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS users ("
+            " id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE,"
+            " name TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('Engineer', 'Reviewer')),"
+            " password_hash TEXT NOT NULL, created_at REAL NOT NULL, email TEXT COLLATE NOCASE)"
+        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        if "email" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT COLLATE NOCASE")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS pending_registrations ("
+            " email TEXT PRIMARY KEY COLLATE NOCASE, username TEXT NOT NULL COLLATE NOCASE,"
+            " name TEXT NOT NULL, password_hash TEXT NOT NULL, verification_hash TEXT NOT NULL,"
+            " expires REAL NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)"
+        )
+        pending_columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_registrations)")}
+        if "invite_hash" not in pending_columns:
+            # Đăng ký qua link mời: hash token mời, tài khoản tạo ra là Reviewer (xem api.verify_registration).
+            conn.execute("ALTER TABLE pending_registrations ADD COLUMN invite_hash TEXT")
+        # Engineer ↔ Reviewer đã liên kết (nhiều-nhiều, ADR-0001 D1). Cặp demo minh ↔ an không ghi ở đây.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS reviewer_links ("
+            " engineer_id TEXT NOT NULL, reviewer_id TEXT NOT NULL, created_at REAL NOT NULL,"
+            " PRIMARY KEY (engineer_id, reviewer_id))"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS reviewer_links_reviewer ON reviewer_links(reviewer_id)")
+        # Lời mời Reviewer: chỉ lưu sha256 của token, dùng một lần, ghi người đã dùng.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS reviewer_invites ("
+            " token_hash TEXT PRIMARY KEY, engineer_id TEXT NOT NULL, created_at REAL NOT NULL,"
+            " expires REAL NOT NULL, used_by TEXT, used_at REAL)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS reviewer_invites_engineer ON reviewer_invites(engineer_id)")
+        # Chủ của mỗi tên model (job Dagster, bảng gold dùng chung tên): giữ trước khi deploy, khóa chính chặn hai
+        # chủ cùng giữ một tên (xem src.run_report.access.claim_model).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_owners ("
+            " model_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL, claimed_at REAL NOT NULL)"
+        )
+        # Chủ của run hệ thống (Day 2) ghi lúc tạo, để xét quyền đọc thẳng thay vì lần theo chuỗi run gốc (xem
+        # src.run_report.access.record_system_run_owner).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS run_owners ("
+            " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, recorded_at REAL NOT NULL)"
+        )
+        # Lần đăng ký gần nhất của mỗi IP (giới hạn 1 tài khoản / IP / cửa sổ, xem api.register).
+        conn.execute("CREATE TABLE IF NOT EXISTS registration_ips (ip TEXT PRIMARY KEY, at REAL NOT NULL)")
+        # Số lần đăng nhập sai theo IP + username trong một cửa sổ cố định (xem api.login).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS login_failures ("
+            " ip TEXT NOT NULL, username TEXT NOT NULL COLLATE NOCASE, attempts INTEGER NOT NULL,"
+            " first_at REAL NOT NULL, last_at REAL NOT NULL, PRIMARY KEY (ip, username))"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS connections ("
+            " id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, host TEXT NOT NULL,"
+            " port INTEGER NOT NULL, database_name TEXT NOT NULL, database_user TEXT NOT NULL,"
+            " password_encrypted TEXT NOT NULL, sslmode TEXT NOT NULL, created_at REAL NOT NULL)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS connections_owner ON connections(owner_id)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS uploads ("
+            " id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, metadata TEXT NOT NULL,"
+            " size_bytes INTEGER NOT NULL, selected_json TEXT NOT NULL DEFAULT '[]')"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS uploads_owner ON uploads(owner_id)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS connection_selections ("
+            " connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,"
+            " schema_name TEXT NOT NULL, tables_json TEXT NOT NULL)"
+        )
+
+
+def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
+    key, identity = _database_identity(path)
+    with _SCHEMA_LOCK:
+        if identity is not None and _INITIALIZED_DATABASES.get(key) == identity:
+            return
+        conn.execute("PRAGMA journal_mode = WAL")
+        _initialize_schema(conn)
+        if identity is not None:
+            _INITIALIZED_DATABASES[key] = identity
+
+
 @contextmanager
 def database(path: str):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=10)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        _ensure_schema(conn, path)
         with conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT, expires REAL)")
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS users ("
-                " id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE,"
-                " name TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('Engineer', 'Reviewer')),"
-                " password_hash TEXT NOT NULL, created_at REAL NOT NULL, email TEXT COLLATE NOCASE)"
-            )
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
-            if "email" not in columns:
-                conn.execute("ALTER TABLE users ADD COLUMN email TEXT COLLATE NOCASE")
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL")
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS pending_registrations ("
-                " email TEXT PRIMARY KEY COLLATE NOCASE, username TEXT NOT NULL COLLATE NOCASE,"
-                " name TEXT NOT NULL, password_hash TEXT NOT NULL, verification_hash TEXT NOT NULL,"
-                " expires REAL NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)"
-            )
-            pending_columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_registrations)")}
-            if "invite_hash" not in pending_columns:
-                # Đăng ký qua link mời: hash token mời, tài khoản tạo ra là Reviewer (xem api.verify_registration).
-                conn.execute("ALTER TABLE pending_registrations ADD COLUMN invite_hash TEXT")
-            # Engineer ↔ Reviewer đã liên kết (nhiều-nhiều, ADR-0001 D1). Cặp demo minh ↔ an không ghi ở đây.
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS reviewer_links ("
-                " engineer_id TEXT NOT NULL, reviewer_id TEXT NOT NULL, created_at REAL NOT NULL,"
-                " PRIMARY KEY (engineer_id, reviewer_id))"
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS reviewer_links_reviewer ON reviewer_links(reviewer_id)")
-            # Lời mời Reviewer: chỉ lưu sha256 của token, dùng một lần, ghi người đã dùng.
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS reviewer_invites ("
-                " token_hash TEXT PRIMARY KEY, engineer_id TEXT NOT NULL, created_at REAL NOT NULL,"
-                " expires REAL NOT NULL, used_by TEXT, used_at REAL)"
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS reviewer_invites_engineer ON reviewer_invites(engineer_id)")
-            # Chủ của mỗi tên model (job Dagster, bảng gold dùng chung tên): giữ trước khi deploy, khóa chính chặn hai
-            # chủ cùng giữ một tên (xem src.run_report.access.claim_model).
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS model_owners ("
-                " model_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL, claimed_at REAL NOT NULL)"
-            )
-            # Chủ của run hệ thống (Day 2) ghi lúc tạo, để xét quyền đọc thẳng thay vì lần theo chuỗi run gốc (xem
-            # src.run_report.access.record_system_run_owner).
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS run_owners ("
-                " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, recorded_at REAL NOT NULL)"
-            )
-            # Lần đăng ký gần nhất của mỗi IP (giới hạn 1 tài khoản / IP / cửa sổ, xem api.register).
-            conn.execute("CREATE TABLE IF NOT EXISTS registration_ips (ip TEXT PRIMARY KEY, at REAL NOT NULL)")
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS connections ("
-                " id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, host TEXT NOT NULL,"
-                " port INTEGER NOT NULL, database_name TEXT NOT NULL, database_user TEXT NOT NULL,"
-                " password_encrypted TEXT NOT NULL, sslmode TEXT NOT NULL, created_at REAL NOT NULL)"
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS connections_owner ON connections(owner_id)")
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS uploads ("
-                " id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, metadata TEXT NOT NULL,"
-                " size_bytes INTEGER NOT NULL, selected_json TEXT NOT NULL DEFAULT '[]')"
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS uploads_owner ON uploads(owner_id)")
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS connection_selections ("
-                " connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,"
-                " schema_name TEXT NOT NULL, tables_json TEXT NOT NULL)"
-            )
             yield conn
     finally:
         conn.close()
@@ -229,6 +267,57 @@ def release_registration_slot(path: str, ip: str) -> None:
     """Trả lại lượt khi yêu cầu không gửi được mã (lỗi SMTP), để người dùng thử lại ngay."""
     with database(path) as conn:
         conn.execute("DELETE FROM registration_ips WHERE ip = ?", (ip,))
+
+
+def login_retry_after(path: str, ip: str, username: str, limit: int, window: float) -> float:
+    """Trả số giây còn bị khóa của cặp IP + username, hoặc 0 khi vẫn được thử đăng nhập."""
+    now = time.time()
+    with database(path) as conn:
+        conn.execute("DELETE FROM login_failures WHERE first_at <= ?", (now - window,))
+        row = conn.execute(
+            "SELECT attempts, first_at FROM login_failures WHERE ip = ? AND username = ? COLLATE NOCASE",
+            (ip, username),
+        ).fetchone()
+    if row is None or row[0] < limit:
+        return 0.0
+    return max(0.0, row[1] + window - now)
+
+
+def record_login_failure(path: str, ip: str, username: str, limit: int, window: float) -> float:
+    """Ghi một lần đăng nhập sai nguyên tử; trả thời gian khóa khi số lần sai đạt `limit`."""
+    now = time.time()
+    with database(path) as conn:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM login_failures WHERE first_at <= ?", (now - window,))
+        row = conn.execute(
+            "SELECT attempts, first_at FROM login_failures WHERE ip = ? AND username = ? COLLATE NOCASE",
+            (ip, username),
+        ).fetchone()
+        if row is None:
+            attempts, first_at = 1, now
+            conn.execute(
+                "INSERT INTO login_failures (ip, username, attempts, first_at, last_at) VALUES (?, ?, ?, ?, ?)",
+                (ip, username, attempts, first_at, now),
+            )
+        else:
+            attempts, first_at = row[0] + 1, row[1]
+            conn.execute(
+                "UPDATE login_failures SET attempts = ?, last_at = ?"
+                " WHERE ip = ? AND username = ? COLLATE NOCASE",
+                (attempts, now, ip, username),
+            )
+    return max(0.0, first_at + window - now) if attempts >= limit else 0.0
+
+
+def clear_login_failures(path: str, ip: str, username: str) -> None:
+    """Đăng nhập thành công đặt lại hạn mức cho đúng cặp IP + username."""
+    with database(path) as conn:
+        conn.execute(
+            "DELETE FROM login_failures WHERE ip = ? AND username = ? COLLATE NOCASE",
+            (ip, username),
+        )
 
 
 def create_invite(path: str, engineer_id: str, token_hash: str, created_at: float, expires: float, limit: int) -> bool:

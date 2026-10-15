@@ -177,7 +177,7 @@ export async function discoverObjects(ref: string): Promise<Discovery> {
     const uploaded = mockUploadDiscovery(user?.role === 'Engineer' ? await mockUserUploads(user.id) : [], ref);
     if (uploaded) return uploaded;
     const decl = DOMAINS.flatMap(d => d.sources).find(s => s.ref === ref);
-    if (!decl) return { error: `Nguồn '${ref}' không có trong domains.yml.` };
+    if (!decl) return { error: `Nguồn '${ref}' không có trong danh mục nguồn dữ liệu.` };
     if (decl.kind !== 'postgres') return { error: `Chưa có connector cho nguồn ${decl.kind as Platform}.` };
     const objects = DATASETS.filter(d => d.layer === 'source' && d.sourceRef === ref && !d.unavailable).map(d => ({
       name: d.name.split('.').at(-1)!, kind: 'table' as const, columns: d.columns.map(c => ({ name: c.name, type: c.type })),
