@@ -27,7 +27,7 @@ from fastapi import HTTPException
 from src.pipeline import store
 from src.pipeline.auth import DEMO_ENGINEER, DEMO_REVIEWER, USERS
 from src.pipeline.settings import PipelineSettings
-from src.policy import effective_policy
+from src.policy import effective_policy, without_hidden
 from src.policy.models import Policy
 from src.run_report.models import RunReport
 from src.run_report.store import get_run_lineage, get_run_report, list_run_lineage, model_deployments
@@ -207,10 +207,18 @@ def claim_model(store_path: str, report: RunReport) -> str | None:
     return None if store.claim_model(store_path, model, holder, time.time()) == holder else model
 
 
-def policy_for(user: dict, config: PipelineSettings) -> Policy:
+def policy_for(user: dict, config: PipelineSettings, include_hidden: bool = False) -> Policy:
     """Chính sách hiệu lực người dùng được xem: Admin thấy domain của mọi người; Engineer thấy domain YAML và domain
     của mình; Reviewer (và vai khác) chỉ thấy thêm domain của các Engineer đã liên kết. Hệ thống xử lý nội bộ vẫn gọi
-    effective_policy(config) không lọc."""
+    effective_policy(config) không lọc.
+
+    Domain `hidden: true` bị bỏ cho các luồng thao tác mới (catalog, chọn nguồn); `include_hidden=True` cho thao tác
+    trên run và pipeline có sẵn (xác nhận kế hoạch, sửa, đối chiếu bản đã deploy), để lịch sử vẫn dùng được."""
+    policy = _policy_for(user, config)
+    return policy if include_hidden else without_hidden(policy)
+
+
+def _policy_for(user: dict, config: PipelineSettings) -> Policy:
     if user["role"] == "Admin":
         return effective_policy(config)
     if user["role"] == "Engineer":

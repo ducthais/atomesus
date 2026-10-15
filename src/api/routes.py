@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,7 +21,7 @@ from src.codegen.sandbox import SUPPORTED_KINDS
 from src.pipeline.auth import current_user, settings
 from src.pipeline.postgres import SourceUnavailableError
 from src.pipeline.settings import PipelineSettings
-from src.policy import PolicyError
+from src.policy import PolicyError, without_hidden
 from src.run_report import RunReport
 from src.run_report.access import policy_for, viewable_run
 from src.run_report.quota import claim_runs, release_runs
@@ -75,7 +76,9 @@ def agent_deps(config: PipelineSettings = Depends(settings), user: dict = Depend
     from src.agents import budget
 
     try:
-        policy = policy_for(user, config)
+        # Đủ domain, kể cả domain ẩn: dependency này còn phục vụ thao tác trên run có sẵn (xác nhận, chạy tiếp).
+        # Tạo run mới thì thu hẹp bằng for_new_runs.
+        policy = policy_for(user, config, include_hidden=True)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
     return AgentDeps(
@@ -85,6 +88,11 @@ def agent_deps(config: PipelineSettings = Depends(settings), user: dict = Depend
         cancelled=lambda run_id: is_run_cancelled(config.store_path, run_id),
         reserve_daily=budget.reserve_daily,
     )
+
+
+def for_new_runs(deps: AgentDeps) -> AgentDeps:
+    """Run mới không thấy domain ẩn: planner, cổng semantic và kiểm nguồn đều dùng chính sách đã bỏ chúng."""
+    return replace(deps, policy=without_hidden(deps.policy))
 
 
 def _checked_sources(body: AgentRunRequest, user: dict, deps: AgentDeps) -> list[dict] | None:
@@ -127,6 +135,7 @@ def create_agent_run(
     Trả ngay run ở trạng thái GENERATING; lập kế hoạch chạy nền, tiến độ đọc lại qua GET /runs/{run_id}.
     Hết lượt run trong ngày (budgets.yml per_user.max_runs_per_day) → 429, không gọi LLM.
     """
+    deps = for_new_runs(deps)
     sources = _checked_sources(body, user, deps)
     _checked_parent(body, user, config.store_path)
     [run_id] = claim_runs(config.store_path, user, deps.policy.budgets)
@@ -166,6 +175,7 @@ def create_agent_run_batch(
     from src.agents import budget
     from src.run_report.store import rollback_batch_start
 
+    deps = for_new_runs(deps)
     count = len(body.requests)
     estimate = budget.estimate_batch(count, deps.policy, config, user["id"])
     if count > estimate["max_batch_runs"]:

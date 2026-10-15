@@ -176,6 +176,7 @@ def test_snapshot_reads_a_selected_table(runtime):
     snapshot = resolve.snapshot(plan, policy, runtime.config)["orders"]
     assert snapshot["columns"] == SALES_COLUMNS["orders"]
     assert len(snapshot["sample_rows"]) == 2
+    assert snapshot["primary_key"] == ["order_id"], "khóa chính thật, đọc trên cùng kết nối"
     runtime.opened.assert_called_once()
 
 

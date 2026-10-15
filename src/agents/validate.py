@@ -2,7 +2,8 @@
 
 - `spec_schema`: đúng hợp đồng `Spec` và chính sách `policy/*.yml`.
 - `schema_real`: mọi cột Spec dùng có thật trong schema đã đọc ở P3; cột chuỗi ép sang ngày phải có
-  `date_formats`; khóa join cùng kiểu sau staging.
+  `date_formats`; khóa join cùng kiểu sau staging; `primary_key` đúng khóa thật của nguồn Postgres / REST API và
+  `staging.dedupe.keys` chứa đủ khóa đó.
 - `currency`: nguồn có cột mã tiền tệ (thấy trong dòng mẫu) thì cột tiền phải khai báo `currency` để quy đổi về tiền
   gốc của domain; quên khai báo thì 1,50 USD bị cộng như 1,50 VND.
 - `join_fanout`: ghép sang bảng phía "nhiều" (khóa ghép không phải khóa chính) làm lặp dòng của các bảng đã ghép
@@ -144,6 +145,31 @@ def _object(source) -> str | None:
     return getattr(source, "table", None)
 
 
+def _primary_key(source, item: dict) -> list[str]:
+    """Khóa chính Spec khai phải đúng khóa thật của nguồn, và dedupe phải giữ đủ các cột khóa đó.
+
+    Chỉ áp cho nguồn có khóa thật: ràng buộc PRIMARY KEY của Postgres, `x-primary-key` của OpenAPI. Khóa của CSV chỉ là
+    gợi ý theo tên cột (src/pipeline/files.py: suggested_key) nên không ép. Khóa sai làm dedupe gộp mất các dòng khác
+    nhau (vd. `rental` khử trùng theo `customer_id` → mỗi khách còn một lượt thuê) mà mọi test dbt vẫn đạt.
+    """
+    real = list(item.get("primary_key") or [])
+    if item.get("kind") not in ("postgres", "rest_api") or not real:
+        return []
+    errors = []
+    if set(source.primary_key) != set(real):
+        errors.append(
+            f"nguồn '{source.id}', primary_key: {source.primary_key} khác khóa chính thật của nguồn {real}; "
+            "chép đúng primary_key từ schema_snapshot, không tự chọn cột khác"
+        )
+    dedupe = source.staging.dedupe
+    if dedupe and dedupe.keys and not set(real) <= set(dedupe.keys):
+        errors.append(
+            f"nguồn '{source.id}', staging.dedupe.keys: {dedupe.keys} thiếu cột khóa chính {real}; khử trùng theo cột "
+            "không duy nhất sẽ gộp mất các dòng khác nhau, đặt keys là khóa chính"
+        )
+    return errors
+
+
 def _schema_real(spec: Spec, snapshot: dict) -> list[str]:
     by_table = {(item["source_ref"], item["table"]): item for item in snapshot.values()}
     errors = []
@@ -172,6 +198,7 @@ def _schema_real(spec: Spec, snapshot: dict) -> list[str]:
                 errors.append(
                     f"nguồn '{source.id}', {where}: cột '{column}' không có ở nguồn; các cột thật: {sorted(columns)}"
                 )
+        errors += _primary_key(source, item)
         for column in source.staging.columns:
             raw_type = columns.get(column.from_)
             if raw_type in TEXT_TYPES and column.type in ("date", "timestamp") and not column.date_formats:

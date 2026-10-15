@@ -49,12 +49,12 @@ async def test_catalog_shows_bench_unavailable_while_other_domains_work(client, 
     response = await client.get("/api/v1/catalog")
     assert response.status_code == 200
     domains = response.json()["domains"]
-    assert {"sales", "marketing", "rental", "bench"} <= set(domains)
+    assert {"marketing", "rental", "bench"} <= set(domains) and "sales" not in domains  # sales ẩn (domains.yml)
     bench = domains["bench"]["sources"]["landing_bench"]
     assert bench["available"] is False and bench["reason"].startswith(BENCH_REASON)
     assert bench["location"] == "infra/landing/bench" and bench["tables"] == {}
     assert domains["bench"]["entities"]["event"]["tables"] == ["landing_bench.events"]
-    assert domains["sales"]["sources"]["sales_pg"]["available"] is True
+    assert domains["rental"]["sources"]["pagila_pg"]["available"] is True
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_source_list_keeps_bench_and_discovery_answers_503(client, no_benc
         "location": "infra/landing/bench",
         "supported": True,
     }
-    assert {"sales_pg", "landing_sales", "pagila_pg"} <= set(sources)
+    assert {"pagila_pg", "review_api", "mkt_api"} <= set(sources) and "sales_pg" not in sources
     objects = await client.get("/api/v1/catalog/sources/landing_bench/objects")
     assert objects.status_code == 503 and objects.json()["detail"].startswith(BENCH_REASON)
 

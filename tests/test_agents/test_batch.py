@@ -44,7 +44,7 @@ def test_batch_reservation_is_all_or_none(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_batch_api_creates_every_run_after_one_budget_preflight(client, tmp_path, monkeypatch):
+async def test_batch_api_creates_every_run_after_one_budget_preflight(client, tmp_path, monkeypatch, sales_visible):
     from src.api import routes
     from src.main import app
 

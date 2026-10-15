@@ -17,10 +17,13 @@ from src.spec.models import Spec
 router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(current_user)])
 
 
-def _policy(config: PipelineSettings, user: dict | None = None) -> Policy:
-    """Chỉ domain người dùng được xem (xem policy_for): lọc trước khi trả metadata hay kết nối tới nguồn."""
+def _policy(config: PipelineSettings, user: dict | None = None, include_hidden: bool = False) -> Policy:
+    """Chỉ domain người dùng được xem (xem policy_for): lọc trước khi trả metadata hay kết nối tới nguồn.
+
+    Domain ẩn (`hidden: true`) không hiện khi duyệt nguồn; `include_hidden` cho pipeline đã deploy (drift, đối chiếu).
+    """
     try:
-        return policy_for(user, config) if user else effective_policy(config)
+        return policy_for(user, config, include_hidden) if user else effective_policy(config)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
 
@@ -141,7 +144,9 @@ def schema_drift(user: dict = Depends(current_user), config: PipelineSettings = 
     Kết nối từng nguồn một lần lúc gọi; nguồn không đọc được thì pipeline dùng nó có trạng thái `unknown`.
     """
     declared = {
-        r: decl for domain in _policy(config, user).domains.domains.values() for r, decl in domain.sources.items()
+        r: decl
+        for domain in _policy(config, user, include_hidden=True).domains.domains.values()
+        for r, decl in domain.sources.items()
     }
     cache: dict[str, dict | Exception] = {}
 
@@ -209,7 +214,8 @@ def reconcile_deployed(
         reason = "Dagster đang ghi warehouse, thử lại sau ít giây." if "lock" in str(exc).lower() else str(exc)
         return {**base, "available": False, "reason": reason}
     try:
-        matched, observed = reference.reconcile(Spec.model_validate(report.spec), gold, _policy(config, user), config)
+        policy = _policy(config, user, include_hidden=True)  # bản đã deploy có thể dùng nguồn nay đã ẩn
+        matched, observed = reference.reconcile(Spec.model_validate(report.spec), gold, policy, config)
     except reference.UnsupportedError as exc:
         return {**base, "available": False, "reason": f"Chưa đối chiếu được: {exc}."}
     except postgres.SourceUnavailableError as exc:
