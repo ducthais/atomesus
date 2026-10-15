@@ -25,6 +25,7 @@ duckdb>=1.4,<2
 # Chạy thử pipeline sinh ra (P9–P12): dlt đọc Postgres qua SQLAlchemy, dbt chạy trên DuckDB
 dlt[duckdb,sql_database]>=1.5,<2
 sqlalchemy>=2.0
+sqlglot>=30.0,<31
 # dlt nạp DuckDB bằng parquet (loader_file_format="parquet") cần pyarrow
 pyarrow>=14
 # dbt-core 1.11 kéo theo dbt-core-experimental-parser phải build từ mã nguồn, treo khi cài trên Windows

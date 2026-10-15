@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
+import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -32,6 +33,7 @@ from src.run_report.store import (
 )
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(current_user)])
+log = logging.getLogger(__name__)
 
 
 class ReviewRequest(BaseModel):
@@ -329,6 +331,16 @@ def _deploy_direct(config: PipelineSettings, report: RunReport, files: dict[str,
     return queued
 
 
+def _open_optional_pull_request(report: RunReport, files: dict[str, str], github: GithubClient) -> None:
+    """GitOps tùy chọn chạy nền sau khi bundle direct đã được nhận; lỗi không đổi kết quả deploy."""
+    from src.codegen.deploy import open_pull_request
+
+    try:
+        open_pull_request(report, files, github)
+    except Exception as exc:
+        log.warning("PR GitHub tùy chọn của run %s thất bại (%s)", report.run_id, type(exc).__name__)
+
+
 @router.post("/{run_id}/deploy", response_model=RunReport)
 def deploy_run(
     run_id: str,
@@ -354,8 +366,8 @@ def deploy_run(
 
     if not run_visible(user, config.store_path, run_id):
         raise HTTPException(404, f"Không tìm thấy run {run_id}")
-    if user["role"] != "Reviewer":
-        raise HTTPException(403, "Chỉ Reviewer được deploy run.")
+    if user["role"] not in {"Reviewer", "Admin"}:
+        raise HTTPException(403, "Chỉ Reviewer hoặc Admin được deploy run.")
     try:
         report = viewable_run(config.store_path, run_id, user)
     except ValidationError:
@@ -384,7 +396,10 @@ def deploy_run(
     if taken := claim_model(config.store_path, report):
         raise HTTPException(409, f"Tên pipeline {taken} đã có người dùng khác dùng, hãy đổi tên model.")
     if config.deploy_mode == "direct":
-        return _deploy_direct(config, report, files)
+        queued = _deploy_direct(config, report, files)
+        if github.configured:
+            background.add_task(_open_optional_pull_request, report, files, github)
+        return queued
     try:
         deployment = open_pull_request(report, files, github)
     except ManifestError as exc:

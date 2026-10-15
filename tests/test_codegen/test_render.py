@@ -154,6 +154,10 @@ def test_dlt_name_matches_dlt_normalizer():
         ("transform/filters", ["status <> '{{ env_var(\"OPENAI_API_KEY\") }}'"]),
         ("transform/filters", ["status <> 'x'; drop table orders"]),
         ("transform/filters", ["order_id in (select 1)"]),
+        ("transform/filters", ["amount > 0; DROP TABLE orders"]),
+        ("transform/filters", ["amount > 0 /* hidden statement */"]),
+        ("transform/filters", ["amount > 0 -- hidden statement\n"]),
+        ("transform/filters", ["amount > ("]),
         ("transform/filters", ["read_csv('/etc/passwd') is not null"]),
         ("transform/filters", ["status <> 'x' -- bỏ phần sau"]),
         ("sources/0/staging/reject_if", ["getenv('HOME') is null"]),
@@ -179,6 +183,18 @@ def test_guard_allows_normal_expressions():
         SINGLE, **{"transform/filters": ["CAST(amount_text AS decimal(18,2)) > 0", "cast(status as varchar(20)) <> ''"]}
     )
     assert expression_violations(casts) == []
+
+
+def test_guard_allows_nested_scalar_expressions_and_rejects_unverified_sql():
+    allowed = load(
+        SINGLE,
+        **{"transform/filters": ["coalesce(amount, 0) > 0", "status IN ('paid', 'select')"]},
+    )
+    assert expression_violations(allowed) == []
+
+    for expression in ("amount > 0; SELECT 1", "amount > 0 /* comment */", "amount > ("):
+        blocked = load(SINGLE, **{"transform/filters": [expression]})
+        assert expression_violations(blocked)
 
 
 def test_post_run_fails_when_gold_is_empty_but_staging_is_not():

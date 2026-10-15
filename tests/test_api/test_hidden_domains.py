@@ -96,6 +96,76 @@ async def test_new_run_batch_and_chat_reject_hidden_sources(engineer, path, body
 
 
 @pytest.mark.asyncio
+async def test_new_run_accepts_review_api_and_passes_it_to_planner(engineer, monkeypatch):
+    from src.api import routes
+
+    captured = {}
+    base = RunReport.model_validate_json((FIXTURES_DIR / "ready_for_review.json").read_text(encoding="utf-8"))
+
+    def start_agent(request, created_by, deps, store_path, sources, parent_run_id, run_id):
+        captured["sources"] = sources
+        report = base.model_copy(
+            update={
+                "run_id": run_id,
+                "created_by": created_by,
+                "domain": "rental",
+                "source_scope": sources,
+                "status": "GENERATING",
+                "stage_reached": "intake",
+            }
+        )
+        save_run_report(store_path, report)
+        return report, lambda: None
+
+    monkeypatch.setattr(routes, "start_agent", start_agent)
+    await engineer.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+
+    response = await engineer.post(
+        "/api/v1/agent/runs",
+        json={"request": "Phân tích điểm đánh giá", "sources": [{"source_ref": "review_api", "tables": ["feedback"]}]},
+    )
+
+    assert response.status_code == 201, response.text
+    assert captured["sources"] == [{"source_ref": "review_api", "tables": ["feedback"]}]
+
+
+@pytest.mark.asyncio
+async def test_chat_accepts_review_api_and_passes_it_to_planner(engineer, monkeypatch):
+    from src.chat import api as chat_api
+
+    captured = {}
+    config = app.dependency_overrides[auth.settings]()
+    base = RunReport.model_validate_json((FIXTURES_DIR / "ready_for_review.json").read_text(encoding="utf-8"))
+
+    def plan_agent(request, created_by, deps, store_path, sources=None, run_id=None):
+        captured["sources"] = sources
+        report = base.model_copy(
+            update={
+                "run_id": run_id,
+                "created_by": created_by,
+                "domain": "rental",
+                "source_scope": sources,
+                "status": "DRAFT",
+                "stage_reached": "confirm",
+            }
+        )
+        save_run_report(store_path, report)
+        return report
+
+    monkeypatch.setattr(chat_api, "plan_agent", plan_agent)
+    await engineer.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+
+    response = await engineer.post(
+        "/api/v1/chat",
+        json={"message": "Phân tích điểm đánh giá", "sources": [{"source_ref": "review_api", "tables": ["feedback"]}]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["intent"] == "new_request"
+    assert captured["sources"] == [{"source_ref": "review_api", "tables": ["feedback"]}]
+
+
+@pytest.mark.asyncio
 async def test_legacy_clean_api_also_rejects_new_sales_runs(engineer):
     await engineer.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
 

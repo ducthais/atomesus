@@ -61,6 +61,7 @@ def openai_llm() -> JsonLLM:
             api_key=settings.openai_api_key,
             temperature=0,
             timeout=120,
+            max_retries=1,
             max_tokens=max_output_tokens,
             model_kwargs={"response_format": {"type": "json_object"}},
         )

@@ -45,3 +45,22 @@ def test_failure_redacts_credentials_url_and_only_long_passwords(monkeypatch, tm
         assert password not in str(caught.value) and quote(password, safe="") not in str(caught.value)
     else:
         assert str(caught.value) == f"amount data {password} {quote(password, safe='')} [đã ẩn]"
+
+
+@pytest.mark.parametrize(
+    ("output", "secret"),
+    [
+        ('{"api_key":"fake-api-key","ok":"kept"}', "fake-api-key"),
+        ("Authorization: Bearer fake-bearer-token", "fake-bearer-token"),
+        ('password=\"fake password value\"', "fake password value"),
+        ("postgresql://reader:fake-dsn-password@db.example/shop", "fake-dsn-password"),
+        (
+            "-----BEGIN PRIVATE KEY-----\nfake-private-material\n-----END PRIVATE KEY-----",
+            "fake-private-material",
+        ),
+    ],
+)
+def test_safe_output_redacts_sensitive_fields_and_preserves_diagnostics(output, secret):
+    redacted = sandbox._safe_output(f"connection failed: {output}; retry later", {})
+    assert secret not in redacted
+    assert "[đã ẩn]" in redacted and "connection failed" in redacted and "retry later" in redacted

@@ -405,20 +405,23 @@ def test_direct_is_the_default_deploy_mode():
 
 @pytest.mark.asyncio
 async def test_direct_deploy_writes_signed_bundle_without_github(
-    logged_in, approved_run, github, direct_mode, store_path, tmp_path
+    logged_in, approved_run, direct_mode, store_path, tmp_path, monkeypatch
 ):
     import json
     from pathlib import Path
+    from pydantic import SecretStr
 
+    from src.codegen.github import GithubClient
     from src.deployer.manifest import hash_files, verify_manifest
+    from src.run_report.router import pipeline_github
     from src.run_report.store import get_run_files
 
+    monkeypatch.setitem(app.dependency_overrides, pipeline_github, lambda: GithubClient("", SecretStr("")))
     response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
 
     assert response.status_code == 200, response.text
     report = response.json()
     assert report["status"] == "APPROVED" and report["stage_reached"] == "deploy" and report["deployment"] is None
-    assert github.requests == [], "chế độ direct không gọi GitHub"
     name = f"{READY_RUN_ID}-v{approved_run.version}"
     assert _bundles(direct_mode) == [name] and not [p for p in Path(direct_mode.release_dir).rglob(".tmp-*")]
     folder = Path(direct_mode.release_dir) / "inbox" / name
@@ -441,6 +444,32 @@ async def test_direct_deploy_writes_signed_bundle_without_github(
     again = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
 
     assert again.status_code == 200 and _bundles(direct_mode) == [name], "bấm Deploy lại không ghi bundle thứ hai"
+
+
+@pytest.mark.asyncio
+async def test_direct_deploy_ignores_optional_github_failure(logged_in, approved_run, github, direct_mode, monkeypatch):
+    import src.codegen.deploy as deploy
+
+    def fail_pr(*_args):
+        raise RuntimeError("simulated GitHub failure")
+
+    monkeypatch.setattr(deploy, "open_pull_request", fail_pr)
+
+    response = await logged_in.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "APPROVED" and response.json()["stage_reached"] == "deploy"
+    assert _bundles(direct_mode) == [f"{READY_RUN_ID}-v{approved_run.version}"]
+
+
+@pytest.mark.asyncio
+async def test_admin_can_direct_deploy_approved_run(client, approved_run, direct_mode):
+    await client.post("/api/v1/pipeline/session", json={"username": "admin", "password": "Admin@123"})
+
+    response = await client.post(f"/api/v1/runs/{READY_RUN_ID}/deploy")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["stage_reached"] == "deploy"
 
 
 @pytest.mark.asyncio

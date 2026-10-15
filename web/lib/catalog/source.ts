@@ -8,7 +8,7 @@ import { cookies } from 'next/headers';
 import type { BatchBudget, RunReport, User } from '../postgres-api.ts';
 import type { ChatMessage } from '../studio.ts';
 import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live.ts';
-import { DATASETS, DOMAINS, LINKED_REVIEWERS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, PEOPLE, USER_CONNECTIONS } from './mock.ts';
+import { DATASETS, DOMAINS, LINKED_REVIEWERS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, NEW_RUN_DOMAINS, PEOPLE, USER_CONNECTIONS, mockNewRunSnapshot } from './mock.ts';
 import type { UserConnection } from '../user-connections.ts';
 import type { LinkedReviewer } from '../invite.ts';
 import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
@@ -144,7 +144,8 @@ export const getCatalog = cache(async (): Promise<Catalog> => {
   if (MOCK) {
     const user = await currentUser();
     const extra = mockUploadCatalog(user?.role === 'Engineer' ? await mockUserUploads(user.id) : []);
-    return new Catalog({ ...MOCK_SNAPSHOT, domains: [...MOCK_SNAPSHOT.domains, ...extra.domains], datasets: [...MOCK_SNAPSHOT.datasets, ...extra.datasets] });
+    const snapshot = mockNewRunSnapshot();
+    return new Catalog({ ...snapshot, domains: [...snapshot.domains, ...extra.domains], datasets: [...snapshot.datasets, ...extra.datasets] });
   }
   if (!(await currentUser())) return EMPTY;
   const [catalog, reports, policy, users] = await Promise.all([
@@ -158,7 +159,7 @@ export async function listDeclaredSources(): Promise<DeclaredSource[]> {
   if (MOCK) {
     const user = await currentUser();
     const extra = mockUploadSources(user?.role === 'Engineer' ? await mockUserUploads(user.id) : []);
-    return [...DOMAINS.flatMap(d => d.sources.map(s => ({ ref: s.ref, domain: d.id, kind: s.kind, location: s.location, supported: s.kind === 'postgres' }))), ...extra];
+    return [...NEW_RUN_DOMAINS.flatMap(d => d.sources.map(s => ({ ref: s.ref, domain: d.id, kind: s.kind, location: s.location, supported: s.kind === 'postgres' }))), ...extra];
   }
   return backend<DeclaredSource[]>('/catalog/sources');
 }
@@ -176,7 +177,7 @@ export async function discoverObjects(ref: string): Promise<Discovery> {
     const user = await currentUser();
     const uploaded = mockUploadDiscovery(user?.role === 'Engineer' ? await mockUserUploads(user.id) : [], ref);
     if (uploaded) return uploaded;
-    const decl = DOMAINS.flatMap(d => d.sources).find(s => s.ref === ref);
+    const decl = NEW_RUN_DOMAINS.flatMap(d => d.sources).find(s => s.ref === ref);
     if (!decl) return { error: `Nguồn '${ref}' không có trong danh mục nguồn dữ liệu.` };
     if (decl.kind !== 'postgres') return { error: `Chưa có connector cho nguồn ${decl.kind as Platform}.` };
     const objects = DATASETS.filter(d => d.layer === 'source' && d.sourceRef === ref && !d.unavailable).map(d => ({

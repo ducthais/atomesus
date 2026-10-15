@@ -11,6 +11,7 @@ Tiến trình con chỉ nhận các biến môi trường cần thiết, không 
 import json
 import logging
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -47,6 +48,20 @@ CONNECTION_ERRORS = (
 )
 PASSTHROUGH_ENV = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA")
 log = logging.getLogger(__name__)
+SENSITIVE_FIELD = re.compile(
+    r"(?i)(?P<prefix>\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|"
+    r"token|password|passwd|client[_-]?secret|secret|private[_-]?key)\b[\"']?\s*[:=]\s*)"
+    r"(?:(?P<quote>[\"'])(?P<quoted>.*?)(?P=quote)|(?P<plain>[^\s,;}\]]+))"
+)
+AUTHORIZATION_FIELD = re.compile(
+    r"(?i)(?P<prefix>\bauthorization\b[\"']?\s*[:=]\s*)"
+    r"(?:(?P<quote>[\"'])(?P<quoted>.*?)(?P=quote)|(?P<plain>[^\r\n,;}]+))"
+)
+BEARER_TOKEN = re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/-]+=*")
+URL_PASSWORD = re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^:/@\s]+:)([^@/\s]+)(@)")
+PRIVATE_KEY = re.compile(
+    r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----", re.DOTALL
+)
 SANDBOX_CANCEL_POLL_SEC = 1.0
 
 
@@ -279,6 +294,8 @@ def _safe_output(output: str, env: dict[str, str]) -> str:
     """Tiến trình dlt có thể in credential trong traceback; xóa trước khi ghi bằng chứng."""
     secrets = set()
     for key, value in env.items():
+        if value and re.search(r"CREDENTIAL|PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|DSN", key, re.I):
+            secrets.add(value)
         if key.endswith("__CREDENTIALS"):
             secrets.add(value)
             password = urlsplit(value).password
@@ -286,6 +303,17 @@ def _safe_output(output: str, env: dict[str, str]) -> str:
                 secrets.update((password, unquote(password)))
     for secret in sorted(secrets, key=len, reverse=True):
         output = output.replace(secret, "[đã ẩn]")
+    output = URL_PASSWORD.sub(r"\1[đã ẩn]\3", output)
+    output = PRIVATE_KEY.sub("[đã ẩn]", output)
+
+    def redact_field(match: re.Match) -> str:
+        quote = match.group("quote")
+        value_prefix = match.group("prefix")
+        return f"{value_prefix}{quote}[đã ẩn]{quote}" if quote else f"{value_prefix}[đã ẩn]"
+
+    output = AUTHORIZATION_FIELD.sub(redact_field, output)
+    output = SENSITIVE_FIELD.sub(redact_field, output)
+    output = BEARER_TOKEN.sub(r"\1[đã ẩn]", output)
     return output
 
 

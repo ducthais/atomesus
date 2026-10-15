@@ -1,4 +1,4 @@
-"""Chặn biểu thức nguy hiểm trước khi render (tạm thay cổng `ast_guard`, SPEC §10, đến khi có sqlglot).
+"""Chặn biểu thức nguy hiểm trước khi render bằng AST SQL (SPEC §10).
 
 `metrics[].expr`, `filters`, `reject_if` do LLM viết và được chèn nguyên văn vào SQL của dbt, nên:
 - không được có `{`/`}`: dbt render Jinja trong file SQL, chèn `{{ ... }}` là chạy được macro (đọc env, chạy query);
@@ -8,20 +8,13 @@
 Mọi chuỗi khác của Spec (định dạng ngày, đường dẫn…) cũng không được chứa `{`/`}` vì cùng lý do.
 """
 
-import re
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import SqlglotError
 
 from src.spec.models import Spec
 
-STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
-FUNCTION_CALL = re.compile(r"\b([a-z_][a-z0-9_]*)\s*\(", re.IGNORECASE)
-# Tham số kiểu trong phép ép kiểu (`CAST(x AS decimal(18,2))`, `AS varchar(20)`) không phải lời gọi hàm. Chỉ bỏ qua khi
-# đứng ngay sau AS và bên trong chỉ có chữ số; `decimal(...)` ở chỗ khác hay có gì khác chữ số vẫn bị kiểm như hàm.
-CAST_TYPE_PARAMS = re.compile(r"\bas\s+(decimal|numeric|varchar|char)\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\)", re.IGNORECASE)
-FORBIDDEN_WORDS = re.compile(
-    r"\b(select|insert|update|delete|drop|alter|create|attach|detach|copy|pragma|install|load|call|"
-    r"export|import|set|grant|truncate|union)\b",
-    re.IGNORECASE,
-)
+SQL_DIALECT = "duckdb"
 ALLOWED_FUNCTIONS = frozenset(
     {
         # tổng hợp
@@ -33,6 +26,33 @@ ALLOWED_FUNCTIONS = frozenset(
         "in", "and", "or", "not", "when", "then", "else", "case", "as", "is", "distinct", "filter", "where",
     }
 )  # fmt: skip
+FORBIDDEN_EXPRESSIONS = (exp.Query, exp.DML, exp.DDL, exp.Command)
+
+
+def _function_name(node: exp.Func) -> str:
+    return node.name.lower() if isinstance(node, exp.Anonymous) else node.sql_name().lower()
+
+
+def _expression_violations(expression: str) -> list[str]:
+    try:
+        tree = sqlglot.parse_one(expression, read=SQL_DIALECT, into=exp.Expr)
+    except SqlglotError:
+        return ["không phân tích được biểu thức SQL"]
+    if tree is None:
+        return ["biểu thức SQL rỗng"]
+
+    violations = []
+    for node in tree.walk():
+        if node.comments:
+            violations.append("không được chứa comment SQL")
+            break
+    if any(isinstance(node, FORBIDDEN_EXPRESSIONS) for node in tree.walk()):
+        violations.append("câu lệnh truy vấn hoặc thay đổi dữ liệu không được phép trong biểu thức")
+    for node in tree.find_all(exp.Func):
+        name = _function_name(node)
+        if name not in ALLOWED_FUNCTIONS:
+            violations.append(f"hàm '{name}' không nằm trong danh sách cho phép")
+    return violations
 
 
 def _expressions(spec: Spec) -> list[tuple[str, str]]:
@@ -59,12 +79,5 @@ def expression_violations(spec: Spec) -> list[str]:
     if any("{" in s or "}" in s for s in _strings(spec.model_dump(by_alias=True))):
         violations.append("Spec có ký tự '{' hoặc '}' (cú pháp Jinja của dbt), không được phép")
     for where, expression in _expressions(spec):
-        code = CAST_TYPE_PARAMS.sub(r"as \1", STRING_LITERAL.sub("''", expression))
-        if ";" in code or "--" in code or "/*" in code:
-            violations.append(f"{where}: không được chứa ';' hoặc comment")
-        if word := FORBIDDEN_WORDS.search(code):
-            violations.append(f"{where}: từ khóa '{word.group(1)}' không được phép trong biểu thức")
-        for name in FUNCTION_CALL.findall(code):
-            if name.lower() not in ALLOWED_FUNCTIONS:
-                violations.append(f"{where}: hàm '{name}' không nằm trong danh sách cho phép")
+        violations.extend(f"{where}: {issue}" for issue in _expression_violations(expression))
     return violations

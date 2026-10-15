@@ -527,6 +527,26 @@ export const MOCK_SNAPSHOT: Snapshot = {
   policy: { files: POLICY, limits: LIMITS }, relationships: RELATIONSHIPS, conformed: [], live: false,
 };
 
+const HIDDEN_NEW_RUN_DOMAINS = new Set(['sales']);
+
+export const NEW_RUN_DOMAINS = DOMAINS.filter(domain => !HIDDEN_NEW_RUN_DOMAINS.has(domain.id));
+
+export function mockNewRunSnapshot(): Snapshot {
+  const domains = MOCK_SNAPSHOT.domains.filter(domain => !HIDDEN_NEW_RUN_DOMAINS.has(domain.id));
+  const datasets = MOCK_SNAPSHOT.datasets.filter(dataset => !HIDDEN_NEW_RUN_DOMAINS.has(dataset.domain));
+  const datasetIds = new Set(datasets.map(dataset => dataset.id));
+  return {
+    ...MOCK_SNAPSHOT,
+    domains,
+    datasets,
+    glossary: MOCK_SNAPSHOT.glossary.filter(term => !HIDDEN_NEW_RUN_DOMAINS.has(term.domain)),
+    relationships: MOCK_SNAPSHOT.relationships.filter(
+      relationship => datasetIds.has(relationship.from) && datasetIds.has(relationship.to),
+    ),
+    runs: MOCK_SNAPSHOT.runs,
+  };
+}
+
 /** Pipeline đã deploy (fct_daily_revenue) đang chạy theo lịch trên Dagster. */
 const DAGSTER_RUN = { runId: '5b1e9c02-7d4a-4f13-a6e8-2c90f1d3b7aa', job: 'fct_daily_revenue_job', status: 'SUCCESS', startedAt: '2026-10-02T02:00:03+07:00', endedAt: '2026-10-02T02:01:21+07:00' };
 const DAGSTER_SCHEDULE = { name: 'fct_daily_revenue_job_schedule', cron: '0 2 * * *', timezone: 'Asia/Ho_Chi_Minh', running: true, nextTickAt: '2026-10-03T02:00:00+07:00' };

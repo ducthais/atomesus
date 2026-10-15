@@ -171,9 +171,11 @@ def _invoke(
     stop_after_plan: bool = False,
     entry: str = "planner",
 ) -> AgentState:
+    checkpointer = getattr(deps, "checkpointer", None) or DEFAULT_CHECKPOINTER
+    thread_id = f"{initial.get('run_id') or uuid4()}:{entry}"
+    config = {"configurable": {"thread_id": thread_id}}
     try:
         state = initial
-        checkpointer = getattr(deps, "checkpointer", None) or DEFAULT_CHECKPOINTER
         graph = build_graph(
             deps,
             stop_after_spec=stop_after_spec,
@@ -182,8 +184,6 @@ def _invoke(
             entry=entry,
         )
         # Lượt sau xác nhận là một thread riêng: không kế thừa state cũ còn trong checkpointer.
-        thread_id = f"{initial.get('run_id') or uuid4()}:{entry}"
-        config = {"configurable": {"thread_id": thread_id}}
         for state in graph.stream(initial, config=config, stream_mode="values"):
             if progress and state.get("status") in RUNNING:
                 progress(state)
@@ -196,6 +196,8 @@ def _invoke(
             "status": "INTERNAL_ERROR",
             "error_trace": [{"stage": "intake", "error": f"{type(exc).__name__}: {str(exc)[:500]}"}],
         }
+    finally:
+        checkpointer.delete_thread(thread_id)
 
 
 def _save(state: AgentState, created_at: datetime, store_path: str) -> RunReport:

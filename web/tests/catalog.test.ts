@@ -2,11 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { RunReport } from '../lib/postgres-api.ts';
 import { buildSnapshot, type CatalogResponse } from '../lib/catalog/live.ts';
-import { MOCK_SNAPSHOT } from '../lib/catalog/mock.ts';
+import { MOCK_SNAPSHOT, mockNewRunSnapshot, NEW_RUN_DOMAINS } from '../lib/catalog/mock.ts';
 import { Catalog } from '../lib/catalog/query.ts';
 import { parseConnections } from '../lib/catalog/connections.ts';
 
 const mock = new Catalog(MOCK_SNAPSHOT);
+
+test('mock new-run catalog hides sales while historical sales runs remain available', () => {
+  const snapshot = mockNewRunSnapshot();
+  const catalog = new Catalog(snapshot);
+
+  assert.ok(NEW_RUN_DOMAINS.every(domain => domain.id !== 'sales'));
+  assert.ok(snapshot.datasets.every(dataset => dataset.domain !== 'sales'));
+  assert.ok(snapshot.glossary.every(term => term.domain !== 'sales'));
+  assert.ok(catalog.run('7c2e91a4'), 'historical sales run remains readable');
+  assert.equal(catalog.run('7c2e91a4')?.domain, 'sales');
+});
 
 test('mock: mọi upstream, thuật ngữ và run tham chiếu đều tồn tại', () => {
   const ids = new Set(mock.datasets.map(d => d.id));
