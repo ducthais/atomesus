@@ -1,8 +1,18 @@
+from pathlib import Path
 from typing import Literal
 
 from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# File DuckDB chung của các pipeline deploy trước khi tách file theo pipeline (lỗi #2); bundle đã duyệt không sửa được
+# nên vẫn ghi vào đây.
+SHARED_WAREHOUSE = "warehouse.duckdb"
+
+
+def warehouse_file(warehouse_dir: str | Path, model: str) -> Path:
+    """File DuckDB riêng của một pipeline đã deploy: <thư mục warehouse>/<model>.duckdb (templates/dagster_asset.py.j2)."""
+    return Path(warehouse_dir) / f"{model}.duckdb"
 
 
 class PipelineSettings(BaseSettings):
@@ -37,8 +47,8 @@ class PipelineSettings(BaseSettings):
     release_dir: str = "data/releases"
     # Dagster local (make dagster): trang dataset đọc trạng thái run qua GraphQL ở đây.
     dagster_url: str = "http://127.0.0.1:3070"
-    # Warehouse DuckDB mà Dagster local ghi bronze / staging / gold (scripts/dagster_local.py).
-    warehouse_path: str = "data/warehouse/warehouse.duckdb"
+    # Warehouse DuckDB chung của bundle cũ; thư mục của nó chứa file riêng từng pipeline (warehouse_for).
+    warehouse_path: str = f"data/warehouse/{SHARED_WAREHOUSE}"
     # Múi giờ phiên DuckDB khi dbt ép timestamptz → timestamp. Phải là UTC (giống Postgres và phép đối chiếu);
     # đặt khác (ví dụ Asia/Ho_Chi_Minh) là tái hiện lỗi lệch giờ đã gặp: đối chiếu độc lập sẽ chặn run.
     warehouse_timezone: str = "UTC"
@@ -53,6 +63,11 @@ class PipelineSettings(BaseSettings):
     # VM 4 GB: dlt + dbt + DuckDB dùng chung hàng đợi, lập kế hoạch chỉ mở vài luồng.
     max_parallel_sandbox: int = Field(default=1, ge=1)
     max_parallel_planning: int = Field(default=3, ge=1)
+
+    def warehouse_for(self, model: str) -> str:
+        """File DuckDB chứa bronze / staging / gold của pipeline `model`: file riêng nếu có, không thì file chung."""
+        own = warehouse_file(Path(self.warehouse_path).parent, model)
+        return str(own) if own.is_file() else self.warehouse_path
 
     def validate_connection_key(self, app_env: str) -> None:
         key = self.connection_key.get_secret_value()

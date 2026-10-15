@@ -19,6 +19,7 @@ from uuid import uuid4
 from src.codegen.sandbox import PASSTHROUGH_ENV, prepare_project
 from src.deployer.manifest import project_dir
 from src.deployer.verify import WORKSPACE_UPDATED_AFTER, VerificationError
+from src.pipeline.settings import warehouse_file
 
 DBT_PARSE_TIMEOUT_SEC = 120
 DBT_OUTPUT_TAIL = 140
@@ -103,7 +104,7 @@ def _parse_detail(stdout: str | bytes | None, stderr: str | bytes | None) -> str
 def _compile_manifest(project_root: Path) -> None:
     """Biên dịch trước manifest.json cho dbt để Dagster nạp được code location ngay."""
     dbt_dir = project_root / "dbt_project"
-    warehouse = Path("data/warehouse/warehouse.duckdb").resolve()
+    warehouse = warehouse_file(Path("data/warehouse").resolve(), project_root.name)  # parse không mở file này
     env = {
         **{key: os.environ[key] for key in PASSTHROUGH_ENV if key in os.environ},
         "WAREHOUSE_PATH": str(warehouse),

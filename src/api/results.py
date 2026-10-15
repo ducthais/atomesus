@@ -46,10 +46,11 @@ def _connect(model: str, user: dict, config: PipelineSettings) -> duckdb.DuckDBP
     """Mở warehouse read-only sau khi đã xét quyền. Dagster đang ghi (giữ khóa file) → 503."""
     if not MODEL_NAME.match(model) or not model_visible(user, config.store_path, model):
         raise _not_found(model)
-    if not Path(config.warehouse_path).is_file():
+    warehouse = config.warehouse_for(model)  # file riêng của pipeline, bundle cũ thì file chung
+    if not Path(warehouse).is_file():
         raise _not_found(model)
     try:
-        return duckdb.connect(config.warehouse_path, read_only=True)
+        return duckdb.connect(warehouse, read_only=True)
     except duckdb.Error as exc:
         if "lock" in str(exc).lower():
             raise HTTPException(503, LOCKED) from exc

@@ -198,7 +198,7 @@ def collect(
                 "started_at": _iso(run["startTime"]),
                 "ended_at": _iso(run.get("endTime")),
                 "duration_sec": round(ended - run["startTime"], 3),
-                "gold_rows": gold_rows(settings.warehouse_path, model),
+                "gold_rows": gold_rows(settings.warehouse_for(model), model),
                 "estimated_bytes": cost.get("bytes"),
                 "usd": cost.get("usd"),
                 "tests": tests.get("tests"),
