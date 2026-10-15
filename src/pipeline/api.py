@@ -1,4 +1,4 @@
-"""Local Sprint 1 API. Demo identity selection is disabled in production.
+"""Local Sprint 1 API. Built-in accounts require changed passwords outside development/test.
 
 Mỗi run ghi một `RunReport` vào sổ bằng chứng; đọc lại qua `GET /api/v1/runs`.
 """
@@ -28,7 +28,6 @@ from src.pipeline.auth import (
     SESSION_SECONDS,
     USERS,
     current_user,
-    demo_only,
     hash_password,
     session_digest,
     settings,
@@ -50,6 +49,8 @@ MISSING_COLUMNS = "Spec tham chiếu cột không tồn tại trong schema ngu�
 VERIFICATION_SECONDS = 600
 MAX_VERIFICATION_ATTEMPTS = 5
 REGISTRATION_IP_SECONDS = 600  # mỗi IP đăng ký được 1 tài khoản trong cửa sổ này
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_WINDOW_SECONDS = 15 * 60
 INVITE_SECONDS = 7 * 24 * 3600
 MAX_ACTIVE_INVITES = 20  # lời mời còn hạn chưa dùng của mỗi Engineer
 INVITE_PATH = "/invite/"
@@ -87,7 +88,7 @@ def users(config: PipelineSettings = Depends(settings)):
     return [*built_in, *registered]
 
 
-@router.patch("/users/{user_id}/role", dependencies=[Depends(demo_only)])
+@router.patch("/users/{user_id}/role")
 def update_role(
     user_id: str,
     body: RoleUpdateRequest,
@@ -124,9 +125,17 @@ def _start_session(response: Response, user_id: str, config: PipelineSettings) -
     )
 
 
-@router.post("/session", dependencies=[Depends(demo_only)])
-def login(body: LoginRequest, response: Response, config: PipelineSettings = Depends(settings)):
+@router.post("/session")
+def login(body: LoginRequest, request: Request, response: Response, config: PipelineSettings = Depends(settings)):
     username = body.username.strip().lower()
+    ip = client_ip(request)
+    wait = store.login_retry_after(config.store_path, ip, username, MAX_LOGIN_ATTEMPTS, LOGIN_WINDOW_SECONDS)
+    if wait > 0:
+        raise HTTPException(
+            429,
+            "Bạn đã nhập sai quá nhiều lần. Vui lòng thử lại sau.",
+            headers={"Retry-After": str(math.ceil(wait))},
+        )
     registered = store.get_user_by_username(config.store_path, username)
     if registered is not None:
         user, encoded = registered
@@ -140,14 +149,26 @@ def login(body: LoginRequest, response: Response, config: PipelineSettings = Dep
             "admin": config.admin_password.get_secret_value(),
         }.get(username, "")
         valid = bool(user_id) and secrets.compare_digest(body.password, expected)
-    if registered is None and get_settings().app_env == "staging" and expected in DEFAULT_PASSWORDS:
-        # Bản demo đã deploy ra Internet: mật khẩu mặc định ai cũng biết, và ai đăng nhập được là tiêu được tiền LLM.
+    environment = get_settings().app_env
+    if registered is None and environment in ("staging", "production") and expected in DEFAULT_PASSWORDS:
+        # Mật khẩu mặc định của tài khoản cài sẵn là công khai; không cho dùng ở môi trường triển khai thật.
         raise HTTPException(
             503,
-            "Môi trường staging phải đặt PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD / PIPELINE_ADMIN_PASSWORD.",
+            f"Môi trường {environment} phải đặt "
+            "PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD / PIPELINE_ADMIN_PASSWORD.",
         )
     if user is None or not valid:
+        wait = store.record_login_failure(
+            config.store_path, ip, username, MAX_LOGIN_ATTEMPTS, LOGIN_WINDOW_SECONDS
+        )
+        if wait > 0:
+            raise HTTPException(
+                429,
+                "Bạn đã nhập sai quá nhiều lần. Vui lòng thử lại sau.",
+                headers={"Retry-After": str(math.ceil(wait))},
+            )
         raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
+    store.clear_login_failures(config.store_path, ip, username)
     _start_session(response, user["id"], config)
     return user
 
@@ -178,7 +199,7 @@ def client_ip(request: Request) -> str:
     return peer or "unknown"
 
 
-@router.post("/register", status_code=202, dependencies=[Depends(demo_only)])
+@router.post("/register", status_code=202)
 def register(
     body: InviteRegisterRequest, request: Request, response: Response, config: PipelineSettings = Depends(settings)
 ):
@@ -255,7 +276,7 @@ def register(
     return result
 
 
-@router.post("/register/verify", status_code=201, dependencies=[Depends(demo_only)])
+@router.post("/register/verify", status_code=201)
 def verify_registration(
     body: VerifyRegistrationRequest, response: Response, config: PipelineSettings = Depends(settings)
 ):
@@ -440,6 +461,16 @@ def _budgets() -> Budgets:
         raise HTTPException(500, str(exc)) from exc
 
 
+def _require_new_domain() -> None:
+    """The legacy cleaner is still an API that creates a new sales run, so honor `hidden` here too."""
+    try:
+        domain = load_policy().domains.domains.get(DOMAIN)
+    except PolicyError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    if domain is None or domain.hidden:
+        raise HTTPException(422, "Nguồn sales đã ngừng nhận thao tác mới; lịch sử run vẫn có thể xem.")
+
+
 @router.get("/quota")
 def quota(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
     """Hạn mức hôm nay của chính người dùng (ADR-0001 D10): tiền và số run đã dùng / trần; Admin không có trần riêng.
@@ -453,6 +484,7 @@ def create_run(
 ) -> RunReport:
     if user["role"] != "Engineer":
         raise HTTPException(403, "Chỉ Engineer được chạy pipeline.")
+    _require_new_domain()
     # Hết lượt run trong ngày (budgets.yml per_user.max_runs_per_day) → 429 trước khi đọc nguồn.
     [run_id] = run_quota.claim_runs(config.store_path, user, _budgets())
     created_at = datetime.now(UTC)

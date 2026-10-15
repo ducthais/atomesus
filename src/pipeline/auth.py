@@ -6,7 +6,8 @@ import time
 
 from fastapi import Depends, HTTPException, Request
 
-from src.config import get_settings
+# Explicit re-export retained for callers/tests that override application settings.
+from src.config import get_settings as get_settings
 from src.pipeline import store
 from src.pipeline.settings import PipelineSettings
 
@@ -28,11 +29,6 @@ PASSWORD_SCHEME = "pbkdf2_sha256"
 
 def settings() -> PipelineSettings:
     return PipelineSettings()
-
-
-def demo_only():
-    if get_settings().app_env == "production":
-        raise HTTPException(403, "Đăng nhập bằng tài khoản local chỉ dành cho môi trường phát triển.")
 
 
 def session_digest(request: Request) -> str:
@@ -61,7 +57,6 @@ def verify_password(password: str, encoded: str) -> bool:
 
 
 def current_user(request: Request, config: PipelineSettings = Depends(settings)) -> dict:
-    demo_only()
     with store.database(config.store_path) as conn:
         row = conn.execute(
             "SELECT user_id FROM sessions WHERE token = ? AND expires > ?", (session_digest(request), time.time())

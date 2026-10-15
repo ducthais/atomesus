@@ -59,6 +59,7 @@ log = logging.getLogger(__name__)
 
 CALLBACK_PATH = "/api/v1/deployments/callback"
 SIGNATURE_HEADER = "X-Atomesus-Signature"
+TIMESTAMP_HEADER = "X-Atomesus-Timestamp"
 CALLBACK_ATTEMPTS = 3
 CALLBACK_TIMEOUT_SEC = 10
 # Backend đã nhận và từ chối hẳn (sai định dạng, run không khớp chữ ký): gửi lại cũng vậy nên không gửi lại, pipeline
@@ -328,7 +329,13 @@ def http_post(url: str, body: bytes, headers: dict[str, str]) -> int:
 def deliver(config: Config, payload: dict, post=http_post, sleep=time.sleep) -> str | None:
     """Báo một kết quả; trả ACCEPTED (backend nhận), REFUSED (từ chối hẳn) hoặc None (cần báo lại chu kỳ sau)."""
     body = _body(payload)
-    headers = {"Content-Type": "application/json", SIGNATURE_HEADER: sign(config.secret, body)}
+    timestamp = str(int(time.time()))
+    signed = timestamp.encode() + b"." + body
+    headers = {
+        "Content-Type": "application/json",
+        TIMESTAMP_HEADER: timestamp,
+        SIGNATURE_HEADER: sign(config.secret, signed),
+    }
     what = f"{payload['model_name']} ({payload['status']})"
     for attempt in range(1, CALLBACK_ATTEMPTS + 1):
         try:

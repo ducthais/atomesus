@@ -626,6 +626,12 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 .mapping-table input, .mapping-table select { width: 100%; min-width: 120px; }
 .mapping-table tr.dropped td { opacity: .45; }
 .mapping-table td:first-child input { width: 16px; height: 16px; min-width: 0; accent-color: var(--accent); }
+.date-format-picker { display: grid; gap: 7px; min-width: 220px; }
+.date-format-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.date-format-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
+.date-format-chip code { padding: 0; background: transparent; }
+.date-format-chip:hover { border-color: var(--bad); color: var(--bad); }
+.date-format-chip:disabled { cursor: default; opacity: .65; }
 .add-column { display: flex; gap: 8px; align-items: center; }
 .add-column label { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 13px; }
 .review-toggle { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--rule); border-radius: var(--r-control); background: var(--surface-2); cursor: pointer; }

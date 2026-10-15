@@ -16,7 +16,7 @@ import pytest
 
 from src.deployer import install, release, service, verify
 from src.deployer.manifest import build_manifest
-from src.deployer.service import CALLBACK_PATH, SIGNATURE_HEADER, Config, DeployerError
+from src.deployer.service import CALLBACK_PATH, SIGNATURE_HEADER, TIMESTAMP_HEADER, Config, DeployerError
 from tests.test_deployer.test_verify import Clock, Dagster
 
 SECRET = "khoa-ky-callback-cho-test"
@@ -173,7 +173,8 @@ def test_first_run_installs_pipeline_and_reports_signed_callback(config, remote,
     assert "location_name: fct_x" in (Path(config.deploy_dir) / "workspace.yaml").read_text(encoding="utf-8")
     [(url, body, headers)] = backend.calls
     assert url == "http://backend:8000" + CALLBACK_PATH
-    expected = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    timestamp = headers[TIMESTAMP_HEADER]
+    expected = "sha256=" + hmac.new(SECRET.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
     assert headers[SIGNATURE_HEADER] == expected and headers["Content-Type"] == "application/json"
     payload = json.loads(body)
     manifest = json.loads(signed(files_v(1), 1)["manifest.json"])
@@ -497,7 +498,9 @@ def test_http_post_sends_signed_json_to_backend(config, remote, installs):
 
     assert summary["pending"] == 0
     [(path, headers, body)] = received
-    assert path == CALLBACK_PATH and headers[SIGNATURE_HEADER] == service.sign(SECRET, body)
+    timestamp = headers[TIMESTAMP_HEADER]
+    assert path == CALLBACK_PATH
+    assert headers[SIGNATURE_HEADER] == service.sign(SECRET, timestamp.encode() + b"." + body)
     assert json.loads(body)["status"] == "deployed"
 
 
@@ -889,7 +892,9 @@ def test_direct_installs_valid_bundle_reports_deployed_and_moves_it_to_done(dire
     assert released(direct, "inbox") == [] and released(direct, "done") == ["run-1-v1"]
     [(url, body, headers)] = backend.calls
     assert url == "http://backend:8000" + CALLBACK_PATH
-    assert headers[SIGNATURE_HEADER] == "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    timestamp = headers[TIMESTAMP_HEADER]
+    expected = "sha256=" + hmac.new(SECRET.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+    assert headers[SIGNATURE_HEADER] == expected
     payload = json.loads(body)
     manifest = json.loads((Path(direct.release_dir) / "done/run-1-v1/manifest.json").read_text(encoding="utf-8"))
     assert payload["status"] == "deployed" and payload["commit_sha"] is None

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { canReview, chatMode, chatPayload, pendingRun, stageIndex, toArtifacts, toStudioRun, STAGES } from '../lib/studio.ts';
+import { canReview, chatMode, chatPayload, friendlyTechnicalError, pendingRun, stageIndex, toArtifacts, toStudioRun, STAGES } from '../lib/studio.ts';
 import { isAgentSpec, type RunReport } from '../lib/postgres-api.ts';
 
 const FIXTURES = new URL('../../fixtures/run_reports/', import.meta.url);
@@ -30,6 +30,12 @@ const agentReport: RunReport = {
   cost: { usd: 0 }, attempts: { spec: 1, sql: 0 }, llm_calls: 3,
   timing: { baseline_sec: 11, optimized_sec: null }, error_trace: [], approval: null,
 } as RunReport & { trigger: string };
+
+test('lỗi kỹ thuật được Việt hóa và không lộ đường dẫn code nội bộ', () => {
+  const message = friendlyTechnicalError('src/codegen/guard.py từ chối theo policy/budgets.yml và C:\\app\\src\\worker.py');
+  assert.equal(message, 'bộ kiểm tra biểu thức từ chối theo cấu hình hạn mức và thành phần hệ thống');
+  assert.ok(!message.includes('.py') && !message.includes('.yml'));
+});
 
 test('agent RunReport maps to Studio run without invented numbers', () => {
   const run = toStudioRun(agentReport);

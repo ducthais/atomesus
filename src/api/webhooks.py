@@ -8,7 +8,8 @@ ký → 401, cả hai trước khi đọc body; body lớn hơn MAX_BODY_BYTES �
   người); CI xanh chỉ ghi lại. Mỗi X-GitHub-Delivery, kể cả sự kiện bỏ qua, chỉ xử lý một lần, ghi cùng giao dịch với
   thay đổi của run. Merge / CI đến sau callback deployer vẫn ghi vào deployment (giữ status). Sự kiện đến khi Deploy
   chưa lưu pull request được giữ lại và áp khi lưu (`replay_pending`).
-- `POST /deployments/callback` (X-Atomesus-Signature, PIPELINE_DEPLOYER_SECRET): deployer báo deployed / failed →
+- `POST /deployments/callback` (X-Atomesus-Timestamp + X-Atomesus-Signature, PIPELINE_DEPLOYER_SECRET): deployer báo
+  deployed / failed →
   DEPLOYED / DEPLOY_FAILED (hợp đồng chung trong kế hoạch DEPLOY-PR; commit_sha null khi cài từ hộp thư release).
 
 Secret không bao giờ ghi vào log, response hay RunReport.
@@ -18,6 +19,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -44,6 +46,8 @@ router = APIRouter(tags=["webhooks"])
 
 MAX_BODY_BYTES = 1024 * 1024
 SIGNATURE_PREFIX = "sha256="
+DEPLOYER_TIMESTAMP_HEADER = "X-Atomesus-Timestamp"
+DEPLOYER_MAX_SKEW_SECONDS = 5 * 60
 PIPELINE_BRANCH_PREFIX = "pipeline/"
 # Kết luận CI đưa run về P4 (SPEC §11.2); success chỉ ghi lại; neutral, skipped, action_required… bỏ qua.
 CI_FAILED = frozenset({"failure", "cancelled", "timed_out"})
@@ -68,8 +72,15 @@ def deployer_settings() -> DeployerSettings:
     return DeployerSettings()
 
 
-async def _signed_body(request: Request, secret: SecretStr, header: str, secret_name: str) -> bytes:
-    """Body đã kiểm chữ ký `sha256=<hex HMAC-SHA256>` (so sánh constant-time)."""
+async def _signed_body(
+    request: Request,
+    secret: SecretStr,
+    header: str,
+    secret_name: str,
+    *,
+    timestamp_header: str | None = None,
+) -> bytes:
+    """Read a bounded body and verify its constant-time HMAC, optionally binding a fresh timestamp."""
     key = secret.get_secret_value()
     if not key.strip():
         raise HTTPException(503, f"Chưa cấu hình {secret_name} ở backend nên chưa nhận sự kiện này.")
@@ -81,6 +92,13 @@ async def _signed_body(request: Request, secret: SecretStr, header: str, secret_
         or any(char not in "0123456789abcdef" for char in digest)
     ):
         raise HTTPException(401, f"Thiếu chữ ký {header} hoặc chữ ký sai định dạng.")
+    timestamp = ""
+    if timestamp_header is not None:
+        timestamp = request.headers.get(timestamp_header, "")
+        if not timestamp.isascii() or not timestamp.isdigit():
+            raise HTTPException(401, f"Thiếu {timestamp_header} hoặc timestamp sai định dạng.")
+        if abs(time.time() - int(timestamp)) > DEPLOYER_MAX_SKEW_SECONDS:
+            raise HTTPException(401, "Callback đã quá hạn hoặc timestamp nằm quá xa trong tương lai.")
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
         raise HTTPException(413, "Nội dung lớn hơn 1 MB.")
@@ -89,7 +107,8 @@ async def _signed_body(request: Request, secret: SecretStr, header: str, secret_
         body += chunk
         if len(body) > MAX_BODY_BYTES:
             raise HTTPException(413, "Nội dung lớn hơn 1 MB.")
-    expected = SIGNATURE_PREFIX + hmac.new(key.encode(), bytes(body), hashlib.sha256).hexdigest()
+    signed = bytes(body) if timestamp_header is None else timestamp.encode() + b"." + bytes(body)
+    expected = SIGNATURE_PREFIX + hmac.new(key.encode(), signed, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected.encode(), signature.encode()):
         raise HTTPException(401, f"Chữ ký {header} không khớp.")
     return bytes(body)
@@ -450,7 +469,13 @@ async def deployer_callback(
     config: PipelineSettings = Depends(settings),
 ) -> RunReport:
     """Deployer báo kết quả cài code location lên Dagster production: APPROVED → DEPLOYED / DEPLOY_FAILED."""
-    body = await _signed_body(request, deployer.secret, "X-Atomesus-Signature", "PIPELINE_DEPLOYER_SECRET")
+    body = await _signed_body(
+        request,
+        deployer.secret,
+        "X-Atomesus-Signature",
+        "PIPELINE_DEPLOYER_SECRET",
+        timestamp_header=DEPLOYER_TIMESTAMP_HEADER,
+    )
     try:
         result = DeployCallback.model_validate_json(body)
     except ValidationError as exc:
