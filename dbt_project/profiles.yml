@@ -1,4 +1,6 @@
 # Sandbox: một file DuckDB riêng cho mỗi run (WAREHOUSE_PATH do bước chạy thử đặt).
+# Đã deploy: một file riêng cho mỗi pipeline, data/warehouse/<model>.duckdb (code location đặt WAREHOUSE_PATH từ
+# WAREHOUSE_DIR, templates/dagster_asset.py.j2); bundle cũ không có bước đó thì dùng file chung warehouse.duckdb.
 p045:
   target: sandbox
   outputs:

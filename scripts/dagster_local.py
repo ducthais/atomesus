@@ -2,11 +2,16 @@
 
 - workspace.yaml: mỗi project đã deploy là một code location.
 - DAGSTER_HOME cố định (data/dagster_home) để lịch sử run, lịch chạy và backfill được giữ giữa các lần bật.
-- Một warehouse DuckDB chung (data/warehouse/warehouse.duckdb) cho bronze / staging / gold của mọi pipeline.
-- Credential nguồn lấy từ .env (PIPELINE_DATABASE_URL), không ghi ra file.
+  dagster.yaml đặt QueuedRunCoordinator: tối đa DAGSTER_MAX_CONCURRENT_RUNS run cùng lúc (mặc định 1).
+- Mỗi pipeline một file DuckDB (data/warehouse/<model>.duckdb, templates/dagster_asset.py.j2) để pipeline chạy cùng
+  lúc không tranh khóa file. Bundle deploy trước khi tách file vẫn ghi data/warehouse/warehouse.duckdb chung.
+- Credential nguồn lấy từ .env (PIPELINE_DATABASE_URL), không ghi ra file. Tiến trình Dagster con chỉ nhận whitelist
+  (`child_env`): biến hệ thống tối thiểu và chuỗi kết nối đã giải mã, không có OPENAI_API_KEY, PIPELINE_CONNECTION_KEY
+  hay token nào của tiến trình này (lỗi N1).
 - Mỗi `COLLECT_SECONDS` thu số đo các lần chạy theo lịch vừa xong (src/monitor/runs.py), rồi chạy 4 luật suy giảm
   (src/monitor/day2.py): nguồn ngừng cấp thì cảnh báo, pipeline suy giảm thì tạo run sửa chạy ở luồng riêng (không chặn
-  vòng này), chờ người duyệt.
+  vòng này), chờ người duyệt. Thu số đo và 4 luật là tất định; run sửa thì gọi LLM (codegen), nên tiến trình không có
+  OPENAI_API_KEY (container dagster production) chỉ ghi cảnh báo để chủ pipeline tạo run sửa từ app (backend có key).
 - Tự khởi động lại khi workspace.yaml đổi: cài một pipeline (src/deployer/install.py) thì file này được ghi lại, và
   `dagster dev` chỉ đọc danh sách code location lúc khởi động (nút Reload không thêm được location mới).
 - Production (deploy/compose.yml, DAGSTER_CODE_READONLY=1): code location do service deployer ghi, Dagster mount chỉ
@@ -30,10 +35,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)  # PipelineSettings đọc .env theo đường dẫn tương đối
 
-from src.codegen.sandbox import credentials_env  # noqa: E402
+import yaml  # noqa: E402
+
+from src.codegen.sandbox import PASSTHROUGH_ENV, credentials_env  # noqa: E402
+from src.config import get_settings  # noqa: E402
 from src.deployer.install import write_workspace  # noqa: E402
 from src.deployer.manifest import MODEL_NAME  # noqa: E402
-from src.pipeline.settings import PipelineSettings  # noqa: E402
+from src.pipeline.settings import SHARED_WAREHOUSE, PipelineSettings  # noqa: E402
 from src.policy import effective_policy  # noqa: E402
 
 HOST, PORT = os.environ.get("DAGSTER_HOST", "127.0.0.1"), os.environ.get("DAGSTER_PORT", "3070")
@@ -41,6 +49,45 @@ READ_ONLY = os.environ.get("DAGSTER_CODE_READONLY") == "1"
 HOME = ROOT / "data" / "dagster_home"
 POLL_SECONDS = 3
 COLLECT_SECONDS = 60
+MAX_CONCURRENT_RUNS = 1  # VM nhỏ; bundle cũ còn chung một file DuckDB nên mặc định không chạy song song
+
+
+def child_env(settings: PipelineSettings, warehouse_dir: Path) -> dict[str, str]:
+    """Môi trường của tiến trình Dagster con (webserver, daemon, code pipeline): whitelist, không chép os.environ.
+
+    Giống sandbox (src/codegen/sandbox.py: PASSTHROUGH_ENV, credentials_env): biến hệ thống tối thiểu cộng chuỗi kết nối
+    nguồn đã giải mã. Không có OPENAI_API_KEY, PIPELINE_CONNECTION_KEY, PIPELINE_GITHUB_* hay secret nào khác của tiến
+    trình này (lỗi N1): code pipeline chỉ cần credential của nguồn nó đọc.
+    """
+    env = {key: os.environ[key] for key in PASSTHROUGH_ENV if key in os.environ}
+    env.update(credentials_env(effective_policy(settings), settings))
+    env.update(
+        PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+        DAGSTER_HOME=str(HOME),
+        WAREHOUSE_DIR=str(warehouse_dir),  # bundle mới: <WAREHOUSE_DIR>/<model>.duckdb (dagster_asset.py.j2)
+        WAREHOUSE_PATH=str(warehouse_dir / SHARED_WAREHOUSE),  # bundle deploy trước khi tách file
+        WAREHOUSE_TIMEZONE=settings.warehouse_timezone,
+        PYTHONIOENCODING="utf-8",
+        DBT_SEND_ANONYMOUS_USAGE_STATS="false",
+        DO_NOT_TRACK="1",
+    )
+    return env
+
+
+def write_instance_config(home: Path) -> Path:
+    """dagster.yaml: QueuedRunCoordinator giới hạn số run chạy cùng lúc (lỗi #2), giữ mọi cấu hình khác đã có."""
+    raw = os.environ.get("DAGSTER_MAX_CONCURRENT_RUNS", str(MAX_CONCURRENT_RUNS))
+    if not raw.isdigit() or int(raw) < 1:
+        raise SystemExit(f"DAGSTER_MAX_CONCURRENT_RUNS phải là số nguyên ≥ 1, đang là {raw!r}.")
+    path = home / "dagster.yaml"
+    config = (yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else None) or {}
+    config["run_coordinator"] = {
+        "module": "dagster._core.run_coordinator",
+        "class": "QueuedRunCoordinator",
+        "config": {"max_concurrent_runs": int(raw)},
+    }
+    path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return path
 
 
 def day2_settings(settings: PipelineSettings, home: Path = HOME) -> PipelineSettings:
@@ -90,26 +137,17 @@ def start() -> tuple[list[subprocess.Popen], Path]:
     settings = PipelineSettings()
     workspace = _wait_workspace(settings.deploy_dir) if READ_ONLY else write_workspace(settings.deploy_dir).resolve()
     HOME.mkdir(parents=True, exist_ok=True)
-    (HOME / "dagster.yaml").touch()
-    warehouse = ROOT / "data" / "warehouse" / "warehouse.duckdb"
-    warehouse.parent.mkdir(parents=True, exist_ok=True)
-    scripts_dir = str(Path(sys.executable).parent)
-    env = {
-        **os.environ,
-        **credentials_env(effective_policy(settings), settings),
-        "PATH": scripts_dir + os.pathsep + os.environ.get("PATH", ""),
-        "DAGSTER_HOME": str(HOME),
-        "WAREHOUSE_PATH": str(warehouse),
-        "PYTHONIOENCODING": "utf-8",
-    }
+    write_instance_config(HOME)
+    warehouse_dir = ROOT / "data" / "warehouse"
+    warehouse_dir.mkdir(parents=True, exist_ok=True)
+    env = child_env(settings, warehouse_dir)
     locations = workspace.read_text(encoding="utf-8").count("location_name:")
-    print(f"Dagster: http://{HOST}:{PORT}  ·  {locations} pipeline  ·  warehouse {warehouse}", flush=True)
+    print(f"Dagster: http://{HOST}:{PORT}  ·  {locations} pipeline  ·  warehouse {warehouse_dir}", flush=True)
     if READ_ONLY:
         # Không đặt DAGSTER_IS_DEV_CLI: DbtProject.prepare_if_dev() khi đó không chạy `dbt parse` vào thư mục chỉ
         # đọc, dùng target/manifest.json deployer đã biên dịch lúc cài. dagster-dbt đặt target/log từng lần chạy
         # dưới DBT_TARGET_PATH (day2_settings đọc lại ở đó).
-        env.pop("DAGSTER_IS_DEV_CLI", None)
-        env.update(DBT_TARGET_PATH=str(HOME / "dbt_target"), DO_NOT_TRACK="1")
+        env["DBT_TARGET_PATH"] = str(HOME / "dbt_target")
         commands = [
             [_executable("dagster-webserver"), "-w", str(workspace), "-h", HOST, "-p", PORT],
             [_executable("dagster-daemon"), "run", "-w", str(workspace)],
@@ -158,8 +196,11 @@ def collect() -> None:
         # Đọc lại mỗi lần: sửa ngưỡng trong objectives.yml có hiệu lực ngay (NFR-04).
         policy = effective_policy(settings)
         written = collect_runs(day2_settings(settings) if READ_ONLY else settings, policy)
-        deps = AgentDeps(llm=openai_llm(), policy=policy, settings=settings, reserve_daily=budget.reserve_daily)
-        actions = day2.check(settings, policy, day2.launcher(deps, settings.store_path, _in_thread))
+        launch = None  # không có LLM: Day 2 chỉ cảnh báo, run sửa tạo từ app (src/monitor/day2.py: check)
+        if get_settings().openai_api_key:
+            deps = AgentDeps(llm=openai_llm(), policy=policy, settings=settings, reserve_daily=budget.reserve_daily)
+            launch = day2.launcher(deps, settings.store_path, _in_thread)
+        actions = day2.check(settings, policy, launch)
     except MonitorError:
         return
     except Exception as exc:  # không để lỗi thu số đo / phát hiện làm tắt Dagster

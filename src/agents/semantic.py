@@ -6,6 +6,9 @@
    `BLOCKED_SEMANTIC_CONFLICT`, thông điệp nêu đủ các định nghĩa và steward phải quyết định.
 3. Ngoại lệ: người dùng đã chọn nguồn (`source_scope`) và mọi nguồn đã chọn thuộc đúng một trong các domain đó thì nghĩa
    đã rõ; cổng đạt và ghi lại định nghĩa được dùng làm bằng chứng.
+4. Domain `hidden: true` (domains.yml, ví dụ sales) không tính khi quét, kể cả khi run tiếp tục bằng chính sách đủ
+   domain (xác nhận kế hoạch, chạy tiếp): run mới không thể dùng domain ẩn nên định nghĩa của nó không gây xung đột.
+   Run cũ đã chọn nguồn của domain ẩn thì domain đó vẫn được xét như trước.
 """
 
 import re
@@ -38,6 +41,8 @@ def entity_scan(request: str, scope: list[dict] | None, policy: Policy) -> tuple
     conflicts, resolved = [], {}
     by_entity: dict[str, list[str]] = {}
     for domain_name, domain in registry.domains.items():
+        if domain.hidden and domain_name not in scoped:
+            continue
         for entity in domain.entities:
             by_entity.setdefault(entity, []).append(domain_name)
     for entity, domains in sorted(by_entity.items()):

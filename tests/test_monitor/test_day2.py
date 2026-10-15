@@ -95,6 +95,24 @@ def test_stalled_source_only_alerts_once(env):
     assert alert["kind"] == "source_stalled" and alert["detail"]["stalled_sources"] == ["orders"]
 
 
+def test_without_llm_regression_only_alerts_the_owner_once(env):
+    # Container dagster production không có OPENAI_API_KEY (lỗi N1): run sửa cần LLM nên chỉ cảnh báo, không tạo run.
+    now = record(env, [16.0] * 7, [100 + i for i in range(7)])
+    before = len(runs.list_run_reports(env.settings.store_path, limit=100))
+
+    first = day2.check(env.settings, env.policy, None, now=now)
+    again = day2.check(env.settings, env.policy, None, now=now + timedelta(hours=1))
+
+    assert [(a["action"], a["rules"]) for a in first] == [("alert", ["runtime_regression"])]
+    assert [a["action"] for a in again] == ["already_alerted"], "mỗi cooldown_hours một cảnh báo"
+    assert len(runs.list_run_reports(env.settings.store_path, limit=100)) == before, "không tạo run sửa nào"
+    (alert,) = alerts.list_alerts(env.settings.store_path, MODEL)
+    assert alert["kind"] == "needs_human" and "bấm Kiểm tra" in alert["message"]
+    assert alert["detail"]["rules"][0]["rule"] == "runtime_regression"
+    later = day2.check(env.settings, env.policy, system_launch(env), now=now + timedelta(hours=2))
+    assert later[0]["action"] == "fix_started", "backend (có LLM) bấm Kiểm tra thì vẫn tạo run sửa"
+
+
 def _fix(env, status: str, **changes) -> RunReport:
     started, _job = regression.start_regression(
         env.report, {"model": MODEL, "rules": []}, deps(FakeLLM()), env.settings.store_path
