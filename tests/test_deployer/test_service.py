@@ -861,7 +861,22 @@ def bundle(config, files: dict[str, str], version: int, run_id: str = "run-1", m
         reviewer="an",
         approved_at=datetime(2026, 10, 10, tzinfo=UTC),
     )
-    return release.write_bundle(config.release_dir, manifest, files)
+    report = {
+        "run_id": run_id,
+        "version": version,
+        "files_hash": manifest["files_hash"],
+        "status": "APPROVED",
+        "spec": {"transform": {"model_name": model}},
+        "approval": {
+            "decision": "approved",
+            "reviewer": "an",
+            "files_hash": manifest["files_hash"],
+            "version": version,
+            "at": "2026-10-10T00:00:00Z",
+            "comment": "",
+        },
+    }
+    return release.write_bundle(config.release_dir, manifest, files, json.dumps(report, indent=2) + "\n")
 
 
 def released(config, folder: str) -> list[str]:
@@ -939,6 +954,22 @@ def test_direct_bundle_without_readable_manifest_is_rejected_without_callback(di
     run(direct, backend)
 
     assert installs == [] and backend.calls == [] and released(direct, "rejected") == ["run-1-v1"]
+
+
+def test_direct_bundle_with_tampered_run_report_is_rejected_before_install(direct, installs, dagster):
+    path = bundle(direct, files_v(1), 1)
+    report_path = path / "run_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["approval"]["reviewer"] = "attacker"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    backend = Backend()
+
+    run(direct, backend)
+
+    assert installs == [] and dagster.launches == []
+    assert released(direct, "rejected") == ["run-1-v1"]
+    assert backend.payloads()[0]["status"] == "failed"
+    assert "run_report.json" in backend.payloads()[0]["detail"]
 
 
 def test_direct_rerun_does_not_install_or_report_twice(direct, installs, dagster, monkeypatch):

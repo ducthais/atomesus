@@ -1,6 +1,6 @@
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -308,7 +308,8 @@ def _deploy_direct(config: PipelineSettings, report: RunReport, files: dict[str,
         )
         if manifest["files_hash"] != report.files_hash:
             raise ManifestError("Bộ file không khớp chữ ký duyệt nên không ghi bundle release.")
-        write_bundle(config.release_dir, manifest, files)
+        report_text = report.model_dump_json(indent=2, exclude={"deployment"}) + "\n"
+        write_bundle(config.release_dir, manifest, files, report_text)
     except (ManifestError, ReleaseError) as exc:
         raise HTTPException(409, str(exc)) from None
     except OSError as exc:
@@ -397,7 +398,7 @@ def deploy_run(
         raise HTTPException(409, f"Tên pipeline {taken} đã có người dùng khác dùng, hãy đổi tên model.")
     if config.deploy_mode == "direct":
         queued = _deploy_direct(config, report, files)
-        if github.configured:
+        if github._configured:
             background.add_task(_open_optional_pull_request, report, files, github)
         return queued
     try:

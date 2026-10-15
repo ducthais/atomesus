@@ -493,8 +493,12 @@ def apply_bundle(
             raise ManifestError(f"Chỉ cài file thường UTF-8; bundle {name} có {', '.join(irregular)}.")
         if manifest_text is None:
             raise ManifestError(f"Thiếu {MANIFEST_FILE} trong bundle {name}.")
+        report_text = files.pop(REPORT_FILE, None)
+        if report_text is None:
+            raise ManifestError(f"Thiếu {REPORT_FILE} trong bundle {name}.")
         manifest = load_json(manifest_text, MANIFEST_FILE)
         verify_manifest(manifest, files)
+        verify_report(manifest, load_json(report_text, REPORT_FILE))
         if release.bundle_name(manifest["run_id"], manifest["version"]) != name:
             raise ManifestError(
                 f"Manifest ghi run {manifest['run_id']} v{manifest['version']} nhưng bundle tên {name}."

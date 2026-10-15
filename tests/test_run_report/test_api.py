@@ -409,10 +409,11 @@ async def test_direct_deploy_writes_signed_bundle_without_github(
 ):
     import json
     from pathlib import Path
+
     from pydantic import SecretStr
 
     from src.codegen.github import GithubClient
-    from src.deployer.manifest import hash_files, verify_manifest
+    from src.deployer.manifest import REPORT_FILE, hash_files, verify_manifest, verify_report
     from src.run_report.router import pipeline_github
     from src.run_report.store import get_run_files
 
@@ -429,11 +430,12 @@ async def test_direct_deploy_writes_signed_bundle_without_github(
     written = {
         path.relative_to(folder).as_posix(): path.read_bytes().decode()
         for path in folder.rglob("*")
-        if path.is_file() and path.name != "manifest.json"
+        if path.is_file() and path.name not in {"manifest.json", REPORT_FILE}
     }
     assert written == files, "bundle chứa đúng bộ file đã duyệt, không thêm không bớt"
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     verify_manifest(manifest, written)
+    verify_report(manifest, json.loads((folder / REPORT_FILE).read_text(encoding="utf-8")))
     assert manifest["files"] == hash_files(files)[0] and manifest["files_hash"] == approved_run.files_hash
     assert (manifest["run_id"], manifest["version"]) == (READY_RUN_ID, approved_run.version)
     assert manifest["model_name"] == "fct_daily_orders" and manifest["reviewer"] == approved_run.approval.reviewer

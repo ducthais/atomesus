@@ -127,7 +127,7 @@ class GithubClient:
         return f"GithubClient(repo={self.repo!r})"
 
     @property
-    def configured(self) -> bool:
+    def _configured(self) -> bool:
         """Whether optional GitHub operations have both required settings, without exposing the token."""
         return bool(self.repo.strip() and self._token.get_secret_value().strip())
 

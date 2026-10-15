@@ -134,7 +134,6 @@ async def test_chat_accepts_review_api_and_passes_it_to_planner(engineer, monkey
     from src.chat import api as chat_api
 
     captured = {}
-    config = app.dependency_overrides[auth.settings]()
     base = RunReport.model_validate_json((FIXTURES_DIR / "ready_for_review.json").read_text(encoding="utf-8"))
 
     def plan_agent(request, created_by, deps, store_path, sources=None, run_id=None):

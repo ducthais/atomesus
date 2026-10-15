@@ -1051,7 +1051,7 @@ async def test_system_run_without_reachable_root_is_admin_only_and_never_reviewa
         assert (await env.client.get(f"/api/v1/runs/{run_id}")).status_code == 200
         approve = await env.client.post(f"/api/v1/runs/{run_id}/approve", json={"files_hash": env.files_hash})
         assert approve.status_code == 403
-        assert (await env.client.post(f"/api/v1/runs/{run_id}/deploy")).status_code == 403
+        assert (await env.client.post(f"/api/v1/runs/{run_id}/deploy")).status_code == 409
         assert get_run_report(store_path, run_id).status == "READY_FOR_REVIEW"
 
 
