@@ -4,6 +4,7 @@ import csv
 import io
 import time
 import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import duckdb
@@ -179,6 +180,29 @@ async def test_xlsx_is_a_workbook_with_every_row(env):
     assert '<c r="B2" t="inlineStr"><is><t xml:space="preserve">Hà Nội</t></is></c>' in sheet
     assert '<c r="C5"><v>300.25</v></c>' in sheet
     assert (await env.client.get("/api/v1/results/a_model/export", params={"format": "pdf"})).status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("file_format", ["csv", "xlsx"])
+async def test_export_reads_the_model_specific_warehouse_without_cross_model_data(env, file_format):
+    warehouse_dir = Path(env.config.warehouse_path).parent
+    for model, row in (("a_model", (101, "model-a-only", 1.5)), ("big_model", (202, "model-b-only", 2.5))):
+        with duckdb.connect(str(warehouse_dir / f"{model}.duckdb")) as db:
+            db.execute("CREATE SCHEMA gold")
+            db.execute(f"CREATE TABLE gold.{model} (id INTEGER, city VARCHAR, amount DOUBLE)")
+            db.execute(f"INSERT INTO gold.{model} VALUES (?, ?, ?)", row)
+
+    await _login(env, "eng.a")
+    for model, expected_id, absent_city in (("a_model", "101", "model-b-only"), ("big_model", "202", "model-a-only")):
+        response = await env.client.get(f"/api/v1/results/{model}/export", params={"format": file_format})
+
+        assert response.status_code == 200, response.text
+        if file_format == "csv":
+            text = response.content.decode("utf-8-sig")
+        else:
+            with zipfile.ZipFile(io.BytesIO(response.content)) as book:
+                text = book.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        assert expected_id in text and absent_city not in text
 
 
 @pytest.mark.asyncio
