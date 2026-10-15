@@ -169,10 +169,13 @@ def _snapshot_one(decl, item: dict, settings: PipelineSettings) -> dict:
             {key: None if value is None else str(value) for key, value in zip(names, row, strict=True)}
             for row in cursor.fetchall()
         ]
+        primary, _ = connectors.postgres_keys_from_connection(conn, decl.schema_)
     return {
         "source_ref": item["source_ref"],
         "kind": decl.kind,
         "table": item["object"],
+        # Khóa chính thật của bảng: Spec chép nguyên, validate_spec chặn nếu khai khác (LLM không tự đoán khóa).
+        "primary_key": primary.get(item["object"], []),
         "columns": {name: kind for name, kind in columns},
         "sample_rows": rows,
     }

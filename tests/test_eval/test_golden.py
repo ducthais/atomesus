@@ -1,4 +1,4 @@
-"""Kết quả đúng của 6 ca hợp lệ (eval/golden): sinh lại khớp file đã ghi, và khớp các số đã kiểm bằng pipeline thật."""
+"""Kết quả đúng của 7 ca hợp lệ (eval/golden): sinh lại khớp file đã ghi, và khớp các số đã kiểm bằng pipeline thật."""
 
 import importlib.util
 import json
@@ -19,10 +19,17 @@ def test_committed_file_matches_a_fresh_build(case_id):
     assert saved == json.loads(json.dumps(CASES[case_id], ensure_ascii=False)), "chạy lại eval/golden/build.py"
 
 
-def test_one_case_per_single_source_kind_and_three_multi_source():
+def test_one_case_per_single_source_kind_and_four_multi_source():
     kinds = sorted(tuple(c["source_kinds"]) for c in CASES.values())
     assert [k for k in kinds if len(k) == 1] == [("filesystem",), ("postgres",), ("rest_api",)]
-    assert len([k for k in kinds if len(k) > 1]) == 3
+    assert len([k for k in kinds if len(k) > 1]) == 4  # 3 ca SPEC §18.2 trên sales + 1 ca pagila_pg với review_api
+
+
+def test_review_case_counts_follow_staging_rules():
+    case = CASES["valid_postgres_rest_api_reviews_by_customer"]
+    assert len(case["rows"]) == 599 and case["totals"]["rental_count"] == 32088
+    assert case["totals"]["review_count"] == 4717 - 24, "trùng feedback_id tính một lần, rating N/A bị tách"
+    assert _row("valid_postgres_rest_api_reviews_by_customer", customer_id=413)["review_count"] == 0
 
 
 def _row(case_id, **key):

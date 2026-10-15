@@ -102,6 +102,26 @@ def read_upload_selections(store_path: str, owner_id: str | None = None) -> list
         raise PolicyError("Không đọc được lựa chọn file đã lưu trong store.") from exc
 
 
+def without_hidden(policy: Policy) -> Policy:
+    """Chính sách cho các luồng thao tác mới: bỏ domain `hidden: true` cùng mục tiêu và luật trỏ tới nguồn của chúng.
+
+    Run cũ, pipeline đã deploy, Day 2 và các thao tác trên run có sẵn vẫn dùng chính sách đầy đủ.
+    """
+    hidden = {name for name, domain in policy.domains.domains.items() if domain.hidden}
+    if not hidden:
+        return policy
+    refs = {ref for name in hidden for ref in policy.domains.domains[name].sources}
+    raw = policy.model_dump()
+    for name in hidden:
+        raw["domains"]["domains"].pop(name)
+        raw["objectives"].pop(name, None)
+    rules = raw["budgets"]["rules"]
+    rules["require_partition_filter_on"] = [
+        ref for ref in rules["require_partition_filter_on"] if ref.partition(".")[0] not in refs
+    ]
+    return Policy.model_validate(raw)
+
+
 def effective_policy(config: "PipelineSettings", owner_id: str | None = None) -> Policy:
     """None dành cho hệ thống/Reviewer; Engineer chỉ nhận domain YAML và domain của mình."""
     policy = load_policy()

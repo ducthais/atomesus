@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src.agents.nodes.common import AgentDeps
 from src.agents.service import RevisionNotAllowedError, RunChangedError, plan_agent, start_revision
-from src.api.routes import AgentRunRequest, _checked_sources, agent_deps
+from src.api.routes import AgentRunRequest, _checked_sources, agent_deps, for_new_runs
 from src.chat import answers, store
 from src.chat.models import ChatMessage, ChatRequest, ChatResponse
 from src.pipeline.auth import current_user, settings
@@ -45,6 +45,7 @@ def post_chat(
     if body.run_id is None:
         if user["role"] != "Engineer":
             raise HTTPException(403, "Chỉ Engineer được tạo pipeline từ chat.")
+        deps = for_new_runs(deps)  # pipeline mới không dùng domain ẩn
         sources = _checked_sources(AgentRunRequest(request=message, sources=body.sources), user, deps)
         # Hết lượt run trong ngày (per_user.max_runs_per_day) → 429 trước khi gọi LLM lập kế hoạch. Run dùng đúng id
         # của lượt đã giữ nên không bị đếm hai lần; lập kế hoạch lỗi trước khi vào sổ thì trả lượt.

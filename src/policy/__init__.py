@@ -1,6 +1,6 @@
 """Module Policy — nạp và kiểm tra 3 file chính sách (Sprint 0 - Role C)."""
 
-from src.policy.effective import effective_policy
+from src.policy.effective import effective_policy, without_hidden
 from src.policy.loader import POLICY_DIR, PolicyError, load_policy
 from src.policy.models import Budgets, DomainObjectives, Domains, Policy
 
@@ -9,6 +9,7 @@ __all__ = [
     "PolicyError",
     "load_policy",
     "effective_policy",
+    "without_hidden",
     "Policy",
     "Domains",
     "Budgets",
