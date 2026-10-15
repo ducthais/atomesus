@@ -1,10 +1,14 @@
-"""Sinh kết quả đúng (golden) cho 6 ca hợp lệ của bộ đánh giá (SPEC §18): tính thẳng từ dữ liệu gốc, không qua pipeline.
+"""Sinh kết quả đúng (golden) cho 7 ca hợp lệ của bộ đánh giá (SPEC §18): tính thẳng từ dữ liệu gốc, không qua pipeline.
 
-Nguồn số liệu, đọc độc lập với dlt / DuckDB / dbt / agent:
+6 ca của SPEC §18.2 trên domain sales, thêm 1 ca domain rental (pagila_pg + review_api). Nguồn số liệu, đọc độc lập
+với dlt / DuckDB / dbt / agent:
 - Postgres `sales_raw.orders`, `customers`: công thức của infra/postgres/init/001_seed.sql (đơn i thuộc khách
   ((i - 1) % 10) + 1, tiền i * 1000 VND, ngày 2026-01-01 + (i - 1)); kiểu ghi bẩn không đổi giá trị thật;
 - REST API `payments`: danh sách seed trong infra/mock_api/app.py (trước khi scripts/grow_data.py thêm);
-- CSV `refunds`: các file seed trong infra/landing/sales/refunds/ (bỏ qua refunds_grow_*.csv).
+- CSV `refunds`: các file seed trong infra/landing/sales/refunds/ (bỏ qua refunds_grow_*.csv);
+- Postgres `pagila.customer`, `rental`: khối COPY của infra/postgres/init/003_pagila.sql.gz (scripts/build_review_data.py;
+  mọi khách đều có lượt thuê nên số khách theo rental bằng bảng customer: 599);
+- REST API `feedback`: file infra/mock_api/fixtures/rental_feedback.json.gz mà mock API trả.
 Luật làm sạch giống staging: bản ghi trùng khóa giữ bản đầu, số tiền không đọc được thì bỏ dòng, tiền đổi về VND theo
 policy/domains.yml. Ghép một-nhiều cộng theo từng bảng trước rồi mới ghép (không cộng trùng).
 
@@ -26,7 +30,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from infra.mock_api.app import _payments  # noqa: E402
+from infra.mock_api.app import FEEDBACK, _payments  # noqa: E402
+from scripts.build_review_data import read_dump  # noqa: E402
 from src.policy.loader import load_policy  # noqa: E402
 
 OUT = Path(__file__).resolve().parent
@@ -34,6 +39,8 @@ ORDERS, CUSTOMERS = 30, 10
 SALES_PG = {"source_ref": "sales_pg", "tables": ["orders", "customers"]}
 SALES_API = {"source_ref": "sales_api", "tables": ["payments"]}
 LANDING = {"source_ref": "landing_sales", "tables": ["refunds"]}
+PAGILA = {"source_ref": "pagila_pg", "tables": ["customer", "rental"]}
+REVIEW_API = {"source_ref": "review_api", "tables": ["feedback"]}
 
 
 def _money(value: Decimal) -> str:
@@ -90,6 +97,15 @@ def refunds(rates) -> list[dict]:
         if vnd is not None:
             kept.append({"refund_id": int(row["refund_id"]), "order_id": int(row["order_id"]), "vnd": vnd})
     return kept
+
+
+def feedback() -> list[dict]:
+    """Phản hồi sau staging: trùng `feedback_id` giữ bản đầu, `rating` không ép được số nguyên ("N/A") thì bỏ dòng."""
+    return [
+        {"customer_id": row["customer_id"], "rating": int(row["rating"])}
+        for row in _dedupe(FEEDBACK, "feedback_id")
+        if row["rating"].isdigit()
+    ]
 
 
 def _by(rows: list[dict], key, value) -> dict:
@@ -195,7 +211,39 @@ def build() -> list[dict]:
          for c in customers],
         "Hai ghép một-nhiều cùng lúc (đơn → thanh toán, đơn → hoàn): mỗi bảng phía nhiều phải gộp trước.",
     ))  # fmt: skip
+
+    cases.append(_review_case())
     return cases
+
+
+def _review_case() -> dict:
+    """Nguồn review_api (domain rental): ghép với pagila.rental qua khóa chung `customer_id`."""
+    rentals, _films = read_dump()
+    rented = _count(rentals, lambda x: x["customer_id"])
+    reviews = feedback()
+    review_count = _count(reviews, lambda x: x["customer_id"])
+    rating_sum = _by(reviews, lambda x: x["customer_id"], lambda x: Decimal(x["rating"]))
+    rows = [
+        {"key": {"customer_id": c},
+         "values": {"rental_count": rented[c], "review_count": review_count.get(c, 0),
+                    "avg_rating": str((rating_sum[c] / review_count[c] if c in review_count else Decimal(0))
+                                      .quantize(Decimal("0.0001")))}}
+        for c in rented
+    ]  # fmt: skip
+    case = _case(
+        "valid_postgres_rest_api_reviews_by_customer", ["postgres", "rest_api"],
+        "Với từng khách hàng: số lượt thuê DVD, số phản hồi khách đã gửi và điểm đánh giá trung bình của các phản hồi đó",
+        [PAGILA, REVIEW_API], ["customer_id"],
+        {"rental_count": "số lượt thuê", "review_count": "số phản hồi hợp lệ", "avg_rating": "điểm trung bình (1–5)"},
+        rows,
+        "Phản hồi gộp theo customer_id của chính phản hồi (14 phản hồi trỏ tới rental_id không có vẫn tính); "
+        "47 bản gửi trùng feedback_id tính một lần; 24 phản hồi rating N/A bị tách, không vào số phản hồi lẫn điểm. "
+        "Lấy customer (một dòng mỗi khách) làm bảng chính, rental và feedback đều là phía nhiều nên phải gộp trước theo "
+        "customer_id (ghép thẳng rental với feedback theo customer_id là nhiều-nhiều, nhân số lượt thuê lẫn số phản hồi). "
+        "Khách 413 chỉ có một phản hồi N/A: review_count = 0, avg_rating NULL hoặc 0 đều chấp nhận (LEFT JOIN).",
+    )  # fmt: skip
+    overall = sum(r["rating"] for r in reviews) / Decimal(len(reviews))
+    return {**case, "totals": {**case["totals"], "avg_rating": str(overall.quantize(Decimal("0.0001")))}}
 
 
 def main() -> int:

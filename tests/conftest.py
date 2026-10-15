@@ -16,6 +16,27 @@ async def client():
 
 
 @pytest.fixture
+def sales_visible(monkeypatch):
+    """Bỏ `hidden` khỏi domains.yml cho riêng một test.
+
+    Domain sales bị ẩn khỏi luồng thao tác mới (catalog, chọn nguồn, tạo run). Test cơ chế dùng sales làm dữ liệu mẫu,
+    vì đây là domain duy nhất có đủ ba loại nguồn postgres, filesystem và rest_api, nên bật lại sales qua fixture này.
+    """
+    from src.policy import loader
+
+    read = loader._read_yaml
+
+    def unhidden(path):
+        data = read(path)
+        if path.name == "domains.yml":
+            for domain in data.get("domains", {}).values():
+                domain.pop("hidden", None)
+        return data
+
+    monkeypatch.setattr(loader, "_read_yaml", unhidden)
+
+
+@pytest.fixture
 def mock_llm():
     """Mock LLM to avoid calling OpenAI during tests.
 

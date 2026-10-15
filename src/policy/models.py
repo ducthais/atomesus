@@ -57,6 +57,9 @@ class Entity(_Policy):
 class Domain(_Policy):
     label: str | None = None
     owner_id: str | None = None
+    # Ẩn khỏi các luồng thao tác mới (catalog, chọn nguồn, tạo run, planner) nhưng giữ để run cũ và pipeline đã deploy
+    # vẫn đọc được Spec, đối chiếu, Day 2 (src/policy/effective.py: without_hidden).
+    hidden: bool = False
     datasets: list[str] = Field(min_length=1)
     steward: str = Field(pattern=r"^[^@\s]+@[^@\s]+$")
     currency: Currency

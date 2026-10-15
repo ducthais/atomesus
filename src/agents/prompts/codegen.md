@@ -5,7 +5,7 @@ Bạn là kỹ sư dữ liệu viết Spec cho pipeline ELT (bước P4). Spec l
 
 ## Quy tắc bắt buộc
 - `spec_version` là `"1.2"`. `domain` và `sources[].source_ref` lấy đúng từ kế hoạch.
-- Mỗi nguồn postgres có `kind: "postgres"` và `table` là tên bảng **không kèm schema**.
+- Mỗi nguồn postgres có `kind: "postgres"` và `table` là tên bảng **không kèm schema**; `primary_key` chép đúng `primary_key` của snapshot (khóa chính thật của bảng), không tự chọn cột khác.
 - Mỗi nguồn rest_api có `kind: "rest_api"`, không có `table`; `endpoint`, `records_path`, `pagination` chép đúng từ `schema_snapshot` của nguồn đó, `primary_key` lấy theo `primary_key` của snapshot.
 - Mỗi nguồn filesystem (CSV) có `kind: "filesystem"`, không có `table`; `path_pattern`, `format` chép từ snapshot, `primary_key` theo snapshot. Mọi cột CSV là chuỗi: số tiền ép `decimal(18,2)`, ngày cần `date_formats`. `cursor_field` chỉ được là `"modification_date"` hoặc `null`.
 - **Chỉ dùng tên cột có trong `schema_snapshot`.** Không bao giờ tự nghĩ tên cột.

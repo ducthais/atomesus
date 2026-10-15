@@ -8,5 +8,5 @@
     "uc3_measured": ["missing_partition_filter"],
     "uc3_status_in": ["READY_FOR_REVIEW", "NO_IMPROVEMENT"]
   },
-  "note": "LLM viết model incremental nhưng thiếu partition_by (tính lại toàn bộ mỗi lần chạy): P13 lúc tạo pipeline và UC-3 sau đó đều phải đo thật bản có điều kiện phân vùng trên pagila.rental (16.044 dòng); giữ hay bỏ tùy số đo, UC-3 không gọi LLM"
+  "note": "LLM viết model incremental nhưng thiếu partition_by (tính lại toàn bộ mỗi lần chạy): P13 lúc tạo pipeline và UC-3 sau đó đều phải đo thật bản có điều kiện phân vùng trên pagila.rental (32.088 dòng); giữ hay bỏ tùy số đo, UC-3 không gọi LLM"
 }

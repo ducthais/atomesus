@@ -93,7 +93,9 @@ def _down(_config, schema, decl=None):
 
 
 @pytest.mark.asyncio
-async def test_catalog_lists_declared_sources_with_real_columns_and_entities(client, catalog_api, monkeypatch):
+async def test_catalog_lists_declared_sources_with_real_columns_and_entities(
+    client, catalog_api, monkeypatch, sales_visible
+):
     assert (await client.get("/api/v1/catalog")).status_code == 401
     await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
     sales = (await client.get("/api/v1/catalog")).json()["domains"]["sales"]
@@ -113,7 +115,7 @@ async def test_catalog_lists_declared_sources_with_real_columns_and_entities(cli
 
 
 @pytest.mark.asyncio
-async def test_source_discovery_connects_on_request(client, catalog_api, monkeypatch):
+async def test_source_discovery_connects_on_request(client, catalog_api, monkeypatch, sales_visible):
     assert (await client.get("/api/v1/catalog/sources")).status_code == 401
     await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
     sources = {s["ref"]: s for s in (await client.get("/api/v1/catalog/sources")).json()}
@@ -155,6 +157,19 @@ async def test_source_discovery_connects_on_request(client, catalog_api, monkeyp
     monkeypatch.setattr(catalog_api, "postgres_columns", _down)
     down = await client.get("/api/v1/catalog/sources/sales_pg/objects")
     assert down.status_code == 503 and down.json()["detail"] == "Không đọc được Postgres."
+
+
+@pytest.mark.asyncio
+async def test_hidden_sales_domain_is_absent_from_catalog_and_source_picker(client, catalog_api):
+    """domains.yml: sales `hidden: true` → không hiện ở catalog, danh sách nguồn, khám phá nguồn; domain khác vẫn có."""
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+    domains = (await client.get("/api/v1/catalog")).json()["domains"]
+    assert "sales" not in domains and {"marketing", "rental", "bench"} <= set(domains)
+    assert set(domains["rental"]["sources"]) == {"pagila_pg", "review_api"}
+    assert domains["rental"]["entities"]["review"]["tables"] == ["review_api.feedback"]
+    refs = {s["ref"] for s in (await client.get("/api/v1/catalog/sources")).json()}
+    assert not refs & {"sales_pg", "sales_api", "landing_sales"} and {"pagila_pg", "review_api", "mkt_api"} <= refs
+    assert (await client.get("/api/v1/catalog/sources/sales_pg/objects")).status_code == 404
 
 
 @pytest.mark.parametrize(

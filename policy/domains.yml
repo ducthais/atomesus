@@ -5,6 +5,7 @@ user_defaults:
     rates: { VND: 1, USD: 25400 }
 domains:
   sales:
+    hidden: true                      # ẩn khỏi luồng thao tác mới; run cũ và pipeline đã deploy vẫn đọc được
     datasets: [sales_raw]
     steward: an@company.vn
     currency:                         # dùng cho staging.columns[].currency
@@ -53,7 +54,8 @@ domains:
       base: USD                       # Pagila ghi tiền thuê bằng USD
       rates: { USD: 1 }
     sources:
-      pagila_pg: { kind: postgres, connection_ref: sandbox_pg, schema: pagila }
+      pagila_pg:  { kind: postgres, connection_ref: sandbox_pg, schema: pagila }
+      review_api: { kind: rest_api, connection_ref: mock_api,   openapi: /reviews/openapi.json }  # khóa chung rental_id, customer_id, film_id
     entities:
       film:
         canonical: true
@@ -80,6 +82,11 @@ domains:
         canonical: true
         definition: "cửa hàng cho thuê DVD"
         tables: [pagila_pg.store]
+      review:
+        canonical: true
+        definition: "phản hồi khách gửi sau khi trả một lượt thuê (điểm 1–5, có giới thiệu cho người khác không)"
+        tables: [review_api.feedback]
+        aliases: [đánh giá, phản hồi]
   bench:                              # bộ sự kiện lớn cho eval optimizer, sinh lúc chạy (eval/bench/make_events.py)
     datasets: [bench]
     steward: steward@company.vn       # TODO: đổi thành steward thật của domain

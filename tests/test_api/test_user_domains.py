@@ -66,7 +66,7 @@ async def test_catalog_scopes_domains_and_all_table_metadata(client, user_domain
     response = await client.get("/api/v1/catalog")
     assert response.status_code == 200
     domains = response.json()["domains"]
-    assert "sales" in domains
+    assert "sales" not in domains and "rental" in domains  # sales ẩn khỏi luồng mới với mọi vai trò
     assert (DOMAIN_A in domains) is visible
     assert (f"conn:{CONNECTION_A}" in user_domains.discovered) is visible
     if visible:
@@ -157,7 +157,7 @@ async def test_creating_run_or_chat_rejects_another_owners_source(
         assert "không có" in response.json()["detail"]
         assert user_domains.calls == []
     else:
-        assert user_domains.calls == [("minh", sources, {"sales", "marketing", "rental", "bench", DOMAIN_A})]
+        assert user_domains.calls == [("minh", sources, {"marketing", "rental", "bench", DOMAIN_A})], "run mới bỏ sales"
     assert user_domains.discovered == []
 
 
@@ -199,7 +199,7 @@ async def test_creating_run_or_chat_rejects_tables_outside_saved_selection(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path,message_key", [("/api/v1/agent/runs", "request"), ("/api/v1/chat", "message")])
-@pytest.mark.parametrize("source_ref,tables", [(SOURCE_A, []), ("sales_pg", ["other_table"])])
+@pytest.mark.parametrize("source_ref,tables", [(SOURCE_A, []), ("pagila_pg", ["other_table"])])
 async def test_run_and_chat_keep_empty_choice_and_yaml_table_behavior(
     client, user_domains, monkeypatch, path, message_key, source_ref, tables
 ):

@@ -1,11 +1,11 @@
-"""Chấm điểm agent trên 15 ca của SPEC §18.2 và 4 ca optimizer: chạy thật từng ca bằng LLM thật và nguồn thật.
+"""Chấm điểm agent trên 15 ca của SPEC §18.2, 1 ca nguồn review_api và 4 ca optimizer: chạy thật bằng LLM và nguồn thật.
 
 Cần Postgres nguồn và `make mock-api` đang chạy. Mỗi ca: lập kế hoạch → tự xác nhận (P2) → viết Spec → chạy thử
 trong sandbox. Run ghi vào sổ bằng chứng riêng (`--store`), không lẫn dữ liệu demo.
 
 | Nhóm      | Số ca | File            | Đạt khi                                                               |
 |-----------|-------|-----------------|-----------------------------------------------------------------------|
-| hợp lệ    | 6     | eval/golden/    | tới READY_FOR_REVIEW và bảng gold khớp golden từng dòng               |
+| hợp lệ    | 7     | eval/golden/    | tới READY_FOR_REVIEW và bảng gold khớp golden từng dòng (6 SPEC + 1 review_api) |
 | vi phạm   | 6     | eval/cases/     | dừng đúng mã `BLOCKED_*` mong đợi (2 ca mỗi cổng semantic, budget, ast_guard) |
 | mơ hồ     | 3     | eval/cases/     | dừng NEEDS_HUMAN ở bước `plan` kèm câu hỏi làm rõ, không đoán         |
 | optimizer | 4     | eval/cases/     | P13 và UC-3 đúng hành vi: đo khi luật áp, bỏ qua kèm lý do khi không; UC-3 `llm_calls = 0`; chỉ giữ bản vừa đúng vừa nhanh hơn |
@@ -238,7 +238,7 @@ def summarize_all(results: list[dict]) -> dict:
 
 
 def load_cases(only: set[str] | None = None, groups: set[str] | None = None) -> list[dict]:
-    """6 ca hợp lệ (eval/golden) rồi 6 ca vi phạm, 3 ca mơ hồ và 4 ca optimizer (eval/cases)."""
+    """7 ca hợp lệ (eval/golden) rồi 6 ca vi phạm, 3 ca mơ hồ và 4 ca optimizer (eval/cases)."""
     golden = [
         {**json.loads(p.read_text(encoding="utf-8")), "group": "valid"} for p in sorted(GOLDEN_DIR.glob("*.json"))
     ]
@@ -476,7 +476,9 @@ def write_report(results: list[dict], summary: dict, name: str = "latest") -> Pa
         encoding="utf-8",
     )
     lines = [
-        "# Kết quả chấm 15 ca (SPEC §18) và 4 ca optimizer" if name == "latest" else f"# Kết quả chấm ({name})",
+        "# Kết quả chấm 15 ca (SPEC §18), 1 ca review_api và 4 ca optimizer"
+        if name == "latest"
+        else f"# Kết quả chấm ({name})",
         "",
         f"Chạy lúc {stamp} bằng `python eval/run_eval.py`; số liệu đầy đủ ở `{name}.json`.",
         "",

@@ -3,6 +3,9 @@
 Mỗi domain một ứng dụng con với mô tả OpenAPI riêng, khớp `openapi` trong policy/domains.yml:
 - `/sales/openapi.json`: `GET /sales/payments`, thanh toán cho 30 đơn của `sales_raw.orders` (Postgres).
 - `/marketing/openapi.json`: `GET /marketing/leads`, `GET /marketing/contacts`.
+- `/reviews/openapi.json`: `GET /reviews/feedback`, phản hồi khách gửi sau khi trả DVD ở Pagila (domain `rental`), khóa
+  chung `rental_id`, `customer_id`, `film_id` với bảng `pagila.*`. Sinh từ seed Pagila bằng scripts/build_review_data.py
+  (4.764 bản ghi: 47 gửi trùng `feedback_id`, 24 `rating = "N/A"`, 14 trỏ tới lượt thuê không có).
 
 Phân trang `page` / `page_size`, bản ghi nằm ở `data`; trang quá cuối trả `data: []` (dlt dừng ở đó).
 Khóa chính khai báo bằng `x-primary-key` trong schema bản ghi (OpenAPI không có khái niệm khóa).
@@ -16,6 +19,9 @@ Chạy: `make mock-api` (cổng 8100, khớp PIPELINE_MOCK_API_URL mặc định
 thêm thanh toán cho đơn mới, dùng bởi scripts/grow_data.py để làm dữ liệu to dần.
 """
 
+import gzip
+import json
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Query
@@ -23,6 +29,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 PAGE_SIZE = 20
 ORDERS = 30
+# Không đặt ở data/: .gitignore và .dockerignore bỏ mọi thư mục tên data/.
+FEEDBACK_FILE = Path(__file__).resolve().parent / "fixtures" / "rental_feedback.json.gz"
 
 
 class Payment(BaseModel):
@@ -49,6 +57,25 @@ class Contact(BaseModel):
     lead_id: int
     full_name: str
     phone: str
+
+
+class Feedback(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"x-primary-key": ["feedback_id"]})
+    feedback_id: str
+    rental_id: int  # → pagila.rental.rental_id
+    customer_id: int  # → pagila.customer.customer_id (khách của lượt thuê đó)
+    film_id: int  # → pagila.film.film_id
+    rating: str  # "1".."5" như nguồn thật hay trả; có giá trị bẩn "N/A"
+    would_recommend: bool
+    comment: str
+    submitted_at: str = Field(json_schema_extra={"format": "date-time"})  # ISO 8601, UTC, sau return_date
+
+
+class FeedbackPage(BaseModel):
+    data: list[Feedback]
+    page: int
+    page_size: int
+    total: int
 
 
 class PaymentPage(BaseModel):
@@ -108,6 +135,8 @@ LEADS = [
 CONTACTS = [
     {"contact_id": i, "lead_id": i * 2, "full_name": f"Contact {i}", "phone": f"09{i:08d}"} for i in range(1, 8)
 ]
+with gzip.open(FEEDBACK_FILE, "rt", encoding="utf-8") as _file:
+    FEEDBACK = json.load(_file)
 
 Page = Annotated[int, Query(ge=1)]
 PageSize = Annotated[int, Query(ge=1, le=100)]
@@ -120,6 +149,7 @@ def _page(rows: list[dict], page: int, page_size: int) -> dict:
 
 sales = FastAPI(title="Mock API — sales", version="1.0")
 marketing = FastAPI(title="Mock API — marketing", version="1.0")
+reviews = FastAPI(title="Mock API — reviews", version="1.0")
 
 
 @sales.get("/payments", response_model=PaymentPage)
@@ -158,9 +188,15 @@ def contacts(page: Page = 1, page_size: PageSize = PAGE_SIZE) -> dict:
     return _page(CONTACTS, page, page_size)
 
 
+@reviews.get("/feedback", response_model=FeedbackPage)
+def feedback(page: Page = 1, page_size: PageSize = PAGE_SIZE) -> dict:
+    return _page(FEEDBACK, page, page_size)
+
+
 app = FastAPI(title="Mock API", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/sales", sales)
 app.mount("/marketing", marketing)
+app.mount("/reviews", reviews)
 
 
 @app.get("/health")

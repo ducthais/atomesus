@@ -1,0 +1,6029 @@
+{
+  "id": "valid_postgres_rest_api_reviews_by_customer",
+  "source_kinds": [
+    "postgres",
+    "rest_api"
+  ],
+  "request": "Với từng khách hàng: số lượt thuê DVD, số phản hồi khách đã gửi và điểm đánh giá trung bình của các phản hồi đó",
+  "sources": [
+    {
+      "source_ref": "pagila_pg",
+      "tables": [
+        "customer",
+        "rental"
+      ]
+    },
+    {
+      "source_ref": "review_api",
+      "tables": [
+        "feedback"
+      ]
+    }
+  ],
+  "key": [
+    "customer_id"
+  ],
+  "measures": {
+    "rental_count": "số lượt thuê",
+    "review_count": "số phản hồi hợp lệ",
+    "avg_rating": "điểm trung bình (1–5)"
+  },
+  "rows": [
+    {
+      "key": {
+        "customer_id": 1
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 14,
+        "avg_rating": "3.6429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 2
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 6,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 3
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 4
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 5
+      },
+      "values": {
+        "rental_count": 76,
+        "review_count": 13,
+        "avg_rating": "3.8462"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 6
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 7
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 12,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 8
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 6,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 9
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "3.6250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 10
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 11
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 12
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 11,
+        "avg_rating": "3.3636"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 13
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 14
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 15
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 11,
+        "avg_rating": "3.5455"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 16
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 8,
+        "avg_rating": "3.3750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 17
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 18
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 7,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 19
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 5,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 20
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 21
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 22
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 3,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 23
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 4,
+        "avg_rating": "3.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 24
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 6,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 25
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 26
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 16,
+        "avg_rating": "3.6875"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 27
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 28
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 8,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 29
+      },
+      "values": {
+        "rental_count": 72,
+        "review_count": 10,
+        "avg_rating": "4.3000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 30
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 31
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 32
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 33
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 34
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 35
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 36
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 5,
+        "avg_rating": "4.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 37
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 38
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 39
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.3000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 40
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 41
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 42
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 6,
+        "avg_rating": "4.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 43
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 44
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 5,
+        "avg_rating": "4.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 45
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 11,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 46
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 10,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 47
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 48
+      },
+      "values": {
+        "rental_count": 34,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 49
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 50
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 13,
+        "avg_rating": "3.6154"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 51
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 7,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 52
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 53
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 54
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 55
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 56
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 11,
+        "avg_rating": "3.8182"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 57
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 58
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 13,
+        "avg_rating": "3.2308"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 59
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 12,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 60
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 7,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 61
+      },
+      "values": {
+        "rental_count": 28,
+        "review_count": 3,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 62
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 1,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 63
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 64
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 9,
+        "avg_rating": "3.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 65
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 4,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 66
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 15,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 67
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 4,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 68
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 69
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 5,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 70
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 4,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 71
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 72
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 73
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 6,
+        "avg_rating": "3.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 74
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 75
+      },
+      "values": {
+        "rental_count": 82,
+        "review_count": 12,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 76
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 77
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 78
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 79
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 4,
+        "avg_rating": "4.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 80
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 15,
+        "avg_rating": "3.8667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 81
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 3,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 82
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 83
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 3,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 84
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 12,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 85
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 11,
+        "avg_rating": "3.3636"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 86
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 17,
+        "avg_rating": "3.7647"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 87
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 88
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 89
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 7,
+        "avg_rating": "3.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 90
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "4.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 91
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 14,
+        "avg_rating": "3.6429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 92
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 93
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 13,
+        "avg_rating": "4.0769"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 94
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 4,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 95
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 7,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 96
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 97
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 4,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 98
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 99
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 100
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 101
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 6,
+        "avg_rating": "2.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 102
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 103
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 9,
+        "avg_rating": "4.2222"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 104
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 105
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 106
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 4,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 107
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 108
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 109
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 110
+      },
+      "values": {
+        "rental_count": 28,
+        "review_count": 3,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 111
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 112
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 113
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 11,
+        "avg_rating": "3.9091"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 114
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 115
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 116
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 117
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 118
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 3,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 119
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 14,
+        "avg_rating": "4.3571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 120
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 11,
+        "avg_rating": "2.9091"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 121
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.6250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 122
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 11,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 123
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 124
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 125
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 10,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 126
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 11,
+        "avg_rating": "3.4545"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 127
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 9,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 128
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 15,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 129
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 130
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 131
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 12,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 132
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "4.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 133
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 134
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 5,
+        "avg_rating": "4.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 135
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 10,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 136
+      },
+      "values": {
+        "rental_count": 30,
+        "review_count": 3,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 137
+      },
+      "values": {
+        "rental_count": 78,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 138
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 8,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 139
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 140
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 3,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 141
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 16,
+        "avg_rating": "3.6875"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 142
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 143
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 144
+      },
+      "values": {
+        "rental_count": 84,
+        "review_count": 15,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 145
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 146
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 9,
+        "avg_rating": "3.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 147
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 148
+      },
+      "values": {
+        "rental_count": 92,
+        "review_count": 17,
+        "avg_rating": "4.5294"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 149
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 12,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 150
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 14,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 151
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 152
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 153
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 10,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 154
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 155
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 11,
+        "avg_rating": "3.9091"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 156
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 157
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 158
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 10,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 159
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 160
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 4,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 161
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 162
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 5,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 163
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.9000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 164
+      },
+      "values": {
+        "rental_count": 32,
+        "review_count": 3,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 165
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 166
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 3,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 167
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 5,
+        "avg_rating": "2.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 168
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 169
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 5,
+        "avg_rating": "3.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 170
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 13,
+        "avg_rating": "3.8462"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 171
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 12,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 172
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 12,
+        "avg_rating": "3.9167"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 173
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 174
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 5,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 175
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 4,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 176
+      },
+      "values": {
+        "rental_count": 74,
+        "review_count": 11,
+        "avg_rating": "4.2727"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 177
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 178
+      },
+      "values": {
+        "rental_count": 78,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 179
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 180
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "3.6250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 181
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 182
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 183
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 184
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 185
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 186
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 11,
+        "avg_rating": "4.2727"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 187
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 188
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 189
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 6,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 190
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 191
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 192
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 2,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 193
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 194
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 3,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 195
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 7,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 196
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 12,
+        "avg_rating": "3.9167"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 197
+      },
+      "values": {
+        "rental_count": 80,
+        "review_count": 14,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 198
+      },
+      "values": {
+        "rental_count": 74,
+        "review_count": 11,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 199
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 6,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 200
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 201
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 5,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 202
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "4.4444"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 203
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 204
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 13,
+        "avg_rating": "4.1538"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 205
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 3,
+        "avg_rating": "5.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 206
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 207
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 16,
+        "avg_rating": "3.9375"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 208
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 5,
+        "avg_rating": "4.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 209
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 210
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 211
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 12,
+        "avg_rating": "3.5833"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 212
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 213
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 4,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 214
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 215
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 216
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 217
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 218
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 6,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 219
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 220
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 8,
+        "avg_rating": "3.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 221
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 5,
+        "avg_rating": "4.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 222
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 6,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 223
+      },
+      "values": {
+        "rental_count": 34,
+        "review_count": 6,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 224
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 225
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 7,
+        "avg_rating": "4.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 226
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 4,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 227
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 228
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 3,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 229
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 9,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 230
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 231
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 232
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 1,
+        "avg_rating": "5.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 233
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 234
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 5,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 235
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 236
+      },
+      "values": {
+        "rental_count": 84,
+        "review_count": 16,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 237
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 238
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 6,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 239
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 11,
+        "avg_rating": "4.2727"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 240
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 7,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 241
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 11,
+        "avg_rating": "4.2727"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 242
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 14,
+        "avg_rating": "3.6429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 243
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 244
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 7,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 245
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 12,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 246
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 3,
+        "avg_rating": "2.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 247
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 248
+      },
+      "values": {
+        "rental_count": 30,
+        "review_count": 4,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 249
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 250
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 8,
+        "avg_rating": "3.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 251
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 7,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 252
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 253
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 9,
+        "avg_rating": "3.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 254
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 14,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 255
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 6,
+        "avg_rating": "5.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 256
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 257
+      },
+      "values": {
+        "rental_count": 74,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 258
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 8,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 259
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 260
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 261
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 262
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 263
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.9000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 264
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 7,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 265
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 266
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 267
+      },
+      "values": {
+        "rental_count": 72,
+        "review_count": 5,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 268
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 269
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 10,
+        "avg_rating": "3.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 270
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 271
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 8,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 272
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 273
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 274
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 11,
+        "avg_rating": "3.7273"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 275
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 276
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 6,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 277
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 278
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "3.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 279
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 280
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 11,
+        "avg_rating": "3.1818"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 281
+      },
+      "values": {
+        "rental_count": 28,
+        "review_count": 3,
+        "avg_rating": "2.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 282
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 11,
+        "avg_rating": "3.6364"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 283
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 284
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 10,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 285
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 286
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 10,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 287
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 5,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 288
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 4,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 289
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 290
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 5,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 291
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 292
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 6,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 293
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 4,
+        "avg_rating": "2.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 294
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 4,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 295
+      },
+      "values": {
+        "rental_count": 76,
+        "review_count": 9,
+        "avg_rating": "3.4444"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 296
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 5,
+        "avg_rating": "3.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 297
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 298
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 11,
+        "avg_rating": "3.9091"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 299
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 300
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 11,
+        "avg_rating": "4.0909"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 301
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 302
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 9,
+        "avg_rating": "3.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 303
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 10,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 304
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.6250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 305
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 4,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 306
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 5,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 307
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 308
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.9000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 309
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 11,
+        "avg_rating": "3.6364"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 310
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 311
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 312
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 313
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 314
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 13,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 315
+      },
+      "values": {
+        "rental_count": 34,
+        "review_count": 3,
+        "avg_rating": "4.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 316
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 317
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 7,
+        "avg_rating": "2.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 318
+      },
+      "values": {
+        "rental_count": 24,
+        "review_count": 3,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 319
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 320
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 6,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 321
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 9,
+        "avg_rating": "4.2222"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 322
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 323
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 324
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 6,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 325
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 326
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 12,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 327
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "3.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 328
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 3,
+        "avg_rating": "4.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 329
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 4,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 330
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 331
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 8,
+        "avg_rating": "4.3750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 332
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 333
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 334
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 335
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 336
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 337
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 9,
+        "avg_rating": "4.2222"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 338
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 10,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 339
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 10,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 340
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 341
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 342
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 343
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 344
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 4,
+        "avg_rating": "3.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 345
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 346
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 347
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 348
+      },
+      "values": {
+        "rental_count": 72,
+        "review_count": 10,
+        "avg_rating": "3.9000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 349
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 6,
+        "avg_rating": "3.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 350
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 3,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 351
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 9,
+        "avg_rating": "4.2222"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 352
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 7,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 353
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 354
+      },
+      "values": {
+        "rental_count": 72,
+        "review_count": 12,
+        "avg_rating": "4.0833"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 355
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 6,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 356
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 4,
+        "avg_rating": "2.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 357
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 358
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 359
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 8,
+        "avg_rating": "3.6250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 360
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 7,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 361
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 362
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 363
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 6,
+        "avg_rating": "2.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 364
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 365
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 366
+      },
+      "values": {
+        "rental_count": 74,
+        "review_count": 9,
+        "avg_rating": "3.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 367
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 9,
+        "avg_rating": "4.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 368
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 14,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 369
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 9,
+        "avg_rating": "3.4444"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 370
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 5,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 371
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 15,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 372
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 13,
+        "avg_rating": "3.8462"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 373
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 17,
+        "avg_rating": "3.7059"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 374
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 4,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 375
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 11,
+        "avg_rating": "3.6364"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 376
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 7,
+        "avg_rating": "4.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 377
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 378
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 4,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 379
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "2.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 380
+      },
+      "values": {
+        "rental_count": 72,
+        "review_count": 10,
+        "avg_rating": "3.3000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 381
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 382
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 7,
+        "avg_rating": "3.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 383
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 384
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 8,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 385
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 386
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 5,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 387
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 7,
+        "avg_rating": "4.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 388
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 4,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 389
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 390
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 11,
+        "avg_rating": "3.5455"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 391
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "3.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 392
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 393
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 394
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 7,
+        "avg_rating": "3.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 395
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 4,
+        "avg_rating": "3.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 396
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 9,
+        "avg_rating": "4.2222"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 397
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 398
+      },
+      "values": {
+        "rental_count": 32,
+        "review_count": 4,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 399
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 400
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 401
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 402
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 7,
+        "avg_rating": "4.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 403
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 404
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 405
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 406
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 407
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 13,
+        "avg_rating": "4.0769"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 408
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 409
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 410
+      },
+      "values": {
+        "rental_count": 76,
+        "review_count": 14,
+        "avg_rating": "3.9286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 411
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 412
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 13,
+        "avg_rating": "3.6923"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 413
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 0,
+        "avg_rating": "0.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 414
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 415
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 3,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 416
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 12,
+        "avg_rating": "3.9167"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 417
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 418
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 14,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 419
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 420
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 421
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 422
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 423
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 424
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 4,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 425
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 426
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 12,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 427
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 10,
+        "avg_rating": "3.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 428
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 3,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 429
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 9,
+        "avg_rating": "3.8889"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 430
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 431
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 432
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 433
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 434
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 435
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 436
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "3.6250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 437
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 438
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 4,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 439
+      },
+      "values": {
+        "rental_count": 72,
+        "review_count": 14,
+        "avg_rating": "4.0714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 440
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 441
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 6,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 442
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 8,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 443
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 8,
+        "avg_rating": "3.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 444
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 445
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 446
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 11,
+        "avg_rating": "3.9091"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 447
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 7,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 448
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 449
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 450
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 451
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 12,
+        "avg_rating": "3.5833"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 452
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 453
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 2,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 454
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 8,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 455
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 5,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 456
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 9,
+        "avg_rating": "3.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 457
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 458
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 459
+      },
+      "values": {
+        "rental_count": 76,
+        "review_count": 14,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 460
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 4,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 461
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "4.2222"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 462
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 9,
+        "avg_rating": "4.2222"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 463
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 12,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 464
+      },
+      "values": {
+        "rental_count": 32,
+        "review_count": 3,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 465
+      },
+      "values": {
+        "rental_count": 34,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 466
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "3.3750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 467
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 11,
+        "avg_rating": "3.8182"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 468
+      },
+      "values": {
+        "rental_count": 78,
+        "review_count": 8,
+        "avg_rating": "4.3750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 469
+      },
+      "values": {
+        "rental_count": 80,
+        "review_count": 14,
+        "avg_rating": "3.3571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 470
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 11,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 471
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 9,
+        "avg_rating": "4.1111"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 472
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 473
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 10,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 474
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 12,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 475
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 476
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 8,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 477
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 478
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 479
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 9,
+        "avg_rating": "3.4444"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 480
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 4,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 481
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 482
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 12,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 483
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 484
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 19,
+        "avg_rating": "3.8947"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 485
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 11,
+        "avg_rating": "3.8182"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 486
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 10,
+        "avg_rating": "3.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 487
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.3750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 488
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 489
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 490
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 6,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 491
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 492
+      },
+      "values": {
+        "rental_count": 32,
+        "review_count": 10,
+        "avg_rating": "3.3000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 493
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 494
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 495
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 496
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 497
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 498
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 499
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 14,
+        "avg_rating": "3.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 500
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 12,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 501
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 502
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 12,
+        "avg_rating": "4.0833"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 503
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 7,
+        "avg_rating": "3.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 504
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 9,
+        "avg_rating": "3.5556"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 505
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 3,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 506
+      },
+      "values": {
+        "rental_count": 70,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 507
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 508
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 13,
+        "avg_rating": "3.5385"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 509
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 2,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 510
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 511
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 14,
+        "avg_rating": "4.2143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 512
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 513
+      },
+      "values": {
+        "rental_count": 62,
+        "review_count": 10,
+        "avg_rating": "3.7000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 514
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 515
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 3,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 516
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 517
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 6,
+        "avg_rating": "4.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 518
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 519
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 520
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 9,
+        "avg_rating": "3.4444"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 521
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 522
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 13,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 523
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 8,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 524
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 6,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 525
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 3,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 526
+      },
+      "values": {
+        "rental_count": 90,
+        "review_count": 17,
+        "avg_rating": "3.8235"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 527
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 2,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 528
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.9000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 529
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 530
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 3,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 531
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 12,
+        "avg_rating": "4.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 532
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 9,
+        "avg_rating": "4.7778"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 533
+      },
+      "values": {
+        "rental_count": 66,
+        "review_count": 10,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 534
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 535
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 6,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 536
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 8,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 537
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 538
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 539
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 540
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 10,
+        "avg_rating": "2.6000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 541
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 542
+      },
+      "values": {
+        "rental_count": 36,
+        "review_count": 5,
+        "avg_rating": "2.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 543
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 5,
+        "avg_rating": "4.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 544
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 5,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 545
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "4.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 546
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 5,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 547
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 6,
+        "avg_rating": "4.1667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 548
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 3,
+        "avg_rating": "5.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 549
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 5,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 550
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 551
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 7,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 552
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 6,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 553
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 5,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 554
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 4,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 555
+      },
+      "values": {
+        "rental_count": 34,
+        "review_count": 4,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 556
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 9,
+        "avg_rating": "3.6667"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 557
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 558
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 7,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 559
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 7,
+        "avg_rating": "4.1429"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 560
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 5,
+        "avg_rating": "4.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 561
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 5,
+        "avg_rating": "4.2000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 562
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 563
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 564
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 7,
+        "avg_rating": "3.7143"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 565
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 10,
+        "avg_rating": "3.9000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 566
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 567
+      },
+      "values": {
+        "rental_count": 40,
+        "review_count": 3,
+        "avg_rating": "5.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 568
+      },
+      "values": {
+        "rental_count": 42,
+        "review_count": 7,
+        "avg_rating": "3.2857"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 569
+      },
+      "values": {
+        "rental_count": 64,
+        "review_count": 6,
+        "avg_rating": "3.3333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 570
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 10,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 571
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 8,
+        "avg_rating": "3.8750"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 572
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 573
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 8,
+        "avg_rating": "3.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 574
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 575
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 9,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 576
+      },
+      "values": {
+        "rental_count": 68,
+        "review_count": 11,
+        "avg_rating": "3.1818"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 577
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 10,
+        "avg_rating": "3.4000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 578
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 579
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.8571"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 580
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 6,
+        "avg_rating": "3.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 581
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 582
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 10,
+        "avg_rating": "4.1000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 583
+      },
+      "values": {
+        "rental_count": 46,
+        "review_count": 4,
+        "avg_rating": "4.2500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 584
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 6,
+        "avg_rating": "2.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 585
+      },
+      "values": {
+        "rental_count": 48,
+        "review_count": 4,
+        "avg_rating": "3.7500"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 586
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 5,
+        "avg_rating": "3.8000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 587
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 8,
+        "avg_rating": "4.1250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 588
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 7,
+        "avg_rating": "4.4286"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 589
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 6,
+        "avg_rating": "3.8333"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 590
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 8,
+        "avg_rating": "3.6250"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 591
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 6,
+        "avg_rating": "4.5000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 592
+      },
+      "values": {
+        "rental_count": 58,
+        "review_count": 11,
+        "avg_rating": "4.0909"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 593
+      },
+      "values": {
+        "rental_count": 52,
+        "review_count": 11,
+        "avg_rating": "4.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 594
+      },
+      "values": {
+        "rental_count": 54,
+        "review_count": 11,
+        "avg_rating": "4.3636"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 595
+      },
+      "values": {
+        "rental_count": 60,
+        "review_count": 11,
+        "avg_rating": "3.6364"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 596
+      },
+      "values": {
+        "rental_count": 56,
+        "review_count": 12,
+        "avg_rating": "3.5833"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 597
+      },
+      "values": {
+        "rental_count": 50,
+        "review_count": 7,
+        "avg_rating": "3.5714"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 598
+      },
+      "values": {
+        "rental_count": 44,
+        "review_count": 2,
+        "avg_rating": "3.0000"
+      }
+    },
+    {
+      "key": {
+        "customer_id": 599
+      },
+      "values": {
+        "rental_count": 38,
+        "review_count": 5,
+        "avg_rating": "3.6000"
+      }
+    }
+  ],
+  "totals": {
+    "rental_count": 32088,
+    "review_count": 4693,
+    "avg_rating": "3.8521"
+  },
+  "notes": "Phản hồi gộp theo customer_id của chính phản hồi (14 phản hồi trỏ tới rental_id không có vẫn tính); 47 bản gửi trùng feedback_id tính một lần; 24 phản hồi rating N/A bị tách, không vào số phản hồi lẫn điểm. Lấy customer (một dòng mỗi khách) làm bảng chính, rental và feedback đều là phía nhiều nên phải gộp trước theo customer_id (ghép thẳng rental với feedback theo customer_id là nhiều-nhiều, nhân số lượt thuê lẫn số phản hồi). Khách 413 chỉ có một phản hồi N/A: review_count = 0, avg_rating NULL hoặc 0 đều chấp nhận (LEFT JOIN)."
+}

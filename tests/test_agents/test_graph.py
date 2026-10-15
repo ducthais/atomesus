@@ -570,7 +570,7 @@ def test_service_records_unexpected_crash(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monkeypatch):
+async def test_agent_api_requires_engineer_and_saves_run(client, tmp_path, monkeypatch, sales_visible):
     from src.api import routes
     from src.main import app
     from src.pipeline.settings import PipelineSettings
