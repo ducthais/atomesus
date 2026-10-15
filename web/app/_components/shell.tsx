@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useActionState, useState, useTransition } from 'react';
-import { Activity, BookOpenText, CircleAlert, Compass, Database, Gauge, Layers3, LogIn, LogOut, MailCheck, Network, Plus, ShieldCheck, UserCheck, UserCog, UserPlus, Waypoints } from 'lucide-react';
+import { useActionState, useRef, useState, useTransition } from 'react';
+import { Activity, BookOpenText, CircleAlert, Compass, Database, Gauge, Layers3, LogIn, LogOut, MailCheck, Network, Plus, ShieldCheck, UserCheck, UserCog, UserPlus, UserRound, Waypoints } from 'lucide-react';
 import { signIn, signOut, signUp, verifySignUp } from '../actions';
 import type { Person } from '@/lib/catalog/types';
 import { INVITE_INVALID, REVIEW_PATH, inviteTokenFromPath, isInviteToken } from '@/lib/invite';
@@ -49,6 +49,8 @@ export function LoginScreen() {
   const inviteToken = inviteTokenFromPath(path);
   const [mode, setMode] = useState<'login' | 'register'>(inviteToken !== null ? 'register' : 'login');
   const [registerEpoch, setRegisterEpoch] = useState(0);
+  const [username, setUsername] = useState('');
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [loginState, loginAction, loginPending] = useActionState(signIn, null);
   if (inviteToken !== null && !isInviteToken(inviteToken)) return <main className="login">
     <div className="login-card">
@@ -58,7 +60,12 @@ export function LoginScreen() {
       <Link className="button" href="/">Về trang đăng nhập</Link>
     </div>
   </main>;
+  const selectRole = (account: 'engineer' | 'reviewer') => {
+    setUsername(account);
+    passwordRef.current?.focus();
+  };
   return <main className="login">
+    <div className={`login-layout${mode === 'register' ? ' register-mode' : ''}`}>
     <div className="login-card">
       <span className="brand-mark"><Layers3 size={20} aria-hidden /></span>
       <h1>{inviteToken ? 'Lời mời làm Reviewer' : 'Atomesus'}</h1>
@@ -73,10 +80,10 @@ export function LoginScreen() {
         <form action={loginAction} className="login-form">
           {inviteToken && <input type="hidden" name="next" value={path} />}
           <label className="field" htmlFor="login-username">Tên đăng nhập
-            <input id="login-username" name="username" autoComplete="username" required autoFocus placeholder="engineer, reviewer hoặc admin" disabled={loginPending} />
+            <input id="login-username" name="username" autoComplete="username" required autoFocus value={username} onChange={event => setUsername(event.target.value)} placeholder="engineer, reviewer hoặc admin" disabled={loginPending} />
           </label>
           <label className="field" htmlFor="login-password">Mật khẩu
-            <input id="login-password" name="password" type="password" autoComplete="current-password" required disabled={loginPending} />
+            <input ref={passwordRef} id="login-password" name="password" type="password" autoComplete="current-password" required disabled={loginPending} />
           </label>
           <button className="button primary" type="submit" disabled={loginPending}><LogIn size={15} aria-hidden />{loginPending ? 'Đang đăng nhập…' : 'Đăng nhập'}</button>
         </form>
@@ -88,6 +95,24 @@ export function LoginScreen() {
         {inviteToken && <button type="button" className="button" style={{ justifyContent: 'center', whiteSpace: 'normal' }} onClick={() => setMode('login')}>
           <LogIn size={15} aria-hidden />Đã có tài khoản Reviewer? Đăng nhập</button>}
       </>}
+    </div>
+    {mode === 'login' && !inviteToken && <aside className="login-quick" aria-labelledby="login-quick-title">
+      <span className="eyebrow">Truy cập nhanh</span>
+      <h2 id="login-quick-title">Chọn vai trò</h2>
+      <p className="muted">Chọn tài khoản để điền tên đăng nhập. Mật khẩu vẫn được xác thực như bình thường.</p>
+      <div className="login-role-list">
+        <button className="login-role" type="button" disabled={loginPending} onClick={() => selectRole('engineer')}>
+          <span className="login-role-icon engineer"><UserRound size={18} aria-hidden /></span>
+          <span><strong>Engineer</strong><small>Tạo và chạy thử pipeline</small></span>
+          <span className="login-role-name">engineer</span>
+        </button>
+        <button className="login-role" type="button" disabled={loginPending} onClick={() => selectRole('reviewer')}>
+          <span className="login-role-icon reviewer"><ShieldCheck size={18} aria-hidden /></span>
+          <span><strong>Reviewer</strong><small>Xem bằng chứng và duyệt run</small></span>
+          <span className="login-role-name">reviewer</span>
+        </button>
+      </div>
+    </aside>}
     </div>
   </main>;
 }
