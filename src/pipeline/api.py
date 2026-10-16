@@ -158,9 +158,7 @@ def login(body: LoginRequest, request: Request, response: Response, config: Pipe
             "PIPELINE_ENGINEER_PASSWORD / PIPELINE_REVIEWER_PASSWORD / PIPELINE_ADMIN_PASSWORD.",
         )
     if user is None or not valid:
-        wait = store.record_login_failure(
-            config.store_path, ip, username, MAX_LOGIN_ATTEMPTS, LOGIN_WINDOW_SECONDS
-        )
+        wait = store.record_login_failure(config.store_path, ip, username, MAX_LOGIN_ATTEMPTS, LOGIN_WINDOW_SECONDS)
         if wait > 0:
             raise HTTPException(
                 429,

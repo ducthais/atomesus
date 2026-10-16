@@ -283,7 +283,9 @@ def _safe_output(output: str, env: dict[str, str]) -> str:
     """Tiến trình dlt có thể in credential trong traceback; xóa trước khi ghi bằng chứng."""
     secrets = set()
     for key, value in env.items():
-        if value and re.search(r"CREDENTIAL|PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|DSN", key, re.I):
+        if value and re.search(
+            r"CREDENTIAL|PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|DSN", key, re.I
+        ):
             secrets.add(value)
         if key.endswith("__CREDENTIALS"):
             secrets.add(value)

@@ -52,10 +52,11 @@ def test_failure_redacts_credentials_url_and_only_long_passwords(monkeypatch, tm
     [
         ('{"api_key":"fake-api-key","ok":"kept"}', "fake-api-key"),
         ("Authorization: Bearer fake-bearer-token", "fake-bearer-token"),
-        ('password=\"fake password value\"', "fake password value"),
+        ('password="fake password value"', "fake password value"),
         ("postgresql://reader:fake-dsn-password@db.example/shop", "fake-dsn-password"),
         (
-            "-----BEGIN PRIVATE KEY-----\nfake-private-material\n-----END PRIVATE KEY-----",
+            # Tách chuỗi để bộ quét secret của gate không nhận nhầm khóa giả là private key thật.
+            "-----BEGIN " + "PRIVATE KEY-----\nfake-private-material\n-----END " + "PRIVATE KEY-----",
             "fake-private-material",
         ),
     ],

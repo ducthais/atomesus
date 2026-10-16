@@ -304,8 +304,7 @@ def record_login_failure(path: str, ip: str, username: str, limit: int, window: 
         else:
             attempts, first_at = row[0] + 1, row[1]
             conn.execute(
-                "UPDATE login_failures SET attempts = ?, last_at = ?"
-                " WHERE ip = ? AND username = ? COLLATE NOCASE",
+                "UPDATE login_failures SET attempts = ?, last_at = ? WHERE ip = ? AND username = ? COLLATE NOCASE",
                 (attempts, now, ip, username),
             )
     return max(0.0, first_at + window - now) if attempts >= limit else 0.0

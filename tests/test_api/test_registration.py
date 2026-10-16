@@ -344,9 +344,7 @@ async def test_production_allows_changed_built_in_passwords_and_registered_accou
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="https://test") as production_client:
-            registered = await production_client.post(
-                "/api/v1/pipeline/register", json=payload_for("production.user")
-            )
+            registered = await production_client.post("/api/v1/pipeline/register", json=payload_for("production.user"))
             assert registered.status_code == 201, registered.text
             registered_user = registered.json()
             assert (await production_client.get("/api/v1/pipeline/session")).json() == registered_user
