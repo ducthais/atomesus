@@ -443,14 +443,25 @@ async def callback(
 
 
 @pytest.mark.asyncio
-async def test_callback_deployed_moves_run_to_deployed_and_repeat_is_idempotent(client, approved, store_path):
+async def test_callback_deployed_moves_run_to_deployed_and_exact_signed_replay_is_idempotent(
+    client, approved, store_path
+):
     await send(client, "pull_request", pull_closed(merged=True))
 
-    response = await callback(client, callback_body(approved))
+    body = json.dumps(callback_body(approved)).encode()
+    timestamp = str(int(time.time()))
+    headers = {
+        "Content-Type": "application/json",
+        "X-Atomesus-Timestamp": timestamp,
+        "X-Atomesus-Signature": sign(timestamp.encode() + b"." + body, DEPLOYER_SECRET),
+    }
+
+    response = await client.post(CALLBACK, content=body, headers=headers)
     after_first = stored(store_path)
-    again = await callback(client, callback_body(approved))
+    again = await client.post(CALLBACK, content=body, headers=headers)
 
     assert response.status_code == 200, response.text
+    assert DEPLOYER_SECRET not in response.text and DEPLOYER_SECRET not in again.text
     report = get_run_report(store_path, RUN_ID)
     assert report.status == "DEPLOYED" and report.stage_reached == "deploy"
     assert report.deployment.state == "merged", "callback không ghi đè thay đổi của webhook merge"
