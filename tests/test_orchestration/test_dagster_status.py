@@ -94,6 +94,50 @@ def test_running_schedule_has_next_tick_and_never_run_asset_has_no_run():
     assert gold["last_run"] is None
 
 
+def _node(path, jobs, materialized=None):
+    return {
+        "key": {"path": path},
+        "definition": {"jobNames": ["__ASSET_JOB", *jobs]},
+        "assetMaterializations": [{"timestamp": str(materialized), "runId": f"r{materialized}"}]
+        if materialized
+        else [],
+    }
+
+
+def test_model_prefixed_keys_keep_the_catalog_contract_and_merge_shared_bronze():
+    # Template v2 (code location hợp nhất): key Dagster có tiền tố model; API vẫn trả `gold/<model>`.
+    data = response(runs=[])
+    data["assetsOrError"]["nodes"] = [
+        _node(["a_model", "gold", "a_model"], ["a_model_job"], 1000),
+        _node(["a_model", "bronze", "raw_rental"], ["a_model_job"], 1000),
+        _node(["b_model", "bronze", "raw_rental"], ["b_model_job"], 2000),
+    ]
+
+    assets = dagster.parse_status(data)
+
+    assert set(assets) == {"gold/a_model", "bronze/raw_rental"}
+    assert assets["gold/a_model"]["dagster_keys"] == ["a_model/gold/a_model"]
+    shared = assets["bronze/raw_rental"]
+    assert shared["jobs"] == ["a_model_job", "b_model_job"]
+    assert shared["dagster_keys"] == ["a_model/bronze/raw_rental", "b_model/bronze/raw_rental"]
+    assert shared["last_materialized_run_id"] == "r2000", "lần materialize mới nhất trong các pipeline"
+    assert dagster.catalog_key(["bronze", "raw_orders"]) == "bronze/raw_orders"
+    assert dagster.catalog_key(["fct_daily_sales_orders"]) == "fct_daily_sales_orders"
+
+
+def test_filtered_shared_asset_keeps_only_visible_dagster_keys():
+    data = response(runs=[])
+    data["assetsOrError"]["nodes"] = [
+        _node(["a_model", "bronze", "raw_rental"], ["a_model_job"]),
+        _node(["b_model", "bronze", "raw_rental"], ["b_model_job"]),
+    ]
+
+    seen = dagster.filter_status(dagster.parse_status(data), lambda job: job == "a_model_job")
+
+    assert seen["bronze/raw_rental"]["dagster_keys"] == ["a_model/bronze/raw_rental"]
+    assert "b_model" not in str(seen)
+
+
 def test_graphql_error_section_is_reported():
     data = response()
     data["runsOrError"] = {"__typename": "PythonError", "message": "boom"}

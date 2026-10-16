@@ -137,9 +137,18 @@ def source_records(spec: Spec, policy: Policy, settings: PipelineSettings) -> di
 
 
 def deployed_models(deploy_dir: str) -> list[str]:
-    """Pipeline đang deploy ở Dagster local (bỏ thư mục `.tmp` deploy đang ghi dở)."""
+    """Pipeline đang chạy trên Dagster: bỏ bản tạm / sao lưu của deployer (`<model>.tmp-<token>`, `.old-<token>`) và
+    bundle template cũ mà code location hợp nhất không nạp (chỉ giữ lịch sử, Day 2 không xét)."""
+    from src.dagster_runtime.contract import is_legacy, is_project_dir
+
     root = Path(deploy_dir)
-    return sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.endswith(".tmp")) if root.exists() else []
+    if not root.exists():
+        return []
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and is_project_dir(p.name) and not p.name.endswith(".tmp") and not is_legacy(p)
+    )
 
 
 def recorded(store_path: str) -> set[str]:

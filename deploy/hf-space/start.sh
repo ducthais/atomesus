@@ -4,7 +4,8 @@
 set -euo pipefail
 cd /app
 
-for key in OPENAI_API_KEY PIPELINE_DATABASE_URL PIPELINE_ENGINEER_PASSWORD PIPELINE_REVIEWER_PASSWORD DAGSTER_PASSWORD; do
+# APP_ENV=production (Dockerfile): backend không khởi động khi thiếu PIPELINE_CONNECTION_KEY (khóa Fernet).
+for key in OPENAI_API_KEY PIPELINE_DATABASE_URL PIPELINE_CONNECTION_KEY PIPELINE_ENGINEER_PASSWORD PIPELINE_REVIEWER_PASSWORD DAGSTER_PASSWORD; do
   if [ -z "${!key:-}" ]; then
     echo "Thiếu secret $key (Space → Settings → Variables and secrets), xem docs/deploy-free.md." >&2
     exit 1
@@ -18,6 +19,8 @@ export PIPELINE_MOCK_API_URL=http://127.0.0.1:8100
 export PIPELINE_DAGSTER_URL=http://127.0.0.1:3070/dagster
 export DAGSTER_WEBSERVER_PATH_PREFIX=/dagster
 export DAGSTER_USER=${DAGSTER_USER:-admin}
+# Credential theo từng pipeline (src/dagster_runtime/secrets.py): Space không có tmpfs riêng, dùng /tmp ngoài data/.
+export ATOMESUS_SECRETS_DIR=/tmp/atomesus-secrets
 DAGSTER_PASSWORD_HASH=$(caddy hash-password --plaintext "$DAGSTER_PASSWORD")
 export DAGSTER_PASSWORD_HASH
 

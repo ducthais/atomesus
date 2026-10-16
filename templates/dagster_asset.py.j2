@@ -1,6 +1,6 @@
-[#- Dagster: @dlt_assets cho E-L, @dbt_assets cho T, ScheduleDefinition từ schedule.cron.
-    Asset key của từng bảng bronze trùng với key của dbt source ("bronze", <bảng>), nên Dagster nối
-    lineage dlt → staging → gold và chạy theo đúng thứ tự. -#]
+[#- Dagster (template v2, RUNTIME_CONTRACT = 2): mọi pipeline nạp chung một code location (src/dagster_runtime/loader.py).
+    Không đọc credential, không đặt biến môi trường lúc import; asset key có tiền tố model để Definitions.merge không
+    trùng key khi hai pipeline đọc cùng một bảng; không khai báo resource (trùng key "dbt" làm merge lỗi). -#]
 [%- set name = model_name -%]
 """Dagster code location cho pipeline [[ name ]]. Sinh tự động từ Spec, không sửa tay."""
 
@@ -11,53 +11,61 @@ from dagster import (
     AssetExecutionContext,
     AssetKey,
     AssetSelection,
+    AssetSpec,
     DefaultScheduleStatus,
     Definitions,
     ScheduleDefinition,
     define_asset_job,
+    in_process_executor,
+    multi_asset,
 )
-from dagster_dbt import DbtCliResource, DbtProject, dbt_assets
-from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
-from dagster_dlt.translator import DltResourceTranslatorData
+from dagster_dbt import DagsterDbtTranslator, DbtCliResource, DbtProject, dbt_assets
 
-from ingestion.[[ name ]]_pipeline import pipeline, source
+from src.dagster_runtime.execute import run_ingestion, warehouse_path
 
-# File DuckDB riêng của pipeline này (<WAREHOUSE_DIR>/[[ name ]].duckdb): dlt (bronze) và dbt (staging, gold) cùng ghi
-# vào đó, pipeline khác chạy cùng lúc không tranh khóa file. Dagster nạp mỗi code location và chạy mỗi run trong tiến
-# trình riêng, nên biến đặt ở đây chỉ áp cho pipeline này. Không có WAREHOUSE_DIR thì dùng WAREHOUSE_PATH như cũ.
-if os.environ.get("WAREHOUSE_DIR"):
-    os.environ["WAREHOUSE_PATH"] = str(Path(os.environ["WAREHOUSE_DIR"]) / [[ (name ~ ".duckdb") | pystr ]])
-
+RUNTIME_CONTRACT = 2
+MODEL = [[ name | pystr ]]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DBT_PROJECT = DbtProject(project_dir=REPO_ROOT / "dbt_project", profiles_dir=REPO_ROOT / "dbt_project")
 DBT_PROJECT.prepare_if_dev()
+# Bảng bronze do dlt ghi; key trùng key của dbt source ("bronze", <bảng>) sau khi thêm tiền tố model, nên Dagster nối
+# lineage dlt → staging → gold.
+BRONZE_TABLES = [[ spec.sources | map(attribute="target") | map(attribute="table") | list | pylist ]]
 
 
-class BronzeTranslator(DagsterDltTranslator):
-    def get_asset_spec(self, data: DltResourceTranslatorData):
-        return super().get_asset_spec(data).replace_attributes(key=AssetKey(["bronze", data.resource.table_name]))
+class PrefixTranslator(DagsterDbtTranslator):
+    def get_asset_key(self, dbt_resource_props):
+        return AssetKey([MODEL, *super().get_asset_key(dbt_resource_props).path])
+
+    def get_group_name(self, dbt_resource_props):
+        return MODEL
 
 
-@dlt_assets(
-    dlt_source=source(),
-    dlt_pipeline=pipeline(),
+@multi_asset(
+    specs=[AssetSpec(AssetKey([MODEL, "bronze", table]), group_name=MODEL, kinds={"dlt", "duckdb"}) for table in BRONZE_TABLES],
     name=[[ (name ~ "_ingestion") | pystr ]],
-    group_name=[[ name | pystr ]],
-    dagster_dlt_translator=BronzeTranslator(),
 )
-def [[ name ]]_ingestion(context: AssetExecutionContext, dlt: DagsterDltResource):
-    # Nạp DuckDB bằng parquet: nhanh hơn nhiều so với định dạng mặc định (insert_values) khi bảng lớn.
-    yield from dlt.run(context=context, loader_file_format="parquet")
+def [[ name ]]_ingestion(context: AssetExecutionContext):
+    # dlt chạy trong subprocess, chỉ nhận credential của các nguồn pipeline này đọc và file DuckDB riêng của nó.
+    yield from run_ingestion(context, MODEL, REPO_ROOT)
 
 
-@dbt_assets(manifest=DBT_PROJECT.manifest_path, select=[[ ("+" ~ name) | pystr ]], name=[[ (name ~ "_transform") | pystr ]])
-def [[ name ]]_transform(context: AssetExecutionContext, dbt: DbtCliResource):
-    yield from dbt.cli(["build"], context=context).stream()
+@dbt_assets(
+    manifest=DBT_PROJECT.manifest_path,
+    select=[[ ("+" ~ name) | pystr ]],
+    name=[[ (name ~ "_transform") | pystr ]],
+    dagster_dbt_translator=PrefixTranslator(),
+)
+def [[ name ]]_transform(context: AssetExecutionContext):
+    # Đặt ở đây, không đặt lúc import: run worker nạp mọi pipeline, mỗi run chỉ chạy job của một pipeline.
+    os.environ["WAREHOUSE_PATH"] = warehouse_path(MODEL)
+    yield from DbtCliResource(project_dir=DBT_PROJECT).cli(["build"], context=context).stream()
 
 
 [[ name ]]_job = define_asset_job(
     [[ (name ~ "_job") | pystr ]],
     selection=AssetSelection.assets([[ name ]]_ingestion, [[ name ]]_transform),
+    executor_def=in_process_executor,  # không nạp lại toàn bộ code location cho từng step
 )
 
 [[ name ]]_schedule = ScheduleDefinition(
@@ -78,5 +86,4 @@ defs = Definitions(
     schedules=[
         [[ name ]]_schedule,
     ],
-    resources={"dlt": DagsterDltResource(), "dbt": DbtCliResource(project_dir=DBT_PROJECT)},
 )

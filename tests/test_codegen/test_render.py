@@ -102,8 +102,11 @@ def test_single_source_pipeline_content(policy):
 
     dagster = files["infra/dagster/generated/fct_daily_orders_asset.py"]
     assert 'cron_schedule="0 2 * * *"' in dagster
-    assert "from ingestion.fct_daily_orders_pipeline import pipeline, source" in dagster
-    assert 'dlt.run(context=context, loader_file_format="parquet")' in dagster
+    # Template v2 (code location hợp nhất): không import ingestion lúc nạp; dlt chạy trong subprocess với credential
+    # của đúng pipeline này (src/dagster_runtime/execute.py), bảng bronze khai báo tĩnh từ Spec.
+    assert "RUNTIME_CONTRACT = 2" in dagster and "from ingestion" not in dagster
+    assert "yield from run_ingestion(context, MODEL, REPO_ROOT)" in dagster
+    assert "BRONZE_TABLES = ['raw_orders']" in dagster
 
 
 def test_multi_source_pipeline_content(policy):

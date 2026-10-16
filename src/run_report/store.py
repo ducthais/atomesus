@@ -421,14 +421,6 @@ def reserve_budget_batch(
         return True, current
 
 
-def release_budget(path: str, run_id: str, version: int, category: str) -> None:
-    with _database(path) as conn:
-        conn.execute(
-            "DELETE FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
-            (run_id, version, category),
-        )
-
-
 def rollback_batch_start(path: str, run_ids: list[str]) -> None:
     """Xóa atomically mọi dấu vết chưa chạy của một mẻ không khởi tạo đủ.
 
