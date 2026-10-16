@@ -15,8 +15,8 @@ export default async function MonitorPage() {
   const engineer = user?.role === 'Engineer';
   return <>
     <PageHeader kicker="Day 2" title="Theo dõi pipeline" icon={<Gauge size={22} />} actions={<MonitorActions canCheck={engineer} />}>
-      <p>Số đo mỗi lần pipeline đã duyệt chạy theo lịch (Dagster), so với đường cơ sở lúc chạy thử. Luật suy giảm đọc
-        ngưỡng từ <code>objectives.yml</code>; nhãn ở đây chỉ để xem, không tạo run sửa cho tới khi bấm <strong>Kiểm tra suy giảm</strong>.</p>
+      <p>Số đo mỗi lần pipeline đã duyệt chạy theo lịch (Dagster), so với đường cơ sở lúc chạy thử. Luật suy giảm dùng
+        ngưỡng chất lượng của hệ thống; nhãn ở đây chỉ để xem, không tạo run sửa cho tới khi bấm <strong>Kiểm tra suy giảm</strong>.</p>
     </PageHeader>
 
     {'error' in found ? <div className="callout bad"><CircleAlert size={16} aria-hidden /><div><strong>Không đọc được số đo</strong><p>{found.error}</p></div></div> : <>

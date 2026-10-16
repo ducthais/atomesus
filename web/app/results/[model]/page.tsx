@@ -66,7 +66,7 @@ export default async function ResultsPage({ params, searchParams }: { params: Pr
         <a className="button" href={exportHref(model, 'xlsx', query)}><Download size={15} aria-hidden /> Tải XLSX</a>
       </>}>
       <p>Bảng gold đầy đủ trong kho dữ liệu production, đọc lúc mở trang. File tải giữ thứ tự sắp xếp đang xem; bảng quá
-        trần <code>results.max_export_rows</code> trong <code>budgets.yml</code> thì chỉ xem từng trang.</p>
+        số dòng tải tối đa theo giới hạn của hệ thống thì chỉ xem từng trang.</p>
     </PageHeader>
 
     {exportError && <div className="callout warn" role="alert"><CircleAlert size={16} aria-hidden /><div><strong>Chưa tải được file</strong><p>{exportError}</p></div></div>}

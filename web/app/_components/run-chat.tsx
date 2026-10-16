@@ -24,7 +24,7 @@ export function RunChat({ runId, messages, people, limit, disabledReason }: Prop
   const end = useRef<HTMLDivElement>(null);
   const used = messages.filter(m => m.role === 'user' && m.intent === 'ask').length;
   const exhausted = used >= limit;
-  const blocked = disabledReason ?? (exhausted ? `Run đã dùng hết ${limit} câu hỏi (budgets.yml: per_run.max_chat_calls).` : null);
+  const blocked = disabledReason ?? (exhausted ? `Run đã dùng hết ${limit} câu hỏi theo giới hạn của hệ thống.` : null);
 
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [messages.length, asking]);
 
@@ -42,7 +42,7 @@ export function RunChat({ runId, messages, people, limit, disabledReason }: Prop
   };
 
   return <section className="panel chat">
-    <div className="panel-head"><h2>Hỏi về run này</h2><span className="muted small mono" title="budgets.yml: per_run.max_chat_calls">{used}/{limit} câu hỏi</span></div>
+    <div className="panel-head"><h2>Hỏi về run này</h2><span className="muted small mono" title="Số câu hỏi tối đa mỗi run theo giới hạn của hệ thống">{used}/{limit} câu hỏi</span></div>
     <p className="muted small">Câu hỏi được trả lời từ RunReport, mỗi con số kèm tên trường nguồn, không đổi run. Engineer tạo run có thể ra lệnh sửa (ví dụ <em>Thêm số đơn hàng của mỗi khách hàng</em>): agent tạo version mới và bản duyệt cũ mất hiệu lực. Duyệt và deploy chỉ qua nút bấm.</p>
 
     <div className="chat-log" aria-live="polite">

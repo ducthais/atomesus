@@ -7,6 +7,7 @@ import { cache } from 'react';
 import { cookies } from 'next/headers';
 import type { BatchBudget, RunReport, User } from '../postgres-api.ts';
 import type { ChatMessage } from '../studio.ts';
+import { mockQuota, type Quota } from '../limits.ts';
 import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live.ts';
 import { DATASETS, DOMAINS, LINKED_REVIEWERS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, NEW_RUN_DOMAINS, PEOPLE, USER_CONNECTIONS, mockNewRunSnapshot } from './mock.ts';
 import type { UserConnection } from '../user-connections.ts';
@@ -151,6 +152,16 @@ export async function getBatchBudget(): Promise<BatchBudget | null> {
     };
   }
   try { return await backend<BatchBudget>('/agent/runs/batch/budget'); }
+  catch { return null; }
+}
+
+/** Hạn mức hôm nay của người đang đăng nhập (GET /pipeline/quota). Lỗi đọc trả null; trang vẫn hiện các trần mỗi run. */
+export async function getQuota(): Promise<Quota | null> {
+  if (MOCK) {
+    const user = await currentUser();
+    return user ? mockQuota(user.role) : null;
+  }
+  try { return await backend<Quota>('/pipeline/quota'); }
   catch { return null; }
 }
 

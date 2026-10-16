@@ -10,14 +10,22 @@ router = APIRouter(prefix="/policy", tags=["policy"], dependencies=[Depends(curr
 
 @router.get("")
 def read_policy(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
-    """Nội dung 3 file chính sách (chỉ đọc) và các trần UI cần hiển thị, đọc lại mỗi lần (NFR-04)."""
+    """Các trần UI cần hiển thị, đọc lại mỗi lần (NFR-04); nội dung 3 file chính sách (chỉ đọc) chỉ trả cho Admin.
+
+    File YAML có domain ẩn, email steward, tên kết nối nội bộ và đường dẫn máy chủ, nên vai khác nhận `files` rỗng
+    (giữ khóa để client cũ không hỏng)."""
     try:
         policy = policy_for(user, config)
     except PolicyError as exc:
         raise HTTPException(500, str(exc)) from exc
     per_run = policy.budgets.per_run
+    files = (
+        {f"{name}.yml": (POLICY_DIR / f"{name}.yml").read_text(encoding="utf-8") for name in POLICY_FILES}
+        if user["role"] == "Admin"
+        else {}
+    )
     return {
-        "files": {f"{name}.yml": (POLICY_DIR / f"{name}.yml").read_text(encoding="utf-8") for name in POLICY_FILES},
+        "files": files,
         "user_domains": [
             {"name": name, "label": domain.label, "schema": decl.schema_, "tables": decl.tables}
             for name, domain in policy.domains.domains.items()

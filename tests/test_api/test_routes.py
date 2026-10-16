@@ -38,7 +38,10 @@ async def test_policy_requires_session_and_returns_files_and_limits(client, tmp_
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
     try:
         assert (await client.get("/api/v1/policy")).status_code == 401
+        # Nội dung file YAML chỉ trả cho Admin (POLICY-ADMIN); Reviewer vẫn có limits.
         await client.post("/api/v1/pipeline/session", json={"username": "reviewer", "password": "Reviewer@123"})
+        assert (await client.get("/api/v1/policy")).json()["files"] == {}
+        await client.post("/api/v1/pipeline/session", json={"username": "admin", "password": "Admin@123"})
         body = (await client.get("/api/v1/policy")).json()
         assert set(body["files"]) == {"domains.yml", "budgets.yml", "objectives.yml"}
         assert "max_llm_calls: 6" in body["files"]["budgets.yml"]

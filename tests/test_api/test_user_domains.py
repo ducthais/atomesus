@@ -108,9 +108,13 @@ async def test_policy_preserves_yaml_and_exposes_only_safe_user_metadata(
     response = await client.get("/api/v1/policy")
     assert response.status_code == 200
     body = response.json()
-    assert set(body["files"]) == {"domains.yml", "budgets.yml", "objectives.yml"}
-    for filename, content in body["files"].items():
-        assert content == (POLICY_DIR / filename).read_text(encoding="utf-8")
+    # Nội dung file YAML chỉ trả cho Admin (POLICY-ADMIN); vai khác nhận files rỗng.
+    if role == "Admin":
+        assert set(body["files"]) == {"domains.yml", "budgets.yml", "objectives.yml"}
+        for filename, content in body["files"].items():
+            assert content == (POLICY_DIR / filename).read_text(encoding="utf-8")
+    else:
+        assert body["files"] == {}
     assert {domain["name"] for domain in body["user_domains"]} == expected
     for domain in body["user_domains"]:
         assert set(domain) == {"name", "label", "schema", "tables"}

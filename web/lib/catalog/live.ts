@@ -21,7 +21,8 @@ export type CatalogResponse = {
   }>;
   conformed_dimensions: string[];
 };
-export type PolicyResponse = { files: Record<string, string>; limits: Limits };
+/** `files` chỉ có nội dung khi người gọi là Admin; vai khác nhận rỗng (src/api/policy.py). */
+export type PolicyResponse = { files?: Record<string, string>; limits: Limits };
 
 /** Run đã chạy thử xong trong sandbox: bảng của nó thật sự tồn tại nên được đưa vào catalog. */
 const MATERIALIZED = ['READY_FOR_REVIEW', 'APPROVED', 'DEPLOYED'];
@@ -186,6 +187,6 @@ export function buildSnapshot(catalog: CatalogResponse, reports: RunReport[], po
       description: `${sources.length} nguồn khai báo, ${sources.filter(s => s.available).length} đọc được; ${Object.keys(d.entities).length} thực thể nghiệp vụ.`,
     };
   });
-  const files: PolicyFile[] = Object.entries(policy.files).map(([name, content]) => ({ name, content, description: POLICY_DESCRIPTION[name] ?? '' }));
+  const files: PolicyFile[] = Object.entries(policy.files ?? {}).map(([name, content]) => ({ name, content, description: POLICY_DESCRIPTION[name] ?? '' }));
   return { datasets: list, domains, glossary, runs, people, policy: { files, limits: policy.limits }, relationships: [...relationships.values()], conformed: catalog.conformed_dimensions, live: true };
 }

@@ -50,9 +50,11 @@ export function AppFrame({ children, user, reviewCount, live, backend, demoLogin
 
 export function Sidebar({ reviewCount, live, backend, role }: { reviewCount: number; live: boolean; backend: string; role: Person['role'] }) {
   const path = usePathname();
-  const nav = role === 'Admin' ? [...NAV, { href: '/admin/users', label: 'Tài khoản', icon: UserCog, match: (p: string) => p.startsWith('/admin') }]
-    : role === 'Engineer' ? [...NAV, { href: '/connections', label: 'Nguồn dữ liệu', icon: Database, match: (p: string) => p.startsWith('/connections') },
-      { href: '/reviewers', label: 'Reviewer', icon: UserCheck, match: (p: string) => p.startsWith('/reviewers') }] : NAV;
+  // Chỉ Admin xem file chính sách; vai khác vào cùng trang để xem giới hạn của mình.
+  const base = role === 'Admin' ? NAV : NAV.map(item => item.href === '/policy' ? { ...item, label: 'Giới hạn' } : item);
+  const nav = role === 'Admin' ? [...base, { href: '/admin/users', label: 'Tài khoản', icon: UserCog, match: (p: string) => p.startsWith('/admin') }]
+    : role === 'Engineer' ? [...base, { href: '/connections', label: 'Nguồn dữ liệu', icon: Database, match: (p: string) => p.startsWith('/connections') },
+      { href: '/reviewers', label: 'Reviewer', icon: UserCheck, match: (p: string) => p.startsWith('/reviewers') }] : base;
   return <aside className="sidebar">
     <Link href="/" className="brand"><span className="brand-mark"><Layers3 size={18} aria-hidden /></span><span><strong>Atomesus</strong><small>VSF · Pipeline Studio</small></span></Link>
     <nav aria-label="Điều hướng chính">{nav.map(({ href, label, icon: Icon, match }) => <Link key={href} href={href} aria-current={match(path) ? 'page' : undefined}><Icon size={17} aria-hidden />{label}{href === '/runs' && reviewCount > 0 && <span className="nav-count" title="Run chờ duyệt">{reviewCount}</span>}</Link>)}</nav>
