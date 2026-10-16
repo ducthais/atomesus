@@ -78,7 +78,8 @@ async def test_source_list_keeps_bench_and_discovery_answers_503(client, no_benc
 
 @pytest.mark.asyncio
 async def test_policy_returns_files_with_the_bench_domain(client, no_bench):
-    await _login(client)
+    # Nội dung file YAML chỉ trả cho Admin (POLICY-ADMIN).
+    await client.post("/api/v1/pipeline/session", json={"username": "admin", "password": "Admin@123"})
     response = await client.get("/api/v1/policy")
     assert response.status_code == 200
     body = response.json()
