@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { BookOpen, CircleAlert, GitBranch, ListPlus, RotateCcw, Sparkles } from 'lucide-react';
-import { currentUser, getCatalog, getComparison, runFiles, runMessages } from '@/lib/catalog/source';
+import { currentUser, getCatalog, getComparison, getDeployMode, runFiles, runMessages } from '@/lib/catalog/source';
 import { STAGES, STAGE_IDS, canReview, friendlyTechnicalError, shortId } from '@/lib/studio';
 import { CodeViewer, ReviewPanel } from '../../_components/run-client';
 import { RunResultView } from '../../_components/run-result';
@@ -31,7 +31,7 @@ const LEVEL_LABEL = { info: 'Thông tin', success: 'Đạt', warning: 'Cảnh b�
 
 export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; base?: string; batch?: string; estimated?: string }> }) {
   const [{ id }, { tab: rawTab, base: compareBase, batch, estimated }] = await Promise.all([params, searchParams]);
-  const [cat, user] = await Promise.all([getCatalog(), currentUser()]);
+  const [cat, user, deployMode] = await Promise.all([getCatalog(), currentUser(), getDeployMode()]);
   const run = cat.run(id);
   if (!run || !user) notFound();
   const policy = cat.policy;
@@ -72,7 +72,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const messages = tab === 'chat' ? await runMessages(run.id) : [];
   const base = `/runs/${shortId(run.id)}`;
   const eligible = canReview(run, user.role, user.id);
-  const reviewReason = eligible ? 'Duyệt chỉ ghi chữ ký cho đúng bộ file này. Sau đó bấm Deploy để mở pull request.' : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
+  const reviewReason = eligible ? `Duyệt chỉ ghi chữ ký cho đúng bộ file này. Sau đó bấm Deploy để ${deployMode.mode === 'direct' ? 'gửi cho deployer cài và chạy thử' : 'mở pull request'}.` : user.role !== 'Reviewer' ? `Bạn đang là ${user.role}. Chỉ Reviewer duyệt run.` : run.owner === user.id ? 'Người tạo run không tự duyệt.' : 'Mọi kiểm tra phải đạt trước khi duyệt.';
   const blocked = statusTone(run.status) === 'bad';
   const displayError = run.error ? friendlyTechnicalError(run.error) : null;
   const canCancel = user.role === 'Engineer' && user.id === run.owner && ['DRAFT', 'PLAN_CONFIRMED', 'GENERATING', 'VALIDATING'].includes(run.status);
@@ -101,7 +101,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
 
     {inProgress && <RunProgress status={run.status} stage={STAGE_IDS[run.stage] ?? 'intake'} startedAt={progressFrom} specRetries={run.specRetries} />}
 
-    <DeployPanel run={run} role={user.role} />
+    <DeployPanel run={run} role={user.role} mode={deployMode} />
 
     <Tabs base={base} active={tab} tabs={tabs} />
 

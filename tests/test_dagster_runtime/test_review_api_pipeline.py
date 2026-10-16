@@ -77,9 +77,20 @@ def test_both_pipelines_load_together_and_write_their_own_duckdb(runtime, monkey
     assert settings.warehouse_for(REVIEW_MODEL) == review_db
 
 
+@pytest.mark.asyncio
 @pytest.mark.skipif(os.environ.get("ATOMESUS_E2E") != "1", reason="cần Postgres Pagila và mock API (ATOMESUS_E2E=1)")
-def test_review_pipeline_runs_end_to_end(runtime, monkeypatch, tmp_path):
+async def test_review_pipeline_runs_end_to_end_and_exports_its_own_gold(runtime, monkeypatch, tmp_path, client):
+    import csv
+    import io
+    import time
+    import zipfile
+    from pathlib import Path
+    from types import SimpleNamespace
+
     import duckdb
+
+    from src.main import app
+    from src.pipeline import api, auth, store
 
     deploy, out, _ = runtime
     sync_secrets(deploy, out, load_policy(), PipelineSettings())
@@ -89,7 +100,8 @@ def test_review_pipeline_runs_end_to_end(runtime, monkeypatch, tmp_path):
     result = defs.resolve_job_def(f"{REVIEW_MODEL}_job").execute_in_process()
 
     assert result.success
-    with duckdb.connect(execute.warehouse_path(REVIEW_MODEL), read_only=True) as db:
+    own = execute.warehouse_path(REVIEW_MODEL)
+    with duckdb.connect(own, read_only=True) as db:
         bronze = db.execute("select count(*), count(distinct feedback_id) from bronze.raw_feedback").fetchone()
         staging = db.execute(f"select count(*) from staging.stg_{REVIEW_MODEL}__feedback").fetchone()[0]
         gold = db.execute(f"select count(*) from gold.{REVIEW_MODEL}").fetchone()[0]
@@ -97,3 +109,41 @@ def test_review_pipeline_runs_end_to_end(runtime, monkeypatch, tmp_path):
     assert staging == FEEDBACK_UNIQUE, "staging khử 47 bản gửi trùng"
     assert gold > 0
     assert not os.path.exists(execute.warehouse_path(RENTAL_MODEL)), "pipeline khác không bị ghi"
+
+    # Export (task #6) đọc đúng file DuckDB riêng mà pipeline v2 vừa ghi (PipelineSettings.warehouse_for).
+    config = PipelineSettings(
+        _env_file=None,
+        store_path=str(tmp_path / "runs.sqlite3"),
+        warehouse_path=str(Path(own).parent / "warehouse.duckdb"),
+    )
+    environment = SimpleNamespace(app_env="test")
+    monkeypatch.setattr(auth, "get_settings", lambda: environment)
+    monkeypatch.setattr(api, "get_settings", lambda: environment)
+    owner = store.create_user(
+        config.store_path,
+        user_id="user_eng",
+        username="eng.review",
+        name="eng.review",
+        role="Engineer",
+        password_hash=auth.hash_password("StrongPass9"),
+        created_at=time.time(),
+        email="eng.review@example.com",
+    )["id"]
+    store.claim_model(config.store_path, REVIEW_MODEL, owner, time.time())
+    app.dependency_overrides[auth.settings] = lambda: config
+    try:
+        login = await client.post(
+            "/api/v1/pipeline/session", json={"username": "eng.review", "password": "StrongPass9"}
+        )
+        assert login.status_code == 200, login.text
+        exported = await client.get(f"/api/v1/results/{REVIEW_MODEL}/export", params={"format": "csv"})
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-disposition"] == f'attachment; filename="{REVIEW_MODEL}.csv"'
+        rows = list(csv.reader(io.StringIO(exported.content.decode("utf-8-sig"))))
+        assert len(rows) == 1 + gold and "review_count" in rows[0]
+        book = await client.get(f"/api/v1/results/{REVIEW_MODEL}/export", params={"format": "xlsx"})
+        assert book.status_code == 200, book.text
+        with zipfile.ZipFile(io.BytesIO(book.content)) as archive:
+            assert archive.read("xl/worksheets/sheet1.xml").decode("utf-8").count("<row ") == 1 + gold
+    finally:
+        app.dependency_overrides.pop(auth.settings, None)

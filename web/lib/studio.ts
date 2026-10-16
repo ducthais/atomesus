@@ -38,6 +38,8 @@ export type Run = {
   fileCount: number; assets: Asset[]; approval: Approval | null; error: string | null; question: string | null;
   staging?: StagingEvidence[]; reviewHistory?: Approval[];
   deployment?: RunReport['deployment']; deploymentHistory?: RunReport['spec_history']; deployError?: string | null;
+  /** Đã bấm Deploy (stage_reached `deploy`): chế độ direct đang chờ deployer cài và chạy thử. */
+  deployRequested?: boolean;
   optimization?: RunReport['regression'];
   /** Bảng `nguồn.bảng` tích sẵn khi bấm "Sửa & chạy lại": phạm vi đã chọn + bảng kế hoạch cần mà chưa chọn. */
   retryTables?: string[];
@@ -200,6 +202,7 @@ export function toStudioRun(report: RunReport): Run {
     staging: toStaging(report), reviewHistory: report.review_history ?? [], optimization: report.regression ?? null,
     deployment: report.deployment ?? null, deploymentHistory: (report.spec_history ?? []).filter(item => item.deployment),
     deployError: report.error_trace.filter(item => item.stage === 'deploy').map(traceText).at(-1) ?? null,
+    deployRequested: report.stage_reached === 'deploy',
     error: last ? (last.question ? `Cần làm rõ: ${last.question}` : traceText(last)) : null, question: last?.question ?? null,
     retryTables: [...new Set([...(report.source_scope ?? []).flatMap(s => s.tables.map(t => `${s.source_ref}.${t}`)), ...(last?.need_tables ?? [])])],
   };

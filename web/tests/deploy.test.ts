@@ -5,7 +5,7 @@ import { createRequire, stripTypeScriptTypes } from 'node:module';
 import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as deploy from '../lib/deploy.ts';
-import { APPROVAL_MESSAGE, deploymentLink, deploymentReworks, deploymentSteps, deployReason, requestDeployment } from '../lib/deploy.ts';
+import { APPROVAL_MESSAGE, deploymentLink, deploymentReworks, deploymentSteps, deployPending, deployReason, requestDeployment } from '../lib/deploy.ts';
 import { ApiError, apiRequest, type Deployment, type RunReport } from '../lib/postgres-api.ts';
 import { STATUS_LABEL, toStudioRun, type Run } from '../lib/studio.ts';
 import { MOCK_SNAPSHOT } from '../lib/catalog/mock.ts';
@@ -188,16 +188,48 @@ test('triển khai: giữ PR cũ khi backend tạo version mới, không dùng c
   assert.deepEqual(deploymentReworks(toStudioRun(report)), []);
 });
 
-test('Deploy chỉ dành cho Reviewer khi APPROVED, không mở lại PR đã có', () => {
+test('Deploy chỉ dành cho Reviewer hoặc Admin khi APPROVED (khớp backend), không mở lại PR đã có', () => {
   const run = toStudioRun(report);
-  assert.equal(deployReason(run, 'Reviewer'), null);
-  for (const role of ['Engineer', 'Admin']) assert.match(deployReason(run, role)!, /Chỉ Reviewer/);
+  for (const role of ['Reviewer', 'Admin']) assert.equal(deployReason(run, role), null);
+  for (const role of ['Engineer', 'Steward']) assert.match(deployReason(run, role)!, /Chỉ Reviewer hoặc Admin/);
   for (const status of Object.keys(STATUS_LABEL).filter(s => s !== 'APPROVED')) {
     assert.match(deployReason(toStudioRun({ ...report, status }), 'Reviewer')!, /APPROVED/);
   }
   for (const state of ['open', 'merged', 'closed'] as const) {
     assert.match(deployReason({ ...run, deployment: { ...deployment, state } }, 'Reviewer')!, /đã có pull request/);
   }
+});
+
+test('Deploy direct: một lần bấm, chỉ DEPLOYED sau khi deployer chạy thử thành công', () => {
+  const direct = (changes: Partial<RunReport> = {}) => deploymentSteps(toStudioRun({ ...report, ...changes }), 'direct');
+  const ids = ['approval', 'queued', 'verify', 'production'];
+  // Đã duyệt, chưa bấm Deploy.
+  const ready = direct();
+  assert.deepEqual(ready.map(s => s.id), ids);
+  assert.deepEqual(ready.map(s => s.state), ['pass', 'pending', 'pending', 'pending']);
+  assert.equal(deployReason(toStudioRun(report), 'Reviewer', 'direct'), null);
+  // Đã gửi cho deployer: vẫn APPROVED, đang chạy thử; không cho bấm lại.
+  const sentReport = { ...report, stage_reached: 'deploy' };
+  const sent = direct(sentReport);
+  assert.deepEqual(sent.map(s => s.state), ['pass', 'pass', 'running', 'running']);
+  assert.match(sent[3].detail, /chỉ chuyển DEPLOYED sau khi chạy thử thành công/i);
+  assert.ok(deployPending(toStudioRun(sentReport)));
+  assert.match(deployReason(toStudioRun(sentReport), 'Reviewer', 'direct')!, /Đã gửi cho deployer/);
+  // Deployer báo chạy thử SUCCESS.
+  assert.deepEqual(direct({ ...sentReport, status: 'DEPLOYED' }).map(s => s.state), ['pass', 'pass', 'pass', 'pass']);
+  // Deployer báo lỗi: DEPLOY_FAILED, sửa thành version mới rồi duyệt lại.
+  const error_trace = [{ stage: 'deploy', error: 'Chạy thử Dagster kết thúc FAILURE (run r1).' }];
+  const failed = direct({ ...sentReport, status: 'DEPLOY_FAILED', error_trace });
+  assert.deepEqual(failed.map(s => s.state), ['pass', 'pass', 'fail', 'fail']);
+  assert.match(failed[3].detail, /FAILURE.*version mới/);
+  assert.match(deployReason(toStudioRun({ ...sentReport, status: 'DEPLOY_FAILED' }), 'Reviewer', 'direct')!, /APPROVED/);
+  // Ghi bundle lỗi (vẫn APPROVED): cho bấm Deploy lại.
+  const queueError = toStudioRun({ ...sentReport, error_trace: [{ stage: 'deploy', error: 'Ghi bundle vào hộp thư release thất bại (OSError).' }] });
+  assert.equal(deployPending(queueError), false);
+  assert.equal(deployReason(queueError, 'Reviewer', 'direct'), null);
+  assert.equal(deploymentSteps(queueError, 'direct')[1].state, 'fail');
+  // Run cũ đã có pull request vẫn hiện các bước PR dù backend đã chuyển sang direct.
+  assert.equal(deploymentSteps(toStudioRun({ ...report, deployment }), 'direct')[1].id, 'pr');
 });
 
 test('link triển khai chỉ chấp nhận HTTP(S)', () => {
@@ -238,6 +270,10 @@ test('Server Action Deploy gửi POST riêng, làm mới trang và giữ nguyên
     };
     assert.match(String((await actor.deployRun('run-12') as { message: string }).message), /pull request/);
     assert.equal(refreshed, 1);
+    // Chế độ direct: response không có deployment, run vẫn APPROVED chờ deployer chạy thử.
+    globalThis.fetch = async () => Response.json({ ...report, stage_reached: 'deploy' });
+    assert.match(String((await actor.deployRun('run-12') as { message: string }).message), /Đã gửi cho deployer.*chạy thử/);
+    refreshed--;
     assert.deepEqual(await actor.deployRun('../bad'), { error: 'Mã run không hợp lệ.' });
     assert.equal(requests, 1);
     for (const status of [403, 409, 502, 503]) {

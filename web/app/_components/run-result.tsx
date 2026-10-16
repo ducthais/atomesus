@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowDown, Database, Filter, Sparkles, Table2, TriangleAlert } from 'lucide-react';
+import { ArrowDown, Database, Download, Filter, Sparkles, Table2, TriangleAlert } from 'lucide-react';
 import { describeExpr, PERIOD_LABEL, resultWarnings, typeLabel, type RunResult } from '@/lib/catalog/explain';
 import { fmtNum } from './ui';
 import { ReconcileCard } from './reconcile';
@@ -54,6 +54,7 @@ export function RunResultView({ result, summary, request, goldId, deployed }: { 
         <tbody>{result.sample.map((row, i) => <tr key={i}>{columns.map(c => <td key={c} className={`mono ${metricNames.has(c) ? 'metric' : ''}`}>{row[c] ?? <span className="null">NULL</span>}</td>)}</tr>)}</tbody>
       </table></div> : <p className="muted pad">Run dừng trước bước chạy thử nên chưa có dữ liệu kết quả.</p>}
       <p className="muted small pad">{deployed ? 'Bảng đầy đủ nằm trong file DuckDB riêng của pipeline này trên Dagster (data/warehouse/<model>.duckdb), cập nhật theo lịch chạy.' : `Đây là dữ liệu chạy thử (sổ bằng chứng lưu tối đa 20 dòng). Bảng đầy đủ có sau khi Reviewer duyệt và pipeline chạy trên Dagster.`}</p>
+      {deployed && result.model && <p className="pad"><Link className="button" href={`/results/${encodeURIComponent(result.model)}`}><Download size={15} aria-hidden /> Xem và tải bảng đầy đủ (CSV / XLSX)</Link></p>}
     </section>
   </div>;
 }
