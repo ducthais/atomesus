@@ -1,19 +1,36 @@
 import type { Deployment, RunReport } from './postgres-api.ts';
 import type { Run } from './studio.ts';
 
-export const APPROVAL_MESSAGE = 'Đã duyệt, bấm Deploy để mở pull request';
+export const APPROVAL_MESSAGE = 'Đã duyệt, bấm Deploy để đưa lên production';
 const CI_FAILED = ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure'];
+/** Vai được Deploy, khớp backend (src/run_report/router.py: deploy_run). */
+export const DEPLOY_ROLES = ['Reviewer', 'Admin'];
+/**
+ * Cách backend đưa bản đã duyệt lên production (GET /pipeline/deploy-config, ADR D6).
+ * direct: deployer cài bundle, chạy thử trên Dagster rồi mới báo DEPLOYED / DEPLOY_FAILED; pr: mở pull request.
+ * `gitops`: chế độ direct có mở thêm pull request chạy nền để lưu vết.
+ */
+export type DeployMode = { mode: 'direct' | 'pr'; gitops: boolean };
+export const DEFAULT_DEPLOY_MODE: DeployMode = { mode: 'pr', gitops: false };
 export type DeployStep = {
-  id: 'approval' | 'pr' | 'ci' | 'merge' | 'production'; label: string;
+  id: 'approval' | 'pr' | 'ci' | 'merge' | 'queued' | 'verify' | 'production'; label: string;
   state: 'pass' | 'fail' | 'neutral' | 'running' | 'pending'; detail: string; at?: string | null; href?: string;
 };
-type DeployRun = Pick<Run, 'status' | 'approval' | 'version' | 'deployment' | 'deploymentHistory' | 'deployError'>;
+type DeployRun = Pick<Run, 'status' | 'approval' | 'version' | 'deployment' | 'deploymentHistory' | 'deployError' | 'deployRequested'>;
 
-/** Chỉ mở PR cho version đã duyệt và chưa có PR; backend vẫn kiểm quyền và chữ ký khi nhận POST. */
-export function deployReason(run: Pick<Run, 'status' | 'deployment'>, role: string): string | null {
-  if (role !== 'Reviewer') return 'Chỉ Reviewer được Deploy.';
+/** Đã gửi cho deployer và chưa có kết quả (chế độ direct): chỉ đổi sang DEPLOYED sau khi chạy thử SUCCESS. */
+export function deployPending(run: Pick<Run, 'status' | 'deployRequested' | 'deployError'>): boolean {
+  return run.status === 'APPROVED' && !!run.deployRequested && !run.deployError;
+}
+
+/** Chỉ Deploy version đã duyệt và chưa gửi đi; backend vẫn kiểm quyền và chữ ký khi nhận POST. */
+export function deployReason(
+  run: Pick<Run, 'status' | 'deployment' | 'deployRequested' | 'deployError'>, role: string, mode: DeployMode['mode'] = 'pr',
+): string | null {
+  if (!DEPLOY_ROLES.includes(role)) return 'Chỉ Reviewer hoặc Admin được Deploy.';
   if (run.status !== 'APPROVED') return 'Chỉ Deploy khi run đã duyệt (APPROVED).';
-  if (run.deployment) return 'Version này đã có pull request; xem tiến độ bên dưới.';
+  if (mode === 'direct' && deployPending(run)) return 'Đã gửi cho deployer; xem tiến độ bên dưới.';
+  if (mode === 'pr' && run.deployment) return 'Version này đã có pull request; xem tiến độ bên dưới.';
   return null;
 }
 
@@ -29,8 +46,37 @@ export async function requestDeployment(runId: string, request: <T>(path: string
   return request<RunReport>(`/runs/${encodeURIComponent(runId)}/deploy`, { method: 'POST' });
 }
 
+/**
+ * Chế độ direct: Duyệt → Gửi deployer → Chạy thử trên Dagster → Production. DEPLOYED chỉ có sau khi deployer chạy thử
+ * SUCCESS; lỗi thì DEPLOY_FAILED và phải sửa thành version mới rồi duyệt lại (không deploy lại cùng version).
+ */
+function directSteps(run: DeployRun): DeployStep[] {
+  const approved = run.approval?.decision === 'approved' || ['APPROVED', 'DEPLOYED', 'DEPLOY_FAILED'].includes(run.status);
+  const deployed = run.status === 'DEPLOYED';
+  const failed = run.status === 'DEPLOY_FAILED' || (run.status === 'APPROVED' && !!run.deployRequested && !!run.deployError);
+  const sent = deployed || run.status === 'DEPLOY_FAILED' || !!run.deployRequested;
+  const pending = deployPending(run);
+  return [
+    { id: 'approval', label: approved ? 'Đã duyệt' : 'Chờ duyệt', state: approved ? 'pass' : 'pending',
+      detail: approved ? 'Chữ ký duyệt gắn với bộ file của version này.' : 'Cần Reviewer phê duyệt version này.', at: run.approval?.at },
+    { id: 'queued', label: sent && !(failed && run.status === 'APPROVED') ? 'Đã gửi deployer' : 'Chờ Deploy',
+      state: failed && run.status === 'APPROVED' ? 'fail' : sent ? 'pass' : 'pending',
+      detail: failed && run.status === 'APPROVED' ? run.deployError || 'Không gửi được bản đã duyệt cho deployer.'
+        : sent ? 'Bundle đã ký (bộ file, manifest, RunReport) đã vào hộp thư release.' : approved ? 'Bấm Deploy để gửi bản đã duyệt cho deployer.' : 'Chưa gửi.' },
+    { id: 'verify', label: deployed ? 'Chạy thử đạt' : run.status === 'DEPLOY_FAILED' ? 'Chạy thử lỗi' : pending ? 'Đang cài và chạy thử' : 'Chờ chạy thử',
+      state: deployed ? 'pass' : run.status === 'DEPLOY_FAILED' ? 'fail' : pending ? 'running' : 'pending',
+      detail: 'Deployer kiểm chữ ký và hash, cài vào Dagster rồi chạy thử job một lần.' },
+    { id: 'production', label: failed ? 'Triển khai lỗi' : deployed ? 'Đã lên production' : 'Chờ lên production',
+      state: failed ? 'fail' : deployed ? 'pass' : pending ? 'running' : 'pending',
+      detail: run.status === 'DEPLOY_FAILED' ? `${run.deployError || 'Deployer báo triển khai thất bại.'} Bản đang chạy được giữ nguyên; sửa thành version mới rồi gửi duyệt lại.`
+        : failed ? 'Bấm Deploy lại khi đã xử lý lỗi gửi bundle.'
+        : deployed ? 'Deployer đã chạy thử thành công trên Dagster.' : 'Chỉ chuyển DEPLOYED sau khi chạy thử thành công.' },
+  ];
+}
+
 /** Mỗi bước chỉ đánh dấu hoàn tất khi có bằng chứng; run cũ thiếu deployment vẫn đọc được. */
-export function deploymentSteps(run: DeployRun): DeployStep[] {
+export function deploymentSteps(run: DeployRun, mode: DeployMode['mode'] = 'pr'): DeployStep[] {
+  if (mode === 'direct' && !run.deployment) return directSteps(run);
   const d = run.deployment;
   const approved = run.approval?.decision === 'approved' || !!d || ['APPROVED', 'DEPLOYED', 'DEPLOY_FAILED'].includes(run.status);
   const ciFailed = !!d?.ci_conclusion && CI_FAILED.includes(d.ci_conclusion);

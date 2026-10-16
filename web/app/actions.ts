@@ -455,13 +455,17 @@ export async function reviewRun(runId: string, decision: 'approve' | 'reject', f
   }
 }
 
-/** Deploy là thao tác riêng; backend kiểm Reviewer, APPROVED và chữ ký trước khi mở PR. */
+/** Deploy là thao tác riêng; backend kiểm Reviewer / Admin, APPROVED và chữ ký trước khi gửi bản đã duyệt đi. */
 export async function deployRun(runId: string): Promise<ActionState> {
-  if (MOCK) return { message: 'Mock: chưa gọi backend để mở pull request.' };
+  if (MOCK) return { message: 'Mock: chưa gọi backend để Deploy.' };
   try {
-    await requestDeployment(runId, backend);
+    const sent = await requestDeployment(runId, backend);
     refresh();
-    return { message: 'Đã gửi Deploy. Xem pull request và tiến độ triển khai bên dưới.' };
+    // Có deployment: chế độ pr đã mở pull request. Không có: chế độ direct đã gửi cho deployer; DEPLOYED chỉ có sau khi
+    // deployer chạy thử thành công trên Dagster.
+    return { message: sent?.deployment
+      ? 'Đã gửi Deploy. Xem pull request và tiến độ triển khai bên dưới.'
+      : 'Đã gửi cho deployer. Đang cài và chạy thử trên Dagster; trạng thái tự cập nhật bên dưới.' };
   } catch (err) {
     if (err instanceof BackendError && err.status === 409) refresh();
     return failure(err);

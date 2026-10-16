@@ -415,6 +415,18 @@ def session(user: dict = Depends(current_user)):
     return user
 
 
+@router.get("/deploy-config", dependencies=[Depends(current_user)])
+def deploy_config(config: PipelineSettings = Depends(settings)) -> dict:
+    """Cách nút Deploy đưa bản đã duyệt lên production, để web hiện đúng các bước (ADR D6). Không lộ token hay repo.
+
+    `mode`: direct = deployer cài bundle, chạy thử trên Dagster rồi mới báo DEPLOYED / DEPLOY_FAILED; pr = mở pull
+    request, cài sau khi merge. `gitops`: chế độ direct có mở thêm pull request chạy nền để lưu vết (PIPELINE_GITHUB_*).
+    """
+    from src.codegen.github import GithubClient  # import muộn như run_report.router: tránh vòng import lúc nạp app
+
+    return {"mode": config.deploy_mode, "gitops": GithubClient.from_settings()._configured}
+
+
 @router.delete("/session")
 def logout(request: Request, response: Response, config: PipelineSettings = Depends(settings)):
     with store.database(config.store_path) as conn:
