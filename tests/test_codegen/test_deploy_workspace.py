@@ -1,8 +1,15 @@
+"""Cài lại pipeline trên code location hợp nhất: `.generation` chỉ đổi khi bộ project đang chạy thật sự đổi.
+
+Supervisor Dagster nạp lại code location mỗi khi `.generation` đổi (scripts/dagster_local.py); loader và Day 2 bỏ qua
+thư mục tạm / sao lưu của install_project (src/dagster_runtime/contract.py: is_project_dir).
+"""
+
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from src.dagster_runtime.contract import is_project_dir
 from src.deployer import install
 from src.spec.models import Spec
 from tests.test_agents.test_graph import SPEC
@@ -15,45 +22,26 @@ def _make_project(root: Path, model: str, marker: str) -> None:
     (root / "marker.txt").write_text(marker, encoding="utf-8")
 
 
-def _locations(deploy_dir: Path) -> list[str]:
-    text = (deploy_dir / "workspace.yaml").read_text(encoding="utf-8")
-    return [line.split(": ", 1)[1] for line in text.splitlines() if "working_directory:" in line]
+@pytest.mark.parametrize(
+    "name,live", [("sales", True), ("sales.old-abc", False), ("sales.tmp-abc", False), (".hidden", False)]
+)
+def test_only_live_project_dirs_are_loaded(name, live):
+    assert is_project_dir(name) is live
 
 
-def test_write_workspace_skips_staging_backup_and_hidden_dirs(tmp_path):
-    _make_project(tmp_path / "sales", "sales", "real")
-    _make_project(tmp_path / "sales.old-abc", "sales", "backup")
-    _make_project(tmp_path / "sales.tmp-abc", "sales", "staging")
-    _make_project(tmp_path / ".hidden", "sales", "hidden")
-
-    install.write_workspace(str(tmp_path))
-
-    assert _locations(tmp_path) == ["./sales"]
-
-
-def test_write_workspace_with_only_backup_dirs_is_empty(tmp_path):
-    _make_project(tmp_path / "sales.old-abc", "sales", "backup")
-
-    install.write_workspace(str(tmp_path))
-
-    assert "load_from: []" in (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
-
-
-def test_redeploy_existing_pipeline_points_workspace_only_at_live_project(tmp_path, monkeypatch):
+def test_redeploy_existing_pipeline_marks_a_new_generation(tmp_path, monkeypatch):
     spec = Spec.model_validate(SPEC)
     model = spec.transform.model_name
     _make_project(tmp_path / model, model, "old")
-    install.write_workspace(str(tmp_path))
+    before = install.write_generation(str(tmp_path)).read_text(encoding="utf-8")
     monkeypatch.setattr(install, "prepare_project", lambda root, _files: _make_project(root, model, "new"))
     monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", ""))
 
     install.install_project(model, {}, str(tmp_path))
 
-    locations = _locations(tmp_path)
-    assert locations == [f"./{model}"]
-    assert (tmp_path / locations[0]).is_dir()
+    assert (tmp_path / ".generation").read_text(encoding="utf-8") != before
     assert (tmp_path / model / "marker.txt").read_text(encoding="utf-8") == "new"
-    assert not [p.name for p in tmp_path.iterdir() if ".old-" in p.name or ".tmp-" in p.name]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".generation", model]
 
 
 def _parse_failed(*a, **_k):
@@ -68,19 +56,18 @@ def _parse_hang(*_a, **k):
     ("run", "error"),
     [(_parse_failed, OSError), (_parse_hang, subprocess.TimeoutExpired)],
 )
-def test_failed_redeploy_keeps_workspace_on_previous_project(tmp_path, monkeypatch, run, error):
+def test_failed_redeploy_keeps_previous_project_and_generation(tmp_path, monkeypatch, run, error):
+    # dbt parse lỗi xảy ra trước khi đổi thư mục: không có gì để nạp lại, Dagster không bị đụng tới.
     spec = Spec.model_validate(SPEC)
     model = spec.transform.model_name
     _make_project(tmp_path / model, model, "old")
-    install.write_workspace(str(tmp_path))
-    before = (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
+    before = install.write_generation(str(tmp_path)).read_text(encoding="utf-8")
     monkeypatch.setattr(install, "prepare_project", lambda root, _files: _make_project(root, model, "new"))
     monkeypatch.setattr(install.subprocess, "run", run)
 
     with pytest.raises(error):
         install.install_project(model, {}, str(tmp_path))
 
-    assert (tmp_path / "workspace.yaml").read_text(encoding="utf-8") == before
-    assert _locations(tmp_path) == [f"./{model}"]
+    assert (tmp_path / ".generation").read_text(encoding="utf-8") == before
     assert (tmp_path / model / "marker.txt").read_text(encoding="utf-8") == "old"
-    assert sorted(p.name for p in tmp_path.iterdir()) == [model, "workspace.yaml"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".generation", model]

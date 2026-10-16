@@ -451,3 +451,27 @@ def test_phase_timeout_kills_active_subprocess(tmp_path):
 
     assert update["status"] == "INFRA_ERROR"
     assert not marker.exists()
+
+
+DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
+
+
+def test_every_deploy_target_runs_with_app_env_production():
+    import yaml
+
+    dockerfile = (DEPLOY / "hf-space" / "Dockerfile").read_text(encoding="utf-8")
+    assert "APP_ENV=production" in dockerfile and "APP_ENV=staging" not in dockerfile
+    compose = yaml.safe_load((DEPLOY / "compose.yml").read_text(encoding="utf-8"))
+    assert compose["services"]["dagster"]["environment"]["APP_ENV"] == "${APP_ENV:-production}"
+    vm = (DEPLOY / "setup-vm.sh").read_text(encoding="utf-8")
+    assert "\nAPP_ENV=production\n" in vm and "APP_ENV=staging" not in vm
+
+
+def test_hf_space_refuses_to_start_without_the_connection_key():
+    # production bắt buộc PIPELINE_CONNECTION_KEY (PipelineSettings.validate_connection_key): Space báo thiếu secret
+    # ngay, thay vì để backend chết lúc khởi động.
+    start = (DEPLOY / "hf-space" / "start.sh").read_text(encoding="utf-8")
+    required = next(line for line in start.splitlines() if line.startswith("for key in ")).split()
+    assert "PIPELINE_CONNECTION_KEY" in required
+    with pytest.raises(RuntimeError, match="PIPELINE_CONNECTION_KEY"):
+        PipelineSettings(_env_file=None).validate_connection_key("production")

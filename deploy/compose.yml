@@ -68,12 +68,14 @@ services:
     command: ["python", "scripts/dagster_local.py"]
     # Không đọc ../.env (lỗi N1): không có OPENAI_API_KEY, PIPELINE_GITHUB_*, secret của deployer hay mật khẩu đăng
     # nhập. Chỉ các biến scripts/dagster_local.py cần để chạy pipeline và vòng Day 2 (collect, tất định). Tiến trình
-    # Dagster con còn nhận ít hơn nữa: không có PIPELINE_CONNECTION_KEY (xem child_env trong dagster_local.py).
+    # Dagster con (code server, webserver, daemon) còn nhận ít hơn nữa: không có PIPELINE_CONNECTION_KEY hay credential
+    # nguồn nào; supervisor ghi credential của từng pipeline vào tmpfs dưới đây (src/dagster_runtime/secrets.py).
     environment:
-      APP_ENV: ${APP_ENV:-staging}
+      APP_ENV: ${APP_ENV:-production}
       DAGSTER_HOST: 0.0.0.0
       DAGSTER_PORT: "3070"
       DAGSTER_CODE_READONLY: "1"
+      ATOMESUS_SECRETS_DIR: /run/atomesus-secrets
       PIPELINE_CONNECTION_KEY: ${PIPELINE_CONNECTION_KEY:-}  # giải mã kết nối Postgres người dùng đã lưu
       PIPELINE_DATABASE_URL: ${PIPELINE_DATABASE_URL:?Set PIPELINE_DATABASE_URL}  # tài khoản chỉ đọc pipeline_reader
       PIPELINE_MOCK_API_URL: ${PIPELINE_MOCK_API_URL:-http://mock-api:8100}
@@ -84,9 +86,13 @@ services:
     volumes:
       # Đọc-ghi: lịch sử Dagster, warehouse từng pipeline, và runs.sqlite3 (vòng Day 2 ghi số đo, cảnh báo).
       - ../data:/app/data
-      # Chỉ deployer ghi; workspace.yaml đổi thì Dagster tự khởi động lại. Kết quả dbt từng lần chạy ghi vào
-      # data/dagster_home/dbt_target (scripts/dagster_local.py), không ghi vào code location.
+      # Chỉ deployer ghi; `.generation` đổi thì supervisor nạp lại code location hợp nhất qua GraphQL (không khởi động
+      # lại Dagster, run đang chạy giữ nguyên). Kết quả dbt từng lần chạy ghi vào data/dagster_home/dbt_target
+      # (scripts/dagster_local.py), không ghi vào code location.
       - { type: volume, source: dagster_code, target: /app/data/dagster_local, read_only: true, volume: { nocopy: true } }
+    # Credential theo từng pipeline (<model>.json, 0600): chỉ nằm trong RAM, không ghi vào ../data hay volume nào.
+    tmpfs:
+      - /run/atomesus-secrets:mode=0700,uid=1000,gid=1000
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3070/server_info')"]
       interval: 30s
@@ -96,7 +102,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       backend: { condition: service_started }
-      deployer: { condition: service_started }  # deployer tạo workspace.yaml (rỗng) trong dagster_code
+      deployer: { condition: service_started }  # deployer tạo mốc .generation trong dagster_code
 
   # PIPELINE_DEPLOY_MODE=direct (mặc định): cài bundle backend ghi vào hộp thư release ../data/releases, không cần
   # git hay deploy key. pr: kéo nhánh mặc định của repo pipeline bằng deploy key CHỈ ĐỌC. Cả hai kiểm manifest, cài
@@ -104,7 +110,7 @@ services:
   # chưa cấu hình (docs/deploy.md mục 6) thì chỉ ghi log nhắc và nằm chờ, Dagster chạy với danh sách pipeline rỗng.
   #
   # Image: image app của backend (cùng code, cùng thư viện, build trước) thêm git + openssh-client để fetch qua SSH.
-  # Nó cũng mang sẵn /app/data/dagster_local (workspace.yaml rỗng) và /app/state thuộc user `app`: volume Docker mới
+  # Nó cũng mang sẵn /app/data/dagster_local (mốc .generation rỗng) và /app/state thuộc user `app`: volume Docker mới
   # tạo còn rỗng thì lần đầu mount vào deployer được chép nội dung và chủ sở hữu từ đây, nên deployer (không phải
   # root) ghi được mà không cần service nào khác ghi volume. Các service khác mount `nocopy` nên không chép gì vào.
   deployer:
@@ -119,7 +125,7 @@ services:
             && apt-get install -y --no-install-recommends git openssh-client \
             && rm -rf /var/lib/apt/lists/* \
             && mkdir -p /app/data/dagster_local /app/state \
-            && printf 'load_from: []\n' > /app/data/dagster_local/workspace.yaml \
+            && printf '' > /app/data/dagster_local/.generation \
             && chown -R app:app /app/data/dagster_local /app/state
         USER app
     image: atomesus-deployer

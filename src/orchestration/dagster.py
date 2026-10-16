@@ -3,6 +3,10 @@
 Chỉ đọc: lần materialize gần nhất của từng asset, run gần nhất của job chứa asset đó, và lịch chạy
 (bật/tắt, lần chạy kế tiếp). Khóa asset là đường dẫn nối bằng "/", ví dụ `gold/fct_daily_sales`, khớp với
 tên dataset `gold.fct_daily_sales` trong catalog.
+
+Template v2 (code location hợp nhất, lỗi #4) thêm tiền tố model vào key Dagster: `fct_daily_sales/gold/fct_daily_sales`.
+`catalog_key` bỏ tiền tố đó để hợp đồng API giữ nguyên; bảng bronze nhiều pipeline cùng đọc thì gộp về một khóa
+(như trước khi có tiền tố), `dagster_keys` giữ khóa thật để mở đúng asset trên Dagster.
 """
 
 from collections.abc import Callable
@@ -40,6 +44,16 @@ query PipelineStatus {
   }
 }
 """
+
+
+LAYERS = ("bronze", "staging", "gold")
+
+
+def catalog_key(path: list[str]) -> str:
+    """`[<model>, <tầng>, ...]` của template v2 → `<tầng>/...`; key không có tiền tố model giữ nguyên."""
+    if len(path) >= 3 and path[1] in LAYERS:
+        path = path[1:]
+    return "/".join(path)
 
 
 class DagsterError(Exception):
@@ -81,16 +95,26 @@ def parse_status(data: dict) -> dict[str, dict]:
                     "location": repo["location"]["name"],
                 },
             )
-    assets = {}
+    merged: dict[str, dict] = {}
     for node in _section(data, "assetsOrError", "AssetConnection")["nodes"]:
         jobs = [job for job in (node.get("definition") or {}).get("jobNames", []) if not job.startswith("__")]
         if not jobs:
             continue  # asset nguồn bên ngoài (ví dụ bảng Postgres), không do pipeline nào tạo
+        entry = merged.setdefault(catalog_key(node["key"]["path"]), {"jobs": [], "keys": [], "materialization": None})
+        entry["jobs"] += [job for job in jobs if job not in entry["jobs"]]
+        entry["keys"].append("/".join(node["key"]["path"]))
         materialization = (node.get("assetMaterializations") or [None])[0]
+        latest = entry["materialization"]
+        if materialization and (latest is None or int(materialization["timestamp"]) > int(latest["timestamp"])):
+            entry["materialization"] = materialization
+    assets = {}
+    for key, entry in merged.items():
+        jobs, materialization = entry["jobs"], entry["materialization"]
         job_runs = [latest_run[job] for job in jobs if job in latest_run]
         run = max(job_runs, key=lambda r: r.get("startTime") or 0) if job_runs else None
-        assets["/".join(node["key"]["path"])] = {
+        assets[key] = {
             "jobs": jobs,
+            "dagster_keys": entry["keys"],
             "last_materialized_at": _iso(int(materialization["timestamp"]) / 1000) if materialization else None,
             "last_materialized_run_id": materialization["runId"] if materialization else None,
             "last_run": {
@@ -122,6 +146,12 @@ def filter_status(assets: dict[str, dict], visible: Callable[[str], bool]) -> di
         own_materialization = run is not None and asset["last_materialized_run_id"] == run["run_id"]
         result[key] = {
             "jobs": jobs,
+            # Khóa thật có tiền tố model: chỉ giữ khóa của pipeline được thấy, không lộ tên model khác.
+            **(
+                {"dagster_keys": [k for k in asset["dagster_keys"] if f"{k.split('/')[0]}_job" in jobs]}
+                if "dagster_keys" in asset
+                else {}
+            ),
             "last_materialized_at": asset["last_materialized_at"] if own_materialization else None,
             "last_materialized_run_id": asset["last_materialized_run_id"] if own_materialization else None,
             "last_run": run,

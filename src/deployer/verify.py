@@ -1,4 +1,9 @@
-"""Chạy thử đúng job của pipeline vừa cài trên Dagster production (SPEC §9.5 mức D2)."""
+"""Chạy thử đúng job của pipeline vừa cài trên Dagster production (SPEC §9.5 mức D2).
+
+Mọi pipeline nằm trong một code location hợp nhất `atomesus` (src/dagster_runtime/loader.py). Sau khi cài, deployer ghi
+`.generation`; supervisor Dagster nạp lại location. Chạy thử chờ location có `updatedTimestamp` sau lúc cài rồi tìm job
+`<model>_job` trong đó; đã nạp lại mà không có job thì báo lỗi ngay (bundle bị loader bỏ qua).
+"""
 
 import time
 from contextvars import ContextVar
@@ -6,6 +11,8 @@ from math import isfinite
 from uuid import uuid4
 
 import httpx
+
+from src.dagster_runtime import LOCATION
 
 WORKSPACE = """
 query VerifyWorkspaceReady {
@@ -176,17 +183,17 @@ def verify_pipeline(url: str, model: str, timeout: int, *, sleep=time.sleep, clo
                 if not isinstance(entries, list):
                     raise VerificationError("Dagster thiếu danh sách code location khi chạy thử.")
                 location = next(
-                    (entry for entry in entries if isinstance(entry, dict) and entry.get("name") == model), {}
+                    (entry for entry in entries if isinstance(entry, dict) and entry.get("name") == LOCATION), {}
                 )
                 if updated_after is not None:
                     stamp = location.get("updatedTimestamp")
                     if type(stamp) not in (int, float) or not isfinite(stamp) or stamp < updated_after:
-                        raise VerificationError(f"Chờ Dagster nạp code location {model} sau khi workspace.yaml đổi.")
+                        raise VerificationError(f"Chờ Dagster nạp lại code location {LOCATION} sau khi cài {model}.")
                 loaded = location.get("locationOrLoadError")
                 if isinstance(loaded, dict) and loaded.get("__typename") == "PythonError":
-                    raise DagsterRejectedError(f"Dagster nạp code location {model} lỗi (PythonError).")
+                    raise DagsterRejectedError(f"Dagster nạp code location {LOCATION} lỗi (PythonError).")
                 if updated_after is not None and location.get("loadStatus") != "LOADED":
-                    raise VerificationError(f"Chờ Dagster nạp code location {model} (LOADED).")
+                    raise VerificationError(f"Chờ Dagster nạp code location {LOCATION} (LOADED).")
                 loaded = _section(location, "locationOrLoadError", "RepositoryLocation")
                 repositories = loaded.get("repositories")
                 if not isinstance(repositories, list):
@@ -199,8 +206,17 @@ def verify_pipeline(url: str, model: str, timeout: int, *, sleep=time.sleep, clo
                     and isinstance(repo.get("pipelines"), list)
                     and any(isinstance(p, dict) and p.get("name") == job for p in repo["pipelines"])
                 ]
+                if len(matches) != 1 and updated_after is not None:
+                    # Location đã nạp lại sau lúc cài mà vẫn không có job: loader đã bỏ qua bundle (lỗi nạp hoặc
+                    # template cũ). Chờ thêm không giải quyết được, báo ngay để quay về bản trước.
+                    raise DagsterRejectedError(
+                        f"Dagster đã nạp lại code location {LOCATION} nhưng không có job {job} "
+                        "(bundle nạp lỗi hoặc dùng template cũ)."
+                    )
                 if len(matches) != 1:
-                    raise VerificationError(f"Dagster không tìm thấy duy nhất job {job} trong code location {model}.")
+                    raise VerificationError(
+                        f"Dagster không tìm thấy duy nhất job {job} trong code location {LOCATION}."
+                    )
                 break
             except DagsterRejectedError:
                 raise
@@ -212,7 +228,7 @@ def verify_pipeline(url: str, model: str, timeout: int, *, sleep=time.sleep, clo
                 {
                     "executionParams": {
                         "selector": {
-                            "repositoryLocationName": model,
+                            "repositoryLocationName": LOCATION,
                             "repositoryName": matches[0],
                             "pipelineName": job,
                         },

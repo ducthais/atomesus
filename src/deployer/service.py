@@ -45,6 +45,7 @@ from http.client import HTTPException
 from pathlib import Path
 from uuid import uuid4
 
+from src.dagster_runtime import GENERATION_FILE
 from src.deployer import install, release, verify
 from src.deployer.manifest import (
     MANIFEST_FILE,
@@ -553,8 +554,8 @@ def run_inbox(config: Config, *, post=http_post, sleep=time.sleep) -> dict:
     """Một chu kỳ ở chế độ direct: cài các bundle trong hộp thư release. Tóm tắt cùng dạng run_once: `head` luôn None,
     `models` là bundle vừa kiểm/cài, `unresolved` là bundle còn chờ cài lại ({tên bundle: "retry"})."""
     state = load_state(config)
-    if not (Path(config.deploy_dir) / "workspace.yaml").exists():
-        install.write_workspace(config.deploy_dir)
+    if not (Path(config.deploy_dir) / GENERATION_FILE).exists():
+        install.write_generation(config.deploy_dir)
     if not _flush(config, state, post, sleep):
         log.warning("Còn %d kết quả chưa báo được backend; chưa cài bundle mới.", len(state["pending"]))
         return {"head": None, "applied": None, "models": [], "pending": len(state["pending"]), "unresolved": {}}
@@ -586,8 +587,8 @@ def run_once(config: Config, *, reinstall: bool = False, post=http_post, sleep=t
     if config.mode == "direct":
         return run_inbox(config, post=post, sleep=sleep)
     state = load_state(config)
-    if not (Path(config.deploy_dir) / "workspace.yaml").exists():
-        install.write_workspace(config.deploy_dir)  # Dagster cần workspace.yaml (rỗng) ngay cả khi chưa có pipeline
+    if not (Path(config.deploy_dir) / GENERATION_FILE).exists():
+        install.write_generation(config.deploy_dir)  # mốc ban đầu cho supervisor Dagster, kể cả khi chưa có pipeline
     if not _flush(config, state, post, sleep):
         log.warning("Còn %d kết quả chưa báo được backend; chưa cài commit mới.", len(state["pending"]))
         unresolved = {model: record["status"] for model, record in state["models"].items() if record["status"] != DONE}

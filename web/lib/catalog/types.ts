@@ -113,6 +113,8 @@ export type Relationship = {
 /** Trạng thái vận hành của một asset trên Dagster (GET /orchestration/status). Khóa asset: `gold/fct_daily_sales`. */
 export type AssetRunStatus = {
   jobs: string[];
+  /** Khóa thật trên Dagster (template v2 có tiền tố model: `fct_x/gold/fct_x`); khóa của map vẫn là `gold/fct_x`. */
+  dagsterKeys?: string[];
   lastMaterializedAt: string | null; lastMaterializedRunId: string | null;
   lastRun: { runId: string; job: string; status: string; startedAt: string | null; endedAt: string | null } | null;
   schedule: { name: string; cron: string; timezone: string; running: boolean; nextTickAt: string | null } | null;

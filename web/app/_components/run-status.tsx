@@ -29,7 +29,7 @@ export function OperationsPanel({ orchestration, assetKey, status }: { orchestra
   const link = (path: string, label: string) => orchestration.url
     ? <a href={`${orchestration.url}${path}`} target="_blank" rel="noreferrer" className="link-quiet ext-link">{label}<ExternalLink size={12} aria-hidden /></a> : null;
   return <section className="panel ops">
-    <div className="panel-head"><h2><CalendarClock size={16} aria-hidden /> Vận hành · Dagster</h2>{orchestration.available && status && link(`/assets/${assetKey}`, 'Mở trong Dagster')}</div>
+    <div className="panel-head"><h2><CalendarClock size={16} aria-hidden /> Vận hành · Dagster</h2>{orchestration.available && status && link(`/assets/${status.dagsterKeys?.[0] ?? assetKey}`, 'Mở trong Dagster')}</div>
     {!orchestration.available ? <div className="callout warn small"><CircleAlert size={15} aria-hidden /><span>{orchestration.reason ?? 'Không đọc được trạng thái Dagster.'}</span></div>
       : !status ? <p className="muted">Pipeline của bảng này chưa được deploy lên Dagster. Reviewer duyệt run thì project được ghi vào <code>data/dagster_local/</code> và xuất hiện ở đây.</p>
       : <dl className="facts">

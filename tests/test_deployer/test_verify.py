@@ -48,17 +48,22 @@ class Dagster:
             body = {
                 "reloadWorkspace" if query == verify.RELOAD else "workspaceOrError": {
                     "__typename": "Workspace",
+                    # Một code location hợp nhất chứa job của mọi pipeline (src/dagster_runtime/loader.py).
                     "locationEntries": [
                         {
-                            "name": model,
+                            "name": "atomesus",
                             "loadStatus": "LOADED",
                             "updatedTimestamp": time.time(),
                             "locationOrLoadError": {
                                 "__typename": "RepositoryLocation",
-                                "repositories": [{"name": "__repository__", "pipelines": [{"name": f"{model}_job"}]}],
+                                "repositories": [
+                                    {
+                                        "name": "__repository__",
+                                        "pipelines": [{"name": f"{model}_job"} for model in ("fct_x", "fct_y")],
+                                    }
+                                ],
                             },
                         }
-                        for model in ("fct_x", "fct_y")
                     ],
                 }
             }
@@ -99,7 +104,7 @@ def test_success_launches_only_the_installed_job_once_and_waits(monkeypatch):
     assert dagster.launches == [
         {
             "selector": {
-                "repositoryLocationName": "fct_x",
+                "repositoryLocationName": "atomesus",
                 "repositoryName": "__repository__",
                 "pipelineName": "fct_x_job",
             },
@@ -241,7 +246,7 @@ def test_install_waits_for_new_process_before_any_mutation(tmp_path, monkeypatch
             entries = body["data"]["workspaceOrError"]["locationEntries"]
             if reads <= 3:
                 if first_install:
-                    entries[:] = [entry for entry in entries if entry["name"] != "fct_x"]
+                    entries[:] = [entry for entry in entries if entry["name"] != "atomesus"]
                 else:
                     entries[0]["updatedTimestamp"] = 99
             else:
@@ -267,7 +272,7 @@ def test_install_waits_for_new_process_before_any_mutation(tmp_path, monkeypatch
     assert reads == 7 and clock.now == 12 and len(dagster.launches) == 1
     assert [body["query"] for _, body, _ in dagster.calls] == [*[verify.WORKSPACE] * 4, verify.LAUNCH, verify.STATUS]
     assert (target / asset).read_text(encoding="utf-8") == "# new"
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["fct_x", "workspace.yaml"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".generation", "fct_x"]
     assert verify.WORKSPACE_UPDATED_AFTER.get() == before
 
 
@@ -313,7 +318,7 @@ def test_location_load_error_fails_immediately_without_launch(monkeypatch):
     monkeypatch.setattr(verify.httpx, "post", post)
     context = verify.WORKSPACE_UPDATED_AFTER.set(100)
     try:
-        with pytest.raises(verify.VerificationError, match="fct_x.*PythonError") as exc:
+        with pytest.raises(verify.VerificationError, match="atomesus.*PythonError") as exc:
             verify.verify_pipeline("http://dagster:3070", "fct_x", 120, sleep=clock.sleep, clock=clock)
     finally:
         verify.WORKSPACE_UPDATED_AFTER.reset(context)
@@ -366,7 +371,30 @@ def test_failed_install_resets_workspace_timestamp_context(tmp_path, monkeypatch
 
     assert verify.WORKSPACE_UPDATED_AFTER.get() == before
     assert not (tmp_path / "fct_x").exists()
-    assert (tmp_path / "workspace.yaml").read_text(encoding="utf-8").splitlines()[-1] == "load_from: []"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".generation"], "rollback ghi lại mốc để supervisor nạp lại"
+
+
+def test_missing_job_after_reload_fails_immediately_without_launch(monkeypatch):
+    # Location đã nạp lại sau lúc cài nhưng không có job: loader đã bỏ qua bundle (lỗi nạp / template cũ).
+    dagster, clock = Dagster(), Clock()
+
+    def post(url, **kwargs):
+        response = dagster(url, **kwargs)
+        body = response.json()
+        body["data"]["workspaceOrError"]["locationEntries"][0]["locationOrLoadError"]["repositories"][0][
+            "pipelines"
+        ] = [{"name": "fct_y_job"}]
+        return httpx.Response(200, json=body, request=response.request)
+
+    monkeypatch.setattr(verify.httpx, "post", post)
+    context = verify.WORKSPACE_UPDATED_AFTER.set(0)
+    try:
+        with pytest.raises(verify.VerificationError, match="không có job fct_x_job"):
+            verify.verify_pipeline("http://dagster:3070", "fct_x", 120, sleep=clock.sleep, clock=clock)
+    finally:
+        verify.WORKSPACE_UPDATED_AFTER.reset(context)
+
+    assert clock.now == 0 and len(dagster.calls) == 1 and dagster.launches == []
 
 
 @pytest.mark.parametrize("kind", sorted(verify.LAUNCH_ERRORS))

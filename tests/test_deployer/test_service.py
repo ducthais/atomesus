@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from src.dagster_runtime.contract import is_project_dir
 from src.deployer import install, release, service, verify
 from src.deployer.manifest import build_manifest
 from src.deployer.service import CALLBACK_PATH, SIGNATURE_HEADER, TIMESTAMP_HEADER, Config, DeployerError
@@ -170,7 +171,7 @@ def test_first_run_installs_pipeline_and_reports_signed_callback(config, remote,
     project = Path(config.deploy_dir) / "fct_x"
     assert (project / "dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 1 as n\n"
     assert not (project / "manifest.json").exists() and not (project / "run_report.json").exists()
-    assert "location_name: fct_x" in (Path(config.deploy_dir) / "workspace.yaml").read_text(encoding="utf-8")
+    assert (Path(config.deploy_dir) / ".generation").is_file(), "supervisor Dagster được báo nạp lại"
     [(url, body, headers)] = backend.calls
     assert url == "http://backend:8000" + CALLBACK_PATH
     timestamp = headers[TIMESTAMP_HEADER]
@@ -198,9 +199,8 @@ def test_new_version_replaces_the_single_location_without_leftovers(config, remo
 
     assert summary["applied"] == head and summary["models"] == ["fct_x"]
     root = Path(config.deploy_dir)
-    assert live_entries(config) == ["fct_x", "workspace.yaml"], "không còn thư mục .old-/.tmp-"
+    assert live_entries(config) == [".generation", "fct_x"], "không còn thư mục .old-/.tmp-"
     assert (root / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 2 as n\n"
-    assert (root / "workspace.yaml").read_text(encoding="utf-8").count("location_name:") == 1
     assert [(p["version"], p["status"]) for p in backend.payloads()] == [(2, "deployed")]
 
 
@@ -225,7 +225,7 @@ def test_only_changed_pipelines_are_installed(config, remote, installs):
     run(config, backend)
 
     assert installs == ["fct_x", "fct_y"] and [p["model_name"] for p in backend.payloads()] == ["fct_y"]
-    assert live_entries(config) == ["fct_x", "fct_y", "workspace.yaml"]
+    assert live_entries(config) == [".generation", "fct_x", "fct_y"]
 
 
 def test_tampered_file_is_rejected_and_running_version_kept(config, remote, installs):
@@ -326,7 +326,7 @@ def test_install_failure_is_retried_then_reported_failed_and_keeps_previous(conf
     assert installs == ["fct_x"] * (1 + service.INSTALL_ATTEMPTS)
     sql = Path(config.deploy_dir) / "fct_x/dbt_project/models/gold/fct_x.sql"
     assert sql.read_text(encoding="utf-8") == "select 1 as n\n"
-    assert live_entries(config) == ["fct_x", "workspace.yaml"]
+    assert live_entries(config) == [".generation", "fct_x"]
     [payload] = backend.payloads()
     assert payload["status"] == "failed" and "dbt parse" in payload["detail"]
     assert summary["applied"] == first and summary["unresolved"] == {"fct_x": "failed"}
@@ -691,7 +691,7 @@ def test_verification_failure_rolls_back_and_waits_for_new_pipeline_content(
     old_files = {
         path.relative_to(root / "fct_x"): path.read_bytes() for path in (root / "fct_x").rglob("*") if path.is_file()
     }
-    old_workspace = install.write_workspace(config.deploy_dir).read_bytes()
+    old_generation = install.write_generation(config.deploy_dir).read_bytes()
     backend.calls.clear()
     dagster.calls.clear()
     if failure in {"FAILURE", "CANCELED"}:
@@ -710,8 +710,8 @@ def test_verification_failure_rolls_back_and_waits_for_new_pipeline_content(
     summary = run(config, backend)
 
     assert summary["applied"] == previous and summary["unresolved"] == {"fct_x": "failed"}
-    assert (root / "workspace.yaml").read_bytes() == old_workspace
-    assert live_entries(config) == (["workspace.yaml"] if first_install else ["fct_x", "workspace.yaml"])
+    assert (root / ".generation").read_bytes() != old_generation, "rollback báo Dagster nạp lại bản trước"
+    assert live_entries(config) == ([".generation"] if first_install else [".generation", "fct_x"])
     restored_files = {
         path.relative_to(root / "fct_x"): path.read_bytes() for path in (root / "fct_x").rglob("*") if path.is_file()
     }
@@ -755,7 +755,7 @@ def test_keeps_backup_and_defers_deployed_callback_until_success(config, remote,
         [backup] = list(root.glob("fct_x.old-*"))
         assert (backup / "dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 1 as n\n"
         assert (root / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 2 as n\n"
-        assert ".old-" not in (root / "workspace.yaml").read_text(encoding="utf-8")
+        assert not is_project_dir(backup.name), "loader không nạp bản sao lưu"
         seen.append(True)
 
     dagster.on_status = check
@@ -793,7 +793,7 @@ def test_slow_dagster_restart_succeeds_without_rollback(config, remote, installs
     assert (Path(config.deploy_dir) / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(
         encoding="utf-8"
     ) == "select 2 as n\n"
-    assert live_entries(config) == ["fct_x", "workspace.yaml"]
+    assert live_entries(config) == [".generation", "fct_x"]
     assert not any(body["query"] == verify.TERMINATE for _, body, _ in dagster.calls)
 
 
@@ -828,7 +828,7 @@ def test_failed_verification_callback_retries_without_reinstall_or_launch(config
 
     summary = run(config, Backend(*[503] * service.CALLBACK_ATTEMPTS))
 
-    assert summary["pending"] == 1 and live_entries(config) == ["workspace.yaml"]
+    assert summary["pending"] == 1 and live_entries(config) == [".generation"]
     assert service.load_state(config)["pending"][0]["payload"]["status"] == "failed"
     backend = Backend()
     assert run(config, backend)["unresolved"] == {"fct_x": "failed"}

@@ -25,7 +25,7 @@ def fake_project(root, files):
         target.write_text(content, encoding="utf-8")
 
 
-def test_install_replaces_project_and_lists_it_in_workspace(tmp_path, monkeypatch):
+def test_install_replaces_project_and_marks_a_new_generation(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "prepare_project", fake_project)
     monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", ""))
     old = tmp_path / "fct_x"
@@ -36,32 +36,32 @@ def test_install_replaces_project_and_lists_it_in_workspace(tmp_path, monkeypatc
 
     assert target == old and not (target / "stale.txt").exists()
     assert (target / "infra/dagster/generated/fct_x_asset.py").read_text(encoding="utf-8") == "# asset\n"
-    workspace = (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
-    assert "module_name: infra.dagster.generated.fct_x_asset" in workspace and "location_name: fct_x" in workspace
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["fct_x", "workspace.yaml"], "không còn thư mục tạm/backup"
+    assert (tmp_path / ".generation").read_text(encoding="utf-8").strip()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".generation", "fct_x"], "không còn thư mục tạm/backup"
 
 
-def test_reinstall_lists_only_live_project_not_its_backup(tmp_path, monkeypatch):
+def test_each_install_writes_a_different_generation(tmp_path, monkeypatch):
+    # Supervisor Dagster so nội dung `.generation`: mỗi lần cài phải khác để code location được nạp lại.
     monkeypatch.setattr(install, "prepare_project", fake_project)
     monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", ""))
-    asset = {"infra/dagster/generated/fct_x_asset.py": "# asset\n"}
-    install.install_project("fct_x", asset, str(tmp_path))
+    install.install_project("fct_x", {"infra/dagster/generated/fct_x_asset.py": "# asset\n"}, str(tmp_path))
+    first = (tmp_path / ".generation").read_text(encoding="utf-8")
 
     install.install_project("fct_x", {"infra/dagster/generated/fct_x_asset.py": "# asset v2\n"}, str(tmp_path))
 
-    workspace = (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
-    directories = [line.split(": ", 1)[1] for line in workspace.splitlines() if "working_directory:" in line]
-    assert directories == ["./fct_x"] and workspace.count("location_name:") == 1
-    assert (tmp_path / directories[0]).is_dir()
+    assert (tmp_path / ".generation").read_text(encoding="utf-8") != first
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".generation", "fct_x"]
 
 
-def test_empty_workspace_is_valid_yaml(tmp_path):
-    path = install.write_workspace(str(tmp_path / "deploy"))
+def test_generation_is_written_atomically_without_leftovers(tmp_path):
+    path = install.write_generation(str(tmp_path / "deploy"))
+    again = install.write_generation(str(tmp_path / "deploy"))
 
-    assert path.read_text(encoding="utf-8").splitlines()[-1] == "load_from: []"
+    assert path == again and path.name == ".generation" and path.read_text(encoding="utf-8").count(".") == 2
+    assert [p.name for p in path.parent.iterdir()] == [".generation"]
 
 
-def test_failed_workspace_write_restores_previous_project(tmp_path, monkeypatch):
+def test_failed_generation_write_restores_previous_project(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "prepare_project", fake_project)
     monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", ""))
     old = tmp_path / "fct_x"
@@ -71,7 +71,7 @@ def test_failed_workspace_write_restores_previous_project(tmp_path, monkeypatch)
     def broken(_deploy_dir):
         raise OSError("đĩa đầy")
 
-    monkeypatch.setattr(install, "write_workspace", broken)
+    monkeypatch.setattr(install, "write_generation", broken)
 
     with pytest.raises(OSError, match="đĩa đầy"):
         install.install_project("fct_x", {"a.sql": "select 1\n"}, str(tmp_path))
@@ -88,13 +88,15 @@ def test_model_name_cannot_escape_deploy_dir(tmp_path):
 
 
 @pytest.mark.parametrize("first_install", [False, True])
-def test_rollback_restores_workspace_even_when_new_directory_cannot_be_deleted(tmp_path, monkeypatch, first_install):
+def test_rollback_marks_a_new_generation_even_when_new_directory_cannot_be_deleted(
+    tmp_path, monkeypatch, first_install
+):
     monkeypatch.setattr(install, "prepare_project", fake_project)
     monkeypatch.setattr(install, "_compile_manifest", lambda _root: None)
     asset = "infra/dagster/generated/fct_x_asset.py"
     if not first_install:
         install.install_project("fct_x", {asset: "# old\n"}, str(tmp_path))
-    before = install.write_workspace(str(tmp_path)).read_bytes()
+    before = install.write_generation(str(tmp_path)).read_bytes()
     original = VerificationError("Chạy thử Dagster kết thúc FAILURE (run failed-run).")
     remove = install.shutil.rmtree
 
@@ -114,7 +116,7 @@ def test_rollback_restores_workspace_even_when_new_directory_cannot_be_deleted(t
         install.install_project("fct_x", {asset: "# new\n"}, str(tmp_path), verify=fail)
 
     assert error.value.__cause__ is original and "secret-path" not in str(error.value)
-    assert (tmp_path / "workspace.yaml").read_bytes() == before
+    assert (tmp_path / ".generation").read_bytes() != before, "rollback ghi mốc mới để Dagster nạp lại bản cũ"
     if first_install:
         assert not (tmp_path / "fct_x").exists()
     else:
@@ -194,7 +196,7 @@ def test_install_runs_real_dbt_parse_without_dotenv(tmp_path, monkeypatch):
     manifest = json.loads((project / "dbt_project/target/manifest.json").read_text(encoding="utf-8"))
     assert any(node["name"] == "fct_x" for node in manifest["nodes"].values())
     assert not (tmp_path / "unwanted-target").exists()
-    assert "location_name: fct_x" in (project.parent / "workspace.yaml").read_text(encoding="utf-8")
+    assert (project.parent / ".generation").is_file()
 
 
 def _dagster_local():
@@ -218,7 +220,7 @@ def test_production_dbt_results_reach_day2_test_degradation(tmp_path):
     model, t0 = "fct_x", datetime(2026, 10, 6, 2, 0, tzinfo=UTC).timestamp()
     deploy, home = tmp_path / "dagster_local", tmp_path / "dagster_home"
     (deploy / model / "dbt_project").mkdir(parents=True)  # code location đã cài, không có target/
-    (deploy / "workspace.yaml").write_text("load_from: []\n", encoding="utf-8")
+    (deploy / ".generation").write_text("1.a\n", encoding="utf-8")
     artifacts = home / "dbt_target"
     _dbt_results(artifacts, f"{model}_transform-r1aaaaa-0000001", t0, failed=0)
     _dbt_results(artifacts, f"{model}_transform-r2bbbbb-0000002", t0 + 3600, failed=2)
@@ -257,59 +259,7 @@ def test_production_dbt_results_reach_day2_test_degradation(tmp_path):
     found_rules = [f.rule for f in detectors.detect(series, load_policy().objectives["sales"], now)]
     assert "test_degradation" in found_rules
     assert sorted(p.name for p in (home / "day2_dbt").iterdir()) == [model], "chỉ pipeline đang cài"
-    assert sorted(p.name for p in deploy.iterdir()) == [model, "workspace.yaml"], "không ghi gì vào code location"
-
-
-def test_readonly_dagster_starts_without_dev_parse_and_writes_artifacts_outside_code(tmp_path, monkeypatch):
-    module = _dagster_local()
-    deploy = tmp_path / "code"
-    workspace = install.write_workspace(str(deploy))
-    home = tmp_path / "home"
-    monkeypatch.setattr(module, "READ_ONLY", True)
-    monkeypatch.setattr(module, "HOME", home)
-    monkeypatch.setattr(module, "ROOT", tmp_path)
-    monkeypatch.setattr(module, "PipelineSettings", lambda: PipelineSettings(_env_file=None, deploy_dir=str(deploy)))
-    monkeypatch.setattr(module, "credentials_env", lambda *args: {})
-    monkeypatch.setenv("DAGSTER_IS_DEV_CLI", "1")
-    calls = []
-    monkeypatch.setattr(module.subprocess, "Popen", lambda command, **kwargs: calls.append((command, kwargs)))
-
-    _, returned = module.start()
-
-    assert returned == workspace.resolve() and len(calls) == 2
-    assert "dagster-webserver" in calls[0][0][0] and "dagster-daemon" in calls[1][0][0]
-    for _, kwargs in calls:
-        assert "DAGSTER_IS_DEV_CLI" not in kwargs["env"]
-        assert kwargs["env"]["DBT_TARGET_PATH"] == str(home / "dbt_target")
-        assert kwargs["cwd"] == deploy.resolve()
-    assert list(deploy.iterdir()) == [workspace], "không ghi project hoặc kết quả dbt vào volume code"
-
-
-def test_workspace_replacement_restarts_dagster(tmp_path, monkeypatch):
-    module = _dagster_local()
-    workspace = install.write_workspace(str(tmp_path))
-    started, stopped = [], []
-
-    def start():
-        processes = []
-        started.append(processes)
-        return processes, workspace
-
-    def tick(_seconds):
-        if len(started) > 1:
-            raise KeyboardInterrupt
-        # Cài version mới có thể giữ nguyên nội dung YAML, nhưng thay file và mtime vẫn yêu cầu nạp lại code.
-        old = workspace.stat().st_mtime
-        install.write_workspace(str(tmp_path))
-        os.utime(workspace, (old + 10, old + 10))
-
-    monkeypatch.setattr(module, "start", start)
-    monkeypatch.setattr(module, "stop", stopped.append)
-    monkeypatch.setattr(module.time, "sleep", tick)
-    monkeypatch.setattr(module.time, "monotonic", lambda: 0)
-
-    assert module.main() == 0
-    assert len(started) == 2 and stopped == started
+    assert sorted(p.name for p in deploy.iterdir()) == [".generation", model], "không ghi gì vào code location"
 
 
 def test_day2_bridge_matches_real_dagster_dbt_artifact_names(tmp_path, monkeypatch):

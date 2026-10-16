@@ -59,9 +59,7 @@ AUTHORIZATION_FIELD = re.compile(
 )
 BEARER_TOKEN = re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/-]+=*")
 URL_PASSWORD = re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^:/@\s]+:)([^@/\s]+)(@)")
-PRIVATE_KEY = re.compile(
-    r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----", re.DOTALL
-)
+PRIVATE_KEY = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----", re.DOTALL)
 SANDBOX_CANCEL_POLL_SEC = 1.0
 
 
@@ -257,6 +255,9 @@ def _source_env(ref: str, decl, settings: PipelineSettings) -> dict[str, str]:
         raise _StopError("INFRA_ERROR", "el_run", str(exc)) from None
 
 
+source_env = _source_env  # src/dagster_runtime/secrets.py: credential theo đúng nguồn của từng pipeline (lỗi N1)
+
+
 def credentials_env(policy: Policy, settings: PipelineSettings) -> dict[str, str]:
     """Biến kết nối dlt cho mọi nguồn trong domains.yml đã có kết nối (dùng khi chạy project đã deploy)."""
     env = {}
@@ -315,6 +316,9 @@ def _safe_output(output: str, env: dict[str, str]) -> str:
     output = SENSITIVE_FIELD.sub(redact_field, output)
     output = BEARER_TOKEN.sub(r"\1[đã ẩn]", output)
     return output
+
+
+safe_output = _safe_output  # src/dagster_runtime/execute.py che output của dlt khi pipeline đã deploy chạy lỗi
 
 
 def _run(command: list[str], sandbox: Path, env: dict[str, str], timeout: int, stage: str) -> str:

@@ -1,23 +1,26 @@
-"""Chạy Dagster local (UI + daemon) cho mọi pipeline đã duyệt trong data/dagster_local/.
+"""Supervisor Dagster (local và production) cho mọi pipeline đã duyệt trong data/dagster_local/.
 
-- workspace.yaml: mỗi project đã deploy là một code location.
+- Một code location hợp nhất `atomesus` (src/dagster_runtime/loader.py, lỗi #4): 3 tiến trình cố định
+  (`dagster code-server start`, dagster-webserver, dagster-daemon) dù có bao nhiêu pipeline. `workspace.yaml` ghi trong
+  DAGSTER_HOME, trỏ tới code server qua gRPC 127.0.0.1.
+- Cài / gỡ / rollback pipeline: deployer ghi `<deploy_dir>/.generation` (src/deployer/install.py). Thấy file đổi thì
+  supervisor ghi credential của các pipeline rồi gọi GraphQL `reloadRepositoryLocation`: code mới được nạp, run đang
+  chạy không bị dừng, Dagster không khởi động lại. Chỉ tắt cả khi một tiến trình chết (để container khởi động lại).
+- Credential nguồn (lỗi N1): supervisor giữ khóa giải mã (PIPELINE_CONNECTION_KEY) và ghi
+  `<ATOMESUS_SECRETS_DIR>/<model>.json` chỉ gồm nguồn của đúng pipeline đó (src/dagster_runtime/secrets.py). Tiến trình
+  Dagster con nhận whitelist (`child_env`): không có OPENAI_API_KEY, PIPELINE_CONNECTION_KEY, token, mật khẩu hay
+  `SOURCES__*` nào. Run đọc file credential của model mình lúc chạy (src/dagster_runtime/execute.py). Phạm vi: chống lộ
+  do vô tình; tiến trình cùng uid vẫn đọc được file của nhau.
 - DAGSTER_HOME cố định (data/dagster_home) để lịch sử run, lịch chạy và backfill được giữ giữa các lần bật.
   dagster.yaml đặt QueuedRunCoordinator: tối đa DAGSTER_MAX_CONCURRENT_RUNS run cùng lúc (mặc định 1).
-- Mỗi pipeline một file DuckDB (data/warehouse/<model>.duckdb, templates/dagster_asset.py.j2) để pipeline chạy cùng
-  lúc không tranh khóa file. Bundle deploy trước khi tách file vẫn ghi data/warehouse/warehouse.duckdb chung.
-- Credential nguồn lấy từ .env (PIPELINE_DATABASE_URL), không ghi ra file. Tiến trình Dagster con chỉ nhận whitelist
-  (`child_env`): biến hệ thống tối thiểu và chuỗi kết nối đã giải mã, không có OPENAI_API_KEY, PIPELINE_CONNECTION_KEY
-  hay token nào của tiến trình này (lỗi N1).
+- Mỗi pipeline một file DuckDB (data/warehouse/<model>.duckdb, warehouse_file). dbt ghi target/log của từng lần chạy vào
+  DAGSTER_HOME/dbt_target, không ghi vào code location; Day 2 đọc số test từ đó (day2_settings).
 - Mỗi `COLLECT_SECONDS` thu số đo các lần chạy theo lịch vừa xong (src/monitor/runs.py), rồi chạy 4 luật suy giảm
   (src/monitor/day2.py): nguồn ngừng cấp thì cảnh báo, pipeline suy giảm thì tạo run sửa chạy ở luồng riêng (không chặn
   vòng này), chờ người duyệt. Thu số đo và 4 luật là tất định; run sửa thì gọi LLM (codegen), nên tiến trình không có
   OPENAI_API_KEY (container dagster production) chỉ ghi cảnh báo để chủ pipeline tạo run sửa từ app (backend có key).
-- Tự khởi động lại khi workspace.yaml đổi: cài một pipeline (src/deployer/install.py) thì file này được ghi lại, và
-  `dagster dev` chỉ đọc danh sách code location lúc khởi động (nút Reload không thêm được location mới).
 - Production (deploy/compose.yml, DAGSTER_CODE_READONLY=1): code location do service deployer ghi, Dagster mount chỉ
-  đọc. Không ghi workspace.yaml (chờ deployer tạo), không chạy `dagster dev` (nó chạy `dbt parse` ghi vào thư mục
-  project) mà chạy dagster-webserver + dagster-daemon; dbt ghi target/log của từng lần chạy vào DAGSTER_HOME/dbt_target,
-  Day 2 đọc số test từ đó (day2_settings).
+  đọc; supervisor không tạo thư mục trong đó.
 
 Chạy: python scripts/dagster_local.py  (hoặc make dagster), mở http://127.0.0.1:3070
 """
@@ -25,6 +28,7 @@ Chạy: python scripts/dagster_local.py  (hoặc make dagster), mở http://127.
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -35,41 +39,66 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)  # PipelineSettings đọc .env theo đường dẫn tương đối
 
+import httpx  # noqa: E402
 import yaml  # noqa: E402
 
-from src.codegen.sandbox import PASSTHROUGH_ENV, credentials_env  # noqa: E402
+from src.codegen.sandbox import PASSTHROUGH_ENV  # noqa: E402
 from src.config import get_settings  # noqa: E402
-from src.deployer.install import write_workspace  # noqa: E402
+from src.dagster_runtime import (  # noqa: E402
+    DEPLOY_DIR_ENV,
+    GENERATION_FILE,
+    LOCATION,
+    SECRETS_DIR_ENV,
+    WAREHOUSE_DIR_ENV,
+)
+from src.dagster_runtime.secrets import secrets_dir, sync_secrets  # noqa: E402
 from src.deployer.manifest import MODEL_NAME  # noqa: E402
-from src.pipeline.settings import SHARED_WAREHOUSE, PipelineSettings  # noqa: E402
+from src.pipeline.settings import PipelineSettings  # noqa: E402
 from src.policy import effective_policy  # noqa: E402
 
 HOST, PORT = os.environ.get("DAGSTER_HOST", "127.0.0.1"), os.environ.get("DAGSTER_PORT", "3070")
+GRPC_PORT = os.environ.get("DAGSTER_GRPC_PORT", "4266")
+# HF Space phục vụ Dagster dưới /dagster (deploy/hf-space/start.sh); webserver nhận qua tham số, không qua env.
+PATH_PREFIX = os.environ.get("DAGSTER_WEBSERVER_PATH_PREFIX", "").rstrip("/")
 READ_ONLY = os.environ.get("DAGSTER_CODE_READONLY") == "1"
 HOME = ROOT / "data" / "dagster_home"
 POLL_SECONDS = 3
 COLLECT_SECONDS = 60
-MAX_CONCURRENT_RUNS = 1  # VM nhỏ; bundle cũ còn chung một file DuckDB nên mặc định không chạy song song
+GRPC_WAIT_SECONDS = 120
+RELOAD_TIMEOUT_SECONDS = 120
+MAX_CONCURRENT_RUNS = 1  # VM nhỏ: mặc định không chạy song song
+RELOAD = """
+mutation ReloadLocation($name: String!) {
+  reloadRepositoryLocation(repositoryLocationName: $name) {
+    __typename
+    ... on WorkspaceLocationEntry { name }
+    ... on PythonError { message }
+  }
+}
+"""
 
 
 def child_env(settings: PipelineSettings, warehouse_dir: Path) -> dict[str, str]:
-    """Môi trường của tiến trình Dagster con (webserver, daemon, code pipeline): whitelist, không chép os.environ.
+    """Môi trường của tiến trình Dagster con (code server, webserver, daemon và run): whitelist, không chép os.environ.
 
-    Giống sandbox (src/codegen/sandbox.py: PASSTHROUGH_ENV, credentials_env): biến hệ thống tối thiểu cộng chuỗi kết nối
-    nguồn đã giải mã. Không có OPENAI_API_KEY, PIPELINE_CONNECTION_KEY, PIPELINE_GITHUB_* hay secret nào khác của tiến
-    trình này (lỗi N1): code pipeline chỉ cần credential của nguồn nó đọc.
+    Chỉ biến hệ thống tối thiểu (PASSTHROUGH_ENV của sandbox) và đường dẫn runtime. Không có credential nguồn nào: run
+    đọc `<ATOMESUS_SECRETS_DIR>/<model>.json` của đúng pipeline đó (lỗi N1).
     """
     env = {key: os.environ[key] for key in PASSTHROUGH_ENV if key in os.environ}
-    env.update(credentials_env(effective_policy(settings), settings))
     env.update(
-        PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
-        DAGSTER_HOME=str(HOME),
-        WAREHOUSE_DIR=str(warehouse_dir),  # bundle mới: <WAREHOUSE_DIR>/<model>.duckdb (dagster_asset.py.j2)
-        WAREHOUSE_PATH=str(warehouse_dir / SHARED_WAREHOUSE),  # bundle deploy trước khi tách file
-        WAREHOUSE_TIMEZONE=settings.warehouse_timezone,
-        PYTHONIOENCODING="utf-8",
-        DBT_SEND_ANONYMOUS_USAGE_STATS="false",
-        DO_NOT_TRACK="1",
+        {
+            "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+            "DAGSTER_HOME": str(HOME),
+            DEPLOY_DIR_ENV: str(Path(settings.deploy_dir).resolve()),
+            SECRETS_DIR_ENV: str(secrets_dir()),
+            WAREHOUSE_DIR_ENV: str(warehouse_dir),  # <WAREHOUSE_DIR>/<model>.duckdb (dagster_runtime.execute)
+            "WAREHOUSE_TIMEZONE": settings.warehouse_timezone,
+            # dagster-dbt đặt target/log từng lần chạy dưới đây, không ghi vào code location (day2_settings đọc lại).
+            "DBT_TARGET_PATH": str(HOME / "dbt_target"),
+            "PYTHONIOENCODING": "utf-8",
+            "DBT_SEND_ANONYMOUS_USAGE_STATS": "false",
+            "DO_NOT_TRACK": "1",
+        }
     )
     return env
 
@@ -90,17 +119,28 @@ def write_instance_config(home: Path) -> Path:
     return path
 
 
-def day2_settings(settings: PipelineSettings, home: Path = HOME) -> PipelineSettings:
-    """Production: settings để src/monitor/runs.py đọc được số test dbt khi code location chỉ đọc.
+def write_workspace(home: Path) -> Path:
+    """workspace.yaml của webserver và daemon: đúng một location, là code server gRPC cục bộ."""
+    path = home / "workspace.yaml"
+    workspace = {
+        "load_from": [{"grpc_server": {"host": "127.0.0.1", "port": int(GRPC_PORT), "location_name": LOCATION}}]
+    }
+    path.write_text(yaml.safe_dump(workspace, sort_keys=False), encoding="utf-8")
+    return path
 
-    runs.py tìm run_results.json trong `<deploy_dir>/<model>/dbt_project/target/`, nhưng ở production dagster-dbt ghi
-    kết quả mọi pipeline vào `<home>/dbt_target/<op>-<run id 7 ký tự>-<mã>/` (DBT_TARGET_PATH). Op dbt của pipeline là
+
+def day2_settings(settings: PipelineSettings, home: Path | None = None) -> PipelineSettings:
+    """Settings để src/monitor/runs.py đọc được số test dbt khi dbt ghi kết quả ngoài code location.
+
+    runs.py tìm run_results.json trong `<deploy_dir>/<model>/dbt_project/target/`, nhưng dagster-dbt ghi kết quả mọi
+    pipeline vào `<home>/dbt_target/<op>-<run id 7 ký tự>-<mã>/` (DBT_TARGET_PATH). Op dbt của pipeline là
     `<model>_transform` (templates/dagster_asset.py.j2), nên gom bản sao run_results.json của từng pipeline vào
     `<home>/day2_dbt/<model>/dbt_project/target/` (giữ mtime: runs.py khớp lần chạy theo thời gian) và trả settings có
     deploy_dir trỏ vào đó. Chỉ chép file đổi; pipeline không còn cài thì bỏ thư mục của nó.
     """
     from src.monitor.runs import deployed_models
 
+    home = home or HOME
     view, artifacts = home / "day2_dbt", home / "dbt_target"
     models = [model for model in deployed_models(settings.deploy_dir) if MODEL_NAME.match(model)]
     if view.exists():
@@ -118,52 +158,104 @@ def day2_settings(settings: PipelineSettings, home: Path = HOME) -> PipelineSett
     return settings.model_copy(update={"deploy_dir": str(view)})
 
 
-def _wait_workspace(deploy_dir: str) -> Path:
-    """Chế độ chỉ đọc: workspace.yaml do deployer ghi (kể cả khi chưa có pipeline nào); chưa có thì chờ."""
-    workspace = Path(deploy_dir).resolve() / "workspace.yaml"
-    if not workspace.exists():
-        print(f"Chờ service deployer tạo {workspace}…", flush=True)
-    while not workspace.exists():
-        time.sleep(POLL_SECONDS)
-    return workspace
+def refresh_secrets(settings: PipelineSettings) -> dict[str, str | None]:
+    """Ghi credential theo từng pipeline (đọc lại policy: nguồn / kết nối mới có hiệu lực). In lý do, không in giá trị."""
+    result = sync_secrets(settings.deploy_dir, secrets_dir(), effective_policy(settings), settings)
+    for model, problem in result.items():
+        if problem:
+            print(f"Chưa cấp được credential cho {model}: {problem}", flush=True)
+    return result
 
 
 def _executable(name: str) -> str:
     return str(Path(sys.executable).with_name(f"{name}.exe" if os.name == "nt" else name))
 
 
-def start() -> tuple[list[subprocess.Popen], Path]:
-    """Ghi workspace từ các project đã deploy rồi bật Dagster. Đọc lại policy để có credential của nguồn mới."""
+def _wait_port(port: str, seconds: float = GRPC_WAIT_SECONDS) -> None:
+    """Chờ code server mở cổng gRPC trước khi bật webserver / daemon (không thì chúng thấy location lỗi lúc đầu)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=1):
+                return
+        except OSError:
+            time.sleep(0.5)
+    print(f"Code server chưa mở cổng {port} sau {seconds:.0f} giây; vẫn bật webserver.", flush=True)
+
+
+def generation(settings: PipelineSettings) -> str | None:
+    """Mốc cài đặt deployer ghi (src/deployer/install.py: write_generation); None khi chưa có."""
+    try:
+        return (Path(settings.deploy_dir) / GENERATION_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def reload_location(url: str = "") -> bool:
+    """GraphQL `reloadRepositoryLocation`: code server nạp lại pipeline, run đang chạy giữ nguyên. Lỗi thì False."""
+    endpoint = url or f"http://127.0.0.1:{PORT}{PATH_PREFIX}/graphql"
+    try:
+        response = httpx.post(
+            endpoint, json={"query": RELOAD, "variables": {"name": LOCATION}}, timeout=RELOAD_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        entry = (response.json().get("data") or {}).get("reloadRepositoryLocation") or {}
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"Chưa nạp lại được code location ({type(exc).__name__}); thử lại ở vòng sau.", flush=True)
+        return False
+    if entry.get("__typename") != "WorkspaceLocationEntry":
+        print(f"Dagster từ chối nạp lại code location ({entry.get('__typename')}); thử lại ở vòng sau.", flush=True)
+        return False
+    return True
+
+
+def start() -> list[subprocess.Popen]:
+    """Ghi credential, cấu hình instance và workspace, rồi bật code server, webserver, daemon."""
     settings = PipelineSettings()
-    workspace = _wait_workspace(settings.deploy_dir) if READ_ONLY else write_workspace(settings.deploy_dir).resolve()
+    if not READ_ONLY:
+        Path(settings.deploy_dir).mkdir(parents=True, exist_ok=True)
     HOME.mkdir(parents=True, exist_ok=True)
     write_instance_config(HOME)
+    workspace = write_workspace(HOME)
     warehouse_dir = ROOT / "data" / "warehouse"
     warehouse_dir.mkdir(parents=True, exist_ok=True)
+    refresh_secrets(settings)  # trước khi bật code server: run đầu tiên đã có credential
     env = child_env(settings, warehouse_dir)
-    locations = workspace.read_text(encoding="utf-8").count("location_name:")
-    print(f"Dagster: http://{HOST}:{PORT}  ·  {locations} pipeline  ·  warehouse {warehouse_dir}", flush=True)
-    if READ_ONLY:
-        # Không đặt DAGSTER_IS_DEV_CLI: DbtProject.prepare_if_dev() khi đó không chạy `dbt parse` vào thư mục chỉ
-        # đọc, dùng target/manifest.json deployer đã biên dịch lúc cài. dagster-dbt đặt target/log từng lần chạy
-        # dưới DBT_TARGET_PATH (day2_settings đọc lại ở đó).
-        env["DBT_TARGET_PATH"] = str(HOME / "dbt_target")
-        commands = [
-            [_executable("dagster-webserver"), "-w", str(workspace), "-h", HOST, "-p", PORT],
-            [_executable("dagster-daemon"), "run", "-w", str(workspace)],
-        ]
-    else:
-        env["DAGSTER_IS_DEV_CLI"] = "1"
-        commands = [[_executable("dagster"), "dev", "-w", str(workspace), "-h", HOST, "-p", PORT]]
-    processes = [
-        subprocess.Popen(command, cwd=workspace.parent, env=env, start_new_session=os.name != "nt")
-        for command in commands
+    print(
+        f"Dagster: http://{HOST}:{PORT}{PATH_PREFIX}  ·  location {LOCATION}  ·  warehouse {warehouse_dir}", flush=True
+    )
+    code_server = [
+        _executable("dagster"),
+        "code-server",
+        "start",
+        "-m",
+        "src.dagster_runtime.loader",
+        "--working-directory",
+        str(ROOT),
+        "-h",
+        "127.0.0.1",
+        "-p",
+        GRPC_PORT,
+        "--location-name",
+        LOCATION,
     ]
-    return processes, workspace
+    webserver = [_executable("dagster-webserver"), "-w", str(workspace), "-h", HOST, "-p", PORT]
+    if PATH_PREFIX:
+        webserver += ["--path-prefix", PATH_PREFIX]
+    daemon = [_executable("dagster-daemon"), "run", "-w", str(workspace)]
+
+    def spawn(command: list[str]) -> subprocess.Popen:
+        # cwd là DAGSTER_HOME, không phải gốc repo: Dagster CLI tự nạp `.env` ở thư mục làm việc, và `.env` của repo có
+        # OPENAI_API_KEY / mật khẩu (lỗi N1). Code server vẫn import được `src` nhờ --working-directory.
+        return subprocess.Popen(command, cwd=HOME, env=env, start_new_session=os.name != "nt")
+
+    processes = [spawn(code_server)]
+    _wait_port(GRPC_PORT)
+    return processes + [spawn(webserver), spawn(daemon)]
 
 
 def stop(processes: list[subprocess.Popen]) -> None:
-    """Tắt cả cây tiến trình: `dagster dev` sinh webserver, daemon và code server; chỉ tắt cha thì cổng vẫn bị giữ."""
+    """Tắt cả cây tiến trình: code server sinh tiến trình con nạp code; chỉ tắt cha thì cổng vẫn bị giữ."""
     for process in processes:
         if process.poll() is not None:
             continue
@@ -195,7 +287,7 @@ def collect() -> None:
     try:
         # Đọc lại mỗi lần: sửa ngưỡng trong objectives.yml có hiệu lực ngay (NFR-04).
         policy = effective_policy(settings)
-        written = collect_runs(day2_settings(settings) if READ_ONLY else settings, policy)
+        written = collect_runs(day2_settings(settings), policy)
         launch = None  # không có LLM: Day 2 chỉ cảnh báo, run sửa tạo từ app (src/monitor/day2.py: check)
         if get_settings().openai_api_key:
             deps = AgentDeps(llm=openai_llm(), policy=policy, settings=settings, reserve_daily=budget.reserve_daily)
@@ -218,24 +310,31 @@ def collect() -> None:
 
 
 def main() -> int:
-    processes, workspace = start()
-    stamp = workspace.stat().st_mtime
+    processes = start()
+    settings = PipelineSettings()
+    stamp = generation(settings)
+    pending = True  # nạp lại một lần khi webserver đã lên, phòng code server nạp xong sau lúc webserver hỏi
     collected = time.monotonic()
     try:
         while True:
             time.sleep(POLL_SECONDS)
             exited = next((process for process in processes if process.poll() is not None), None)
             if exited is not None:
-                stop(processes)  # webserver hoặc daemon chết thì tắt cả, để container khởi động lại
+                stop(processes)  # một tiến trình chết thì tắt cả, để container khởi động lại
                 return exited.returncode
+            current = generation(settings)
+            if current != stamp:
+                print("Có pipeline vừa được cài / gỡ: ghi credential rồi nạp lại code location…", flush=True)
+                refresh_secrets(settings)
+                stamp, pending = current, True
+            if pending:
+                pending = not reload_location()
             if time.monotonic() - collected >= COLLECT_SECONDS:
+                refresh_secrets(
+                    settings
+                )  # kết nối người dùng đổi mật khẩu: file credential cập nhật, không cần nạp lại
                 collect()
                 collected = time.monotonic()
-            if workspace.stat().st_mtime != stamp:
-                print("workspace.yaml đổi (có pipeline vừa được cài): khởi động lại Dagster…", flush=True)
-                stop(processes)
-                processes, workspace = start()
-                stamp = workspace.stat().st_mtime
     except KeyboardInterrupt:
         stop(processes)
         return 0

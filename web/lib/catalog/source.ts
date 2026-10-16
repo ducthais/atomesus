@@ -202,7 +202,7 @@ export async function discoverObjects(ref: string): Promise<Discovery> {
 type StatusResponse = {
   available: boolean; url: string; reason?: string;
   assets?: Record<string, {
-    jobs: string[]; last_materialized_at: string | null; last_materialized_run_id: string | null;
+    jobs: string[]; dagster_keys?: string[]; last_materialized_at: string | null; last_materialized_run_id: string | null;
     last_run: { run_id: string; job: string; status: string; started_at: string | null; ended_at: string | null } | null;
     schedule: { name: string; cron: string; timezone: string; running: boolean; next_tick_at: string | null } | null;
   }>;
@@ -217,7 +217,7 @@ export const getOrchestration = cache(async (): Promise<Orchestration> => {
   const assets: Record<string, AssetRunStatus> = {};
   for (const [key, a] of Object.entries(body.assets ?? {})) {
     assets[key] = {
-      jobs: a.jobs, lastMaterializedAt: a.last_materialized_at, lastMaterializedRunId: a.last_materialized_run_id,
+      jobs: a.jobs, dagsterKeys: a.dagster_keys, lastMaterializedAt: a.last_materialized_at, lastMaterializedRunId: a.last_materialized_run_id,
       lastRun: a.last_run && { runId: a.last_run.run_id, job: a.last_run.job, status: a.last_run.status, startedAt: a.last_run.started_at, endedAt: a.last_run.ended_at },
       schedule: a.schedule && { name: a.schedule.name, cron: a.schedule.cron, timezone: a.schedule.timezone, running: a.schedule.running, nextTickAt: a.schedule.next_tick_at },
     };

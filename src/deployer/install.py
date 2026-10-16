@@ -1,8 +1,10 @@
 """Cài một pipeline đã duyệt vào thư mục code location của Dagster.
 
 Mỗi pipeline một thư mục `<deploy_dir>/<model_name>/`, gồm scaffold dbt + đúng bộ file Reviewer đã duyệt. Cài lại
-cùng model thì thay nguyên tử toàn bộ thư mục; lỗi giữa chừng thì khôi phục bản đang chạy. Dùng cho Dagster local
-(scripts/dagster_local.py) và service deployer (cài từ nhánh main của repo pipeline sau khi đã kiểm manifest).
+cùng model thì thay nguyên tử toàn bộ thư mục; lỗi giữa chừng thì khôi phục bản đang chạy. Mỗi lần đổi bộ project (cài,
+rollback) ghi `<deploy_dir>/.generation`: supervisor Dagster nạp lại code location hợp nhất, không khởi động lại
+(scripts/dagster_local.py). Dùng cho service deployer (cài từ bundle hoặc nhánh main của repo pipeline sau khi đã kiểm
+manifest).
 """
 
 import os
@@ -17,6 +19,7 @@ from urllib.parse import quote, quote_plus
 from uuid import uuid4
 
 from src.codegen.sandbox import PASSTHROUGH_ENV, prepare_project
+from src.dagster_runtime import GENERATION_FILE
 from src.deployer.manifest import project_dir
 from src.deployer.verify import WORKSPACE_UPDATED_AFTER, VerificationError
 from src.pipeline.settings import warehouse_file
@@ -37,35 +40,17 @@ class DbtParseTimeoutError(subprocess.TimeoutExpired):
         return f"dbt parse quá {DBT_PARSE_TIMEOUT_SEC} giây. {self.detail}".strip()
 
 
-def _is_project_dir(name: str) -> bool:
-    """Thư mục project thật: không ẩn, không phải bản tạm/sao lưu `<model>.tmp-<token>`/`<model>.old-<token>`."""
-    return not (name.startswith(".") or ".tmp-" in name or ".old-" in name)
+def write_generation(deploy_dir: str) -> Path:
+    """Ghi `<deploy_dir>/.generation` (`<epoch giây>.<uuid>`, ghi nguyên tử) sau mỗi lần đổi bộ project đã cài.
 
-
-def write_workspace(deploy_dir: str) -> Path:
-    """Ghi `<deploy_dir>/workspace.yaml`: mỗi project đã cài là một code location của Dagster.
-
-    `make dagster` nạp file này; cài thêm pipeline thì scripts/dagster_local.py tự khởi động lại Dagster.
-    Bỏ qua thư mục tạm/sao lưu của install_project trong khi chờ xác nhận bản mới.
+    Supervisor Dagster (scripts/dagster_local.py) thấy file đổi thì ghi credential của các pipeline rồi nạp lại code
+    location hợp nhất qua GraphQL: không khởi động lại Dagster, run đang chạy không bị dừng (lỗi #4).
     """
     root = Path(deploy_dir)
     root.mkdir(parents=True, exist_ok=True)
-    lines = ["# Sinh tự động bởi src/deployer/install.py; không sửa tay.", "load_from:"]
-    for module in sorted(root.glob("*/infra/dagster/generated/*_asset.py")):
-        project = module.parents[3]
-        if not _is_project_dir(project.name):
-            continue
-        lines += [
-            "  - python_module:",
-            f"      module_name: infra.dagster.generated.{module.stem}",
-            f"      working_directory: ./{project.name}",
-            f"      location_name: {project.name}",
-        ]
-    if len(lines) == 2:
-        lines[-1] = "load_from: []"
-    path = root / "workspace.yaml"
-    temporary = root / f".workspace-{uuid4().hex}.tmp"
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path = root / GENERATION_FILE
+    temporary = root / f".generation-{uuid4().hex}.tmp"
+    temporary.write_text(f"{time.time():.6f}.{uuid4().hex}\n", encoding="utf-8")
     os.replace(temporary, path)
     return path
 
@@ -157,7 +142,7 @@ def install_project(
             old_moved = True
         staging.rename(target)
         new_active = True
-        write_workspace(deploy_dir)
+        write_generation(deploy_dir)
         if verify is not None:
             context = WORKSPACE_UPDATED_AFTER.set(installed_at)
             try:
@@ -183,9 +168,9 @@ def install_project(
                 rollback_errors.append(f"Không khôi phục được bản sao lưu ({type(restore_error).__name__}).")
         if new_active or old_moved:
             try:
-                write_workspace(deploy_dir)
-            except OSError as workspace_error:
-                rollback_errors.append(f"Không ghi lại được workspace.yaml ({type(workspace_error).__name__}).")
+                write_generation(deploy_dir)
+            except OSError as generation_error:
+                rollback_errors.append(f"Không ghi lại được {GENERATION_FILE} ({type(generation_error).__name__}).")
         if rollback_errors:
             detail = f"{exc} {' '.join(rollback_errors)}"
             if isinstance(exc, VerificationError):
