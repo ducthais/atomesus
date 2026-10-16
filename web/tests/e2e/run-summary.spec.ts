@@ -5,7 +5,7 @@ const LONG_MODEL = 'fct_doanh_thu_theo_ngay_cua_tung_cua_hang_khu_vuc_mien_nam_v
 const TABLE = 'don_hang_da_xac_nhan_kem_thanh_toan';
 
 async function login(page: Page) {
-  await page.goto('/');
+  await page.goto('/explore'); // `/` là landing công khai; trang cần đăng nhập hiện màn đăng nhập rồi quay lại đúng trang
   await page.getByLabel('Tên đăng nhập').fill('reviewer');
   await page.getByLabel('Mật khẩu').fill('Reviewer@123');
   await page.getByRole('button', { name: 'Đăng nhập' }).click();

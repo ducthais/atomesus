@@ -1,3 +1,7 @@
+import copy
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,6 +52,66 @@ def _selected_objects(decl, found: dict) -> dict:
     }
 
 
+UNAVAILABLE_TTL_SEC = 30  # nguồn không kết nối được: không chờ timeout lại ở mọi lần mở trang
+DISCOVER_WORKERS = 8
+_discovered: dict[tuple, tuple[float, dict]] = {}
+_discovered_lock = threading.Lock()
+
+
+def _source_entry(ref: str, decl, config: PipelineSettings) -> dict:
+    """Schema thật của một nguồn (kết nối tới nguồn). Lỗi kết nối / chưa hỗ trợ thì `available: false` kèm lý do."""
+    entry: dict = {
+        "kind": decl.kind,
+        "connection_ref": decl.connection_ref,
+        "location": _location(decl),
+        "available": False,
+        "tables": {},
+        "primary_keys": {},
+        "foreign_keys": [],
+    }
+    try:
+        found = _selected_objects(decl, connectors.discover(decl, config))
+        entry["tables"] = {obj["name"]: obj["columns"] for obj in found["objects"]}
+        entry["primary_keys"] = {obj["name"]: obj["primary_key"] for obj in found["objects"] if obj["primary_key"]}
+        entry["foreign_keys"] = found["foreign_keys"]
+        entry["available"] = True
+    except connectors.UnsupportedSourceError:
+        entry["reason"] = f"Chưa có connector cho nguồn {decl.kind}"
+    except postgres.SourceUnavailableError as exc:
+        entry["reason"] = str(exc)
+    return entry
+
+
+def _discover_all(sources: dict, config: PipelineSettings) -> dict[str, dict]:
+    """Đọc schema mọi nguồn song song: tổng thời gian bằng nguồn chậm nhất, không phải tổng các nguồn.
+
+    Nguồn đọc được luôn lấy schema mới. Nguồn không kết nối được (timeout Postgres / API chết) giữ kết quả lỗi
+    `UNAVAILABLE_TTL_SEC` giây, theo sổ bằng chứng + khai báo nguồn (sửa kết nối hay chọn bảng là khai báo mới), để mở
+    trang không phải chờ timeout lại mỗi lần. Kết nối người dùng (`conn:<id>`) nằm trong khai báo nên không lẫn giữa người.
+    """
+    now = time.monotonic()
+    keys = {ref: (config.store_path, ref, decl.model_dump_json()) for ref, decl in sources.items()}
+    with _discovered_lock:
+        known = {
+            ref: hit[1]
+            for ref, key in keys.items()
+            if (hit := _discovered.get(key)) is not None and now - hit[0] < UNAVAILABLE_TTL_SEC
+        }
+    missing = [ref for ref in sources if ref not in known]
+    if missing:
+        with ThreadPoolExecutor(max_workers=min(DISCOVER_WORKERS, len(missing))) as pool:
+            entries = pool.map(lambda ref: _source_entry(ref, sources[ref], config), missing)
+            found = dict(zip(missing, entries, strict=True))
+        with _discovered_lock:
+            for ref, entry in found.items():
+                if entry["available"]:
+                    _discovered.pop(keys[ref], None)
+                elif "reason" in entry and not entry["reason"].startswith("Chưa có connector"):
+                    _discovered[keys[ref]] = (time.monotonic(), entry)
+        known.update(found)
+    return {ref: copy.deepcopy(known[ref]) for ref in sources}
+
+
 @router.get("")
 def read_catalog(user: dict = Depends(current_user), config: PipelineSettings = Depends(settings)) -> dict:
     """Domain → nguồn → bảng/cột thật, kèm steward và thực thể từ domains.yml. Chỉ đọc, không gọi LLM.
@@ -56,32 +120,11 @@ def read_catalog(user: dict = Depends(current_user), config: PipelineSettings = 
     vẫn có mặt với `available: false` và lý do, để giao diện catalog hiện đủ những gì đã khai báo.
     """
     policy = _policy(config, user)
+    declared = {ref: decl for domain in policy.domains.domains.values() for ref, decl in domain.sources.items()}
+    entries = _discover_all(declared, config)
     domains = {}
     for name, domain in policy.domains.domains.items():
-        sources = {}
-        for ref, decl in domain.sources.items():
-            entry: dict = {
-                "kind": decl.kind,
-                "connection_ref": decl.connection_ref,
-                "location": _location(decl),
-                "available": False,
-                "tables": {},
-                "primary_keys": {},
-                "foreign_keys": [],
-            }
-            try:
-                found = _selected_objects(decl, connectors.discover(decl, config))
-                entry["tables"] = {obj["name"]: obj["columns"] for obj in found["objects"]}
-                entry["primary_keys"] = {
-                    obj["name"]: obj["primary_key"] for obj in found["objects"] if obj["primary_key"]
-                }
-                entry["foreign_keys"] = found["foreign_keys"]
-                entry["available"] = True
-            except connectors.UnsupportedSourceError:
-                entry["reason"] = f"Chưa có connector cho nguồn {decl.kind}"
-            except postgres.SourceUnavailableError as exc:
-                entry["reason"] = str(exc)
-            sources[ref] = entry
+        sources = {ref: entries[ref] for ref in domain.sources}
         domains[name] = {
             "steward": domain.steward,
             "currency": domain.currency.base,

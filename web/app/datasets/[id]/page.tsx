@@ -59,7 +59,7 @@ export default async function DatasetPage({ params, searchParams }: { params: Pr
   const latest = runs[0];
 
   return <>
-    <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/">Khám phá</Link><span>/</span><Link href={`/domains/${dataset.domain}`}>{dataset.domain}</Link><span>/</span><Link href={`/?layer=${dataset.layer}&domain=${dataset.domain}`}>{LAYER_LABEL[dataset.layer]}</Link></nav>
+    <nav className="breadcrumbs" aria-label="Vị trí"><Link href="/explore">Khám phá</Link><span>/</span><Link href={`/domains/${dataset.domain}`}>{dataset.domain}</Link><span>/</span><Link href={`/explore?layer=${dataset.layer}&domain=${dataset.domain}`}>{LAYER_LABEL[dataset.layer]}</Link></nav>
     <PageHeader icon={<Table2 size={22} />} kicker={<><LayerBadge layer={dataset.layer} /><PlatformTag platform={dataset.platform} /><QualitySummary checks={dataset.quality} />{managed && <DagsterChip status={runStatus} />}</>}
       title={<span className="mono">{dataset.name}</span>}
       actions={<>

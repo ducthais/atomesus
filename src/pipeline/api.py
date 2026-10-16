@@ -34,7 +34,14 @@ from src.pipeline.auth import (
     verify_password,
 )
 from src.pipeline.cleaning import clean_rows
-from src.pipeline.models import LoginRequest, RegisterRequest, RoleUpdateRequest, RunRequest, VerifyRegistrationRequest
+from src.pipeline.models import (
+    DemoLoginRequest,
+    LoginRequest,
+    RegisterRequest,
+    RoleUpdateRequest,
+    RunRequest,
+    VerifyRegistrationRequest,
+)
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import PolicyError, load_policy
 from src.policy.models import Budgets
@@ -169,6 +176,31 @@ def login(body: LoginRequest, request: Request, response: Response, config: Pipe
             )
         raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
     store.clear_login_failures(config.store_path, ip, username)
+    _start_session(response, user["id"], config)
+    return user
+
+
+def demo_login_enabled(config: PipelineSettings) -> bool:
+    """Đăng nhập nhanh tài khoản demo: luôn bật ở development, nơi khác chỉ khi đặt PIPELINE_DEMO_LOGIN=1."""
+    return config.demo_login or get_settings().app_env == "development"
+
+
+@router.get("/demo-login")
+def demo_login_status(config: PipelineSettings = Depends(settings)) -> dict:
+    """Màn đăng nhập (chưa có phiên) hỏi có hiện nút "Truy cập nhanh" bấm là vào ngay không. Không trả mật khẩu."""
+    return {"enabled": demo_login_enabled(config)}
+
+
+@router.post("/session/demo")
+def demo_login(body: DemoLoginRequest, response: Response, config: PipelineSettings = Depends(settings)):
+    """Mở phiên cho tài khoản demo cài sẵn (engineer = minh, reviewer = an) không cần mật khẩu.
+
+    Không dùng mật khẩu nên mật khẩu thật của tài khoản (production: sinh ngẫu nhiên trong setup-vm.sh) không bao giờ
+    phải gửi xuống trình duyệt. Tắt thì trả 404 như endpoint không tồn tại. Admin không có đăng nhập nhanh.
+    """
+    if not demo_login_enabled(config):
+        raise HTTPException(404, "Đăng nhập nhanh chưa bật (PIPELINE_DEMO_LOGIN=1).")
+    user = USERS[ACCOUNTS[body.account]]
     _start_session(response, user["id"], config)
     return user
 
