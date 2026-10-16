@@ -2,15 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useActionState, useRef, useState, useTransition } from 'react';
-import { Activity, BookOpenText, CircleAlert, Compass, Database, Gauge, Layers3, LogIn, LogOut, MailCheck, Network, Plus, ShieldCheck, UserCheck, UserCog, UserPlus, UserRound, Waypoints } from 'lucide-react';
-import { signIn, signOut, signUp, verifySignUp } from '../actions';
+import { useActionState, useRef, useState, useTransition, type ReactNode } from 'react';
+import { Activity, BookOpenText, CircleAlert, Compass, Database, Gauge, Layers3, LogIn, LogOut, MailCheck, Network, Plus, Search, ShieldCheck, UserCheck, UserCog, UserPlus, UserRound, Waypoints } from 'lucide-react';
+import { signIn, signInDemo, signOut, signUp, verifySignUp } from '../actions';
 import type { Person } from '@/lib/catalog/types';
 import { INVITE_INVALID, REVIEW_PATH, inviteTokenFromPath, isInviteToken } from '@/lib/invite';
 import { initials } from './ui';
 
 const NAV = [
-  { href: '/', label: 'Khám phá', icon: Compass, match: (p: string) => p === '/' || p.startsWith('/datasets') },
+  { href: '/explore', label: 'Khám phá', icon: Compass, match: (p: string) => p.startsWith('/explore') || p.startsWith('/datasets') },
   { href: '/domains', label: 'Domain', icon: Network, match: (p: string) => p.startsWith('/domains') },
   { href: '/relationships', label: 'Quan hệ', icon: Waypoints, match: (p: string) => p.startsWith('/relationships') },
   { href: '/glossary', label: 'Thuật ngữ', icon: BookOpenText, match: (p: string) => p.startsWith('/glossary') },
@@ -18,6 +18,35 @@ const NAV = [
   { href: '/monitor', label: 'Theo dõi', icon: Gauge, match: (p: string) => p.startsWith('/monitor') },
   { href: '/policy', label: 'Chính sách', icon: ShieldCheck, match: (p: string) => p.startsWith('/policy') },
 ];
+
+/**
+ * Khung ứng dụng. `/` là landing page công khai (không cần đăng nhập, không có sidebar); mọi trang khác cần phiên,
+ * chưa đăng nhập thì hiện màn đăng nhập ngay tại trang đó (đăng nhập xong quay lại đúng trang).
+ */
+export function AppFrame({ children, user, reviewCount, live, backend, demoLogin }: {
+  children: ReactNode; user: Person | null; reviewCount: number; live: boolean; backend: string; demoLogin: boolean;
+}) {
+  const path = usePathname();
+  if (path === '/') return <>{children}</>;
+  if (!user) return <LoginScreen demoLogin={demoLogin} />;
+  return <>
+    <a href="#main" className="skip-link">Bỏ qua điều hướng</a>
+    <div className="shell">
+      <Sidebar reviewCount={reviewCount} live={live} backend={backend} role={user.role} />
+      <div className="main">
+        <header className="topbar">
+          <form action="/explore" className="global-search" role="search">
+            <Search size={16} aria-hidden />
+            <input name="q" type="search" placeholder="Tìm dataset, cột, thuật ngữ, tag…" aria-label="Tìm trong catalog" />
+            <kbd>Enter</kbd>
+          </form>
+          <UserMenu user={user} />
+        </header>
+        <main id="main" className="content">{children}</main>
+      </div>
+    </div>
+  </>;
+}
 
 export function Sidebar({ reviewCount, live, backend, role }: { reviewCount: number; live: boolean; backend: string; role: Person['role'] }) {
   const path = usePathname();
@@ -43,8 +72,14 @@ export function UserMenu({ user }: { user: Person }) {
   </div>;
 }
 
-/** Màn đăng nhập / đăng ký. Layout hiện màn này cho mọi trang khi chưa đăng nhập; trên /invite/<token> thì đăng ký Reviewer theo link mời. */
-export function LoginScreen() {
+/**
+ * Màn đăng nhập / đăng ký. Hiện cho mọi trang cần phiên khi chưa đăng nhập (trừ landing `/`); đăng nhập xong quay lại đúng
+ * trang đó. Trên /invite/<token> thì đăng ký Reviewer theo link mời.
+ *
+ * `demoLogin` (backend bật PIPELINE_DEMO_LOGIN hoặc development): nút Engineer / Reviewer vào thẳng tài khoản demo, không
+ * cần mật khẩu, nên production với mật khẩu ngẫu nhiên vẫn vào được. Tắt thì nút chỉ điền tên đăng nhập.
+ */
+export function LoginScreen({ demoLogin = false }: { demoLogin?: boolean }) {
   const path = usePathname();
   const inviteToken = inviteTokenFromPath(path);
   const [mode, setMode] = useState<'login' | 'register'>(inviteToken !== null ? 'register' : 'login');
@@ -52,15 +87,23 @@ export function LoginScreen() {
   const [username, setUsername] = useState('');
   const passwordRef = useRef<HTMLInputElement>(null);
   const [loginState, loginAction, loginPending] = useActionState(signIn, null);
+  const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoPending, startDemo] = useTransition();
+  const busy = loginPending || demoPending;
   if (inviteToken !== null && !isInviteToken(inviteToken)) return <main className="login">
     <div className="login-card">
       <span className="brand-mark"><Layers3 size={20} aria-hidden /></span>
       <h1>Lời mời làm Reviewer</h1>
       <p className="form-error" role="alert"><CircleAlert size={14} aria-hidden /> {INVITE_INVALID}</p>
-      <Link className="button" href="/">Về trang đăng nhập</Link>
+      <Link className="button" href="/runs">Về trang đăng nhập</Link>
     </div>
   </main>;
   const selectRole = (account: 'engineer' | 'reviewer') => {
+    if (demoLogin) {
+      setDemoError(null);
+      startDemo(async () => { setDemoError((await signInDemo(account, path))?.error ?? null); });
+      return;
+    }
     setUsername(account);
     passwordRef.current?.focus();
   };
@@ -78,7 +121,8 @@ export function LoginScreen() {
       </div>
       {mode === 'login' ? <>
         <form action={loginAction} className="login-form">
-          {inviteToken && <input type="hidden" name="next" value={path} />}
+          {/* Đăng nhập xong quay lại đúng trang đang mở (landing `/` không cần đăng nhập). */}
+          <input type="hidden" name="next" value={path} />
           <label className="field" htmlFor="login-username">Tên đăng nhập
             <input id="login-username" name="username" autoComplete="username" required autoFocus value={username} onChange={event => setUsername(event.target.value)} placeholder="engineer, reviewer hoặc admin" disabled={loginPending} />
           </label>
@@ -99,19 +143,23 @@ export function LoginScreen() {
     {mode === 'login' && !inviteToken && <aside className="login-quick" aria-labelledby="login-quick-title">
       <span className="eyebrow">Truy cập nhanh</span>
       <h2 id="login-quick-title">Chọn vai trò</h2>
-      <p className="muted">Chọn tài khoản để điền tên đăng nhập. Mật khẩu vẫn được xác thực như bình thường.</p>
-      <div className="login-role-list">
-        <button className="login-role" type="button" disabled={loginPending} onClick={() => selectRole('engineer')}>
+      <p className="muted">{demoLogin
+        ? 'Bấm một vai trò để vào ngay bằng tài khoản demo, không cần mật khẩu.'
+        : 'Chọn tài khoản để điền tên đăng nhập. Mật khẩu vẫn được xác thực như bình thường.'}</p>
+      <div className="login-role-list" aria-busy={demoPending}>
+        <button className="login-role" type="button" disabled={busy} onClick={() => selectRole('engineer')}>
           <span className="login-role-icon engineer"><UserRound size={18} aria-hidden /></span>
           <span><strong>Engineer</strong><small>Tạo và chạy thử pipeline</small></span>
           <span className="login-role-name">engineer</span>
         </button>
-        <button className="login-role" type="button" disabled={loginPending} onClick={() => selectRole('reviewer')}>
+        <button className="login-role" type="button" disabled={busy} onClick={() => selectRole('reviewer')}>
           <span className="login-role-icon reviewer"><ShieldCheck size={18} aria-hidden /></span>
           <span><strong>Reviewer</strong><small>Xem bằng chứng và duyệt run</small></span>
           <span className="login-role-name">reviewer</span>
         </button>
       </div>
+      {demoPending && <p className="small" role="status">Đang vào tài khoản demo…</p>}
+      {demoError && <p className="form-error" role="alert">{demoError}</p>}
     </aside>}
     </div>
   </main>;

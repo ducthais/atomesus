@@ -26,6 +26,10 @@ class PipelineSettings(BaseSettings):
     engineer_password: SecretStr = SecretStr("Engineer@123")
     reviewer_password: SecretStr = SecretStr("Reviewer@123")
     admin_password: SecretStr = SecretStr("Admin@123")
+    # Nút "Truy cập nhanh" trên màn đăng nhập vào thẳng tài khoản demo engineer / reviewer, không cần mật khẩu
+    # (POST /pipeline/session/demo). Development luôn bật; staging/production chỉ bật khi đặt PIPELINE_DEMO_LOGIN=1,
+    # cho bản demo công khai: ai mở web cũng vào được Engineer / Reviewer demo. Admin không bao giờ có đăng nhập nhanh.
+    demo_login: bool = False
     # SMTP dùng để gửi mã xác thực đăng ký. Development/test có thể để trống để nhận mã trong response.
     smtp_host: str = ""
     smtp_port: int = Field(default=587, ge=1, le=65535)

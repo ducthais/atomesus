@@ -48,6 +48,13 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class DemoLoginRequest(BaseModel):
+    """Đăng nhập nhanh vào tài khoản demo cài sẵn (cặp Engineer minh ↔ Reviewer an). Admin không có đăng nhập nhanh."""
+
+    model_config = ConfigDict(extra="forbid")
+    account: Literal["engineer", "reviewer"]
+
+
 class RegisterRequest(BaseModel):
     """Đăng ký công khai chỉ tạo Engineer; Reviewer là quyền duyệt và phải được cấp riêng."""
 
