@@ -104,6 +104,23 @@ export const currentUser = cache(async (): Promise<Person | null> => {
   }
 });
 
+/**
+ * Số run chờ duyệt cho sidebar. Layout gọi ở mọi trang nên không dựng cả catalog (GET /catalog kết nối tới mọi nguồn để
+ * đọc schema): chỉ đọc danh sách run READY_FOR_REVIEW người dùng được thấy. Lỗi đọc thì ẩn số, không chặn trang.
+ */
+export const countAwaitingReview = cache(async (): Promise<number> => {
+  if (MOCK) return MOCK_SNAPSHOT.runs.filter(run => run.status === 'READY_FOR_REVIEW').length;
+  try { return (await backend<RunReport[]>('/runs?status=READY_FOR_REVIEW')).length; }
+  catch { return 0; }
+});
+
+/** Màn đăng nhập có nút "Truy cập nhanh" vào thẳng tài khoản demo không (GET /pipeline/demo-login, không cần phiên). */
+export const getDemoLogin = cache(async (): Promise<boolean> => {
+  if (MOCK) return true;
+  try { return (await backend<{ enabled: boolean }>('/pipeline/demo-login')).enabled === true; }
+  catch { return false; }
+});
+
 /** Cách Deploy đưa bản đã duyệt lên production (GET /pipeline/deploy-config). Mock / lỗi đọc: hiện các bước PR như cũ. */
 export const getDeployMode = cache(async (): Promise<DeployMode> => {
   if (MOCK) return DEFAULT_DEPLOY_MODE;

@@ -248,6 +248,29 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
   redirect(next);
 }
 
+/**
+ * "Truy cập nhanh": vào thẳng tài khoản demo engineer / reviewer, không cần mật khẩu (backend phải bật PIPELINE_DEMO_LOGIN
+ * hoặc chạy development; không thì backend trả 404). Mật khẩu thật không bao giờ đi qua trình duyệt.
+ */
+export async function signInDemo(account: string, nextPath?: string): Promise<ActionState> {
+  if (account !== 'engineer' && account !== 'reviewer') return { error: 'Tài khoản demo không hợp lệ.' };
+  const next = safeNext(nextPath);
+  const jar = await cookies();
+  if (MOCK) {
+    jar.set(MOCK_USER_COOKIE, account === 'engineer' ? 'minh' : 'an', { path: '/', maxAge: 31536000, sameSite: 'lax', secure: SECURE });
+    redirect(next);
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND}/api/v1/pipeline/session/demo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account }), cache: 'no-store' });
+  } catch { return { error: `Không kết nối được backend ở ${BACKEND}.` }; }
+  if (!response.ok) return { error: (await response.json().catch(() => null))?.detail ?? 'Không vào được tài khoản demo.' };
+  const token = response.headers.getSetCookie().map(c => c.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);
+  if (!token) return { error: 'Backend không trả cookie phiên.' };
+  jar.set(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: SECURE, maxAge: MAX_AGE });
+  redirect(next);
+}
+
 /** Lưu cookie phiên backend trả về (đăng ký hoặc xác thực xong) rồi vào trang chủ (Reviewer qua link mời: trang duyệt run). */
 async function startSession(response: Response, next = '/'): Promise<{ error: string }> {
   const token = response.headers.getSetCookie().map(cookie => cookie.match(new RegExp(`^${SESSION_COOKIE}=([^;]+)`))?.[1]).find(Boolean);

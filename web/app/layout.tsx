@@ -1,35 +1,32 @@
 import type { Metadata } from 'next';
-import { Search } from 'lucide-react';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
 import '@fontsource/inter/700.css';
 import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/playfair-display/400.css';
+import '@fontsource/playfair-display/400-italic.css';
+import '@fontsource/playfair-display/700.css';
+import '@fontsource/playfair-display/700-italic.css';
 import './globals.css';
-import { BACKEND, currentUser, getCatalog } from '@/lib/catalog/source';
-import { LoginScreen, Sidebar, UserMenu } from './_components/shell';
+import { BACKEND, MOCK, countAwaitingReview, currentUser, getDemoLogin } from '@/lib/catalog/source';
+import { AppFrame } from './_components/shell';
 
-export const metadata: Metadata = { title: 'Atomesus · VSF', description: 'Khám phá dataset, lineage, chất lượng và pipeline sinh ra chúng.' };
+export const metadata: Metadata = {
+  title: 'Atomesus · Pipeline Studio',
+  description: 'Biến yêu cầu dữ liệu thành pipeline được kiểm chứng, có bằng chứng và sẵn sàng vận hành.',
+};
 
+/**
+ * `/` là landing page công khai; mọi trang khác cần đăng nhập (AppFrame hiện màn đăng nhập khi chưa có phiên).
+ * Layout chạy ở mọi trang: chỉ đọc phiên và số run chờ duyệt, không dựng catalog (trang nào cần thì tự gọi getCatalog).
+ */
 export default async function Layout({ children }: { children: React.ReactNode }) {
   const user = await currentUser().catch(() => null);
-  if (!user) return <html lang="vi"><body><LoginScreen /></body></html>;
-  const catalog = await getCatalog();
+  const [reviewCount, demoLogin] = await Promise.all([user ? countAwaitingReview() : 0, user ? false : getDemoLogin()]);
   return <html lang="vi"><body>
-    <a href="#main" className="skip-link">Bỏ qua điều hướng</a>
-    <div className="shell">
-      <Sidebar reviewCount={catalog.stats().awaitingReview} live={catalog.live} backend={BACKEND} role={user.role} />
-      <div className="main">
-        <header className="topbar">
-          <form action="/" className="global-search" role="search">
-            <Search size={16} aria-hidden />
-            <input name="q" type="search" placeholder="Tìm dataset, cột, thuật ngữ, tag…" aria-label="Tìm trong catalog" />
-            <kbd>Enter</kbd>
-          </form>
-          <UserMenu user={user} />
-        </header>
-        <main id="main" className="content">{children}</main>
-      </div>
-    </div>
+    <AppFrame user={user} reviewCount={reviewCount} live={!MOCK} backend={BACKEND} demoLogin={demoLogin}>
+      {children}
+    </AppFrame>
   </body></html>;
 }
