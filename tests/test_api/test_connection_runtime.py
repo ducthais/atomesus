@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 
 from src.agents import budget, resolve
 from src.codegen import el_checks, reference, sandbox
+from src.dagster_runtime.secrets import model_env
 from src.pipeline import connections, connectors, files, postgres, store
 from src.pipeline.settings import PipelineSettings
 from src.policy.loader import load_policy
@@ -250,7 +251,8 @@ def test_source_and_dagster_env_quote_credentials_and_pin_checked_ip(runtime, ho
         conn.execute("UPDATE connections SET host = ? WHERE id = ?", (host, r.metadata["id"]))
     name = "SOURCES__SALES_PG__CREDENTIALS"
     env = sandbox._source_env("sales_pg", r.decl, r.config)
-    assert sandbox.credentials_env(r.policy, r.config) == env
+    # Pipeline đã deploy nhận đúng credential này qua file theo model (src/dagster_runtime/secrets.py, lỗi N1).
+    assert model_env({"sales_pg"}, r.policy, r.config) == env
     url = env[name]
     parsed = urlsplit(url)
     assert parsed.scheme == "postgresql+psycopg" and parsed.hostname == host and parsed.port == 5433
@@ -273,13 +275,15 @@ def test_source_and_dagster_env_quote_credentials_and_pin_checked_ip(runtime, ho
     r.connect.assert_not_called()
 
 
-def test_env_rechecks_ssrf_and_skips_unavailable_credentials(runtime):
+def test_env_rechecks_ssrf_and_refuses_unavailable_credentials(runtime):
     r = runtime
     sandbox._source_env("sales_pg", r.decl, r.config)
     r.dns.return_value = dns_rows("127.0.0.1")
     with pytest.raises(postgres.SourceUnavailableError, match="loopback"):
         sandbox._connection_url(r.decl.connection_ref, r.config)
-    assert sandbox.credentials_env(r.policy, r.config) == {}
+    # Pipeline đã deploy không nhận credential nào (sync_secrets xóa file của model đó và ghi lý do).
+    with pytest.raises(sandbox._StopError, match="loopback"):
+        model_env({"sales_pg"}, r.policy, r.config)
     r.connect.assert_not_called()
 
 

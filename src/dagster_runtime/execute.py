@@ -63,6 +63,7 @@ def run_ingestion(context: AssetExecutionContext, model: str, repo_root: Path) -
     except CredentialsUnavailableError as exc:
         raise Failure(description=str(exc)) from None
     script = Path(repo_root) / "ingestion" / f"{model}_pipeline.py"
+    Path(env["WAREHOUSE_PATH"]).parent.mkdir(parents=True, exist_ok=True)  # DuckDB không tự tạo thư mục cha
     timeout = _timeout()
     try:
         done = subprocess.run(

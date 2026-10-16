@@ -8,7 +8,8 @@ Dagster production, backend chỉ mount đọc. Mỗi chu kỳ (`run_once`):
 3. Lấy các `pipelines/<model>/` đổi so với commit đã áp dụng gần nhất (lần đầu: mọi pipeline).
 4. Mỗi pipeline: chỉ file thường theo `git ls-tree`, manifest.json khớp bộ file (manifest.py), run_report.json khớp
    chữ ký; sai thì không cài và báo failed. Đúng thì install_project (nguyên tử, có rollback); install ghi lại
-   workspace.yaml, đó là tín hiệu để scripts/dagster_local.py khởi động lại Dagster nạp workspace mới. Lỗi lúc cài
+   `.generation`, đó là tín hiệu để scripts/dagster_local.py nạp lại code location hợp nhất (không khởi động lại
+   Dagster, run đang chạy giữ nguyên). Lỗi lúc cài
    (môi trường: dbt parse, đĩa) thử lại ở chu kỳ sau, quá INSTALL_ATTEMPTS lần mới báo failed. Sau khi cài, chạy thử
    đúng một job trên Dagster: chỉ SUCCESS mới giữ bản mới; lỗi/hủy/quá hạn thì khôi phục bản trước và báo failed.
 5. Báo backend từng kết quả (POST /api/v1/deployments/callback, ký HMAC theo .harness/plans/DEPLOY-PR.md); chỉ ghi

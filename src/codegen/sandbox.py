@@ -258,18 +258,6 @@ def _source_env(ref: str, decl, settings: PipelineSettings) -> dict[str, str]:
 source_env = _source_env  # src/dagster_runtime/secrets.py: credential theo đúng nguồn của từng pipeline (lỗi N1)
 
 
-def credentials_env(policy: Policy, settings: PipelineSettings) -> dict[str, str]:
-    """Biến kết nối dlt cho mọi nguồn trong domains.yml đã có kết nối (dùng khi chạy project đã deploy)."""
-    env = {}
-    for domain in policy.domains.domains.values():
-        for ref, decl in domain.sources.items():
-            try:
-                env.update(_source_env(ref, decl, settings))
-            except _StopError:
-                continue
-    return env
-
-
 def _env(sandbox: Path, spec: Spec, policy: Policy, settings: PipelineSettings) -> dict[str, str]:
     env = {key: os.environ[key] for key in PASSTHROUGH_ENV if key in os.environ}
     env.update(

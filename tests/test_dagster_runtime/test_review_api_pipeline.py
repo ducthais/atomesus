@@ -86,7 +86,7 @@ def test_review_pipeline_runs_end_to_end(runtime, monkeypatch, tmp_path):
     monkeypatch.setenv("DBT_TARGET_PATH", str(tmp_path / "dbt_target"))
     defs, _ = load_definitions(deploy)
 
-    result = defs.get_job_def(f"{REVIEW_MODEL}_job").execute_in_process()
+    result = defs.resolve_job_def(f"{REVIEW_MODEL}_job").execute_in_process()
 
     assert result.success
     with duckdb.connect(execute.warehouse_path(REVIEW_MODEL), read_only=True) as db:
