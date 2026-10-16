@@ -11,6 +11,7 @@ import { buildSnapshot, type CatalogResponse, type PolicyResponse } from './live
 import { DATASETS, DOMAINS, LINKED_REVIEWERS, MOCK_ORCHESTRATION, MOCK_SNAPSHOT, NEW_RUN_DOMAINS, PEOPLE, USER_CONNECTIONS, mockNewRunSnapshot } from './mock.ts';
 import type { UserConnection } from '../user-connections.ts';
 import type { LinkedReviewer } from '../invite.ts';
+import { DEFAULT_DEPLOY_MODE, type DeployMode } from '../deploy.ts';
 import { CONNECTIONS_COOKIE, parseConnections } from './connections.ts';
 import { Catalog } from './query.ts';
 import type { AssetRunStatus, CatalogRun, Comparison, DeclaredSource, Discovery, Drift, Orchestration, Person, Platform } from './types.ts';
@@ -100,6 +101,17 @@ export const currentUser = cache(async (): Promise<Person | null> => {
   } catch (err) {
     if (err instanceof BackendError && err.status === 401) return null;
     throw err;
+  }
+});
+
+/** Cách Deploy đưa bản đã duyệt lên production (GET /pipeline/deploy-config). Mock / lỗi đọc: hiện các bước PR như cũ. */
+export const getDeployMode = cache(async (): Promise<DeployMode> => {
+  if (MOCK) return DEFAULT_DEPLOY_MODE;
+  try {
+    const found = await backend<DeployMode>('/pipeline/deploy-config');
+    return { mode: found.mode === 'direct' ? 'direct' : 'pr', gitops: !!found.gitops };
+  } catch {
+    return DEFAULT_DEPLOY_MODE;
   }
 });
 

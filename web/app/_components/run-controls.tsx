@@ -1,22 +1,35 @@
 'use client';
 
-import { useState, useTransition } from 'react';
-import { CircleAlert, GitPullRequest, LoaderCircle, Sparkles, XCircle } from 'lucide-react';
+import { useEffect, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { CircleAlert, GitPullRequest, LoaderCircle, Rocket, Sparkles, XCircle } from 'lucide-react';
 import { cancelRun, deployRun, optimizePipeline, type ActionState } from '../actions';
 
-export function DeployRunButton({ runId, reason }: { runId: string; reason: string | null }) {
+/** Chế độ direct: Deploy chỉ gửi bản đã duyệt cho deployer; DEPLOYED / DEPLOY_FAILED có sau khi chạy thử xong. */
+export function DeployRunButton({ runId, reason, direct = false }: { runId: string; reason: string | null; direct?: boolean }) {
   const [state, setState] = useState<ActionState>(null);
   const [pending, start] = useTransition();
+  const Icon = direct ? Rocket : GitPullRequest;
   return <div className="deploy-controls" aria-busy={pending}>
     <button type="button" className="button primary" disabled={!!reason || pending} aria-describedby={reason ? 'deploy-reason' : undefined}
       onClick={() => start(async () => setState(await deployRun(runId)))}>
-      {pending ? <LoaderCircle size={15} className="spin" aria-hidden /> : <GitPullRequest size={15} aria-hidden />}
-      {pending ? 'Đang mở pull request…' : 'Deploy'}
+      {pending ? <LoaderCircle size={15} className="spin" aria-hidden /> : <Icon size={15} aria-hidden />}
+      {pending ? (direct ? 'Đang gửi cho deployer…' : 'Đang mở pull request…') : 'Deploy'}
     </button>
     {reason && <p id="deploy-reason" className="small">{reason}</p>}
-    {pending && <p className="small" role="status">Đang gửi Deploy để mở pull request…</p>}
+    {pending && <p className="small" role="status">{direct ? 'Đang gửi bản đã duyệt cho deployer…' : 'Đang gửi Deploy để mở pull request…'}</p>}
     {state && !pending && <div className={`callout ${state.error ? 'bad' : 'info'}`} role={state.error ? 'alert' : 'status'}>{state.error ?? state.message}</div>}
   </div>;
+}
+
+/** Đang chờ deployer cài và chạy thử: làm mới trang mỗi 5 giây, dừng khi trang không còn render khung này. */
+export function DeployWatch() {
+  const router = useRouter();
+  useEffect(() => {
+    const poll = setInterval(() => router.refresh(), 5000);
+    return () => clearInterval(poll);
+  }, [router]);
+  return <p className="small" role="status" aria-live="polite"><LoaderCircle size={13} className="spin" aria-hidden /> Đang cài và chạy thử trên Dagster; trang tự cập nhật khi có kết quả.</p>;
 }
 
 export function CancelRunButton({ runId }: { runId: string }) {

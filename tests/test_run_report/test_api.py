@@ -465,6 +465,29 @@ async def test_direct_deploy_ignores_optional_github_failure(logged_in, approved
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["direct", "pr"])
+@pytest.mark.parametrize("configured", [True, False])
+async def test_deploy_config_tells_the_web_how_deploy_works_without_secrets(
+    client, store_path, monkeypatch, mode, configured
+):
+    from pydantic import SecretStr
+
+    from src.codegen import github
+
+    config = app.dependency_overrides[auth.settings]()
+    config.deploy_mode = mode
+    token, repo = ("ghp_secret_token", "acme/pipelines") if configured else ("", "")
+    monkeypatch.setattr(github.GithubClient, "from_settings", classmethod(lambda cls: cls(repo, SecretStr(token))))
+    assert (await client.get("/api/v1/pipeline/deploy-config")).status_code == 401
+    await client.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+
+    response = await client.get("/api/v1/pipeline/deploy-config")
+
+    assert response.status_code == 200 and response.json() == {"mode": mode, "gitops": configured}
+    assert "ghp_secret_token" not in response.text and "acme" not in response.text
+
+
+@pytest.mark.asyncio
 async def test_admin_can_direct_deploy_approved_run(client, approved_run, direct_mode):
     await client.post("/api/v1/pipeline/session", json={"username": "admin", "password": "Admin@123"})
 
