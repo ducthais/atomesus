@@ -2,6 +2,9 @@
 
 - Nguồn ngừng cấp dữ liệu → cảnh báo `source_stalled`, không tạo run sửa (sự cố hạ tầng, SPEC §9.6.4).
 - Luật khác kích hoạt → tạo run sửa (`trigger = regression`) nếu pipeline chưa có run sửa nào trong `cooldown_hours`.
+  Run sửa gọi LLM (codegen); tiến trình không có LLM (container dagster production, lỗi N1) gọi `check` với
+  `launch=None`: chỉ cảnh báo `needs_human` (mỗi `cooldown_hours` một lần), chủ pipeline bấm Kiểm tra trong app để
+  backend tạo run sửa.
 - Run sửa xong:
   - READY_FOR_REVIEW: bản sửa vừa đúng vừa tốt hơn, nằm trong hàng đợi review chờ người duyệt (không tự deploy);
   - NO_IMPROVEMENT: gắn cờ `no_improvement`, không làm phiền ai;
@@ -89,7 +92,7 @@ def overview(settings: PipelineSettings, policy: Policy, now: datetime | None = 
 def check(
     settings: PipelineSettings,
     policy: Policy,
-    launch: Launch,
+    launch: Launch | None,
     now: datetime | None = None,
     models: Collection[str] | None = None,
 ) -> list[dict]:
@@ -131,6 +134,20 @@ def check(
             actions.append({"model": model, "action": "cooldown", "run_id": previous.run_id, "rules": rules})
             continue
         evidence = {"model": model, "detected_at": now.isoformat(), "rules": [f.evidence() for f in fixable]}
+        if launch is None:
+            alert = alerts.raise_alert(
+                settings.store_path,
+                model,
+                "needs_human",
+                f"Pipeline `{model}` đang suy giảm ({', '.join(rules)}). Vòng theo dõi theo lịch không gọi LLM nên chưa "
+                "tạo run sửa: mở trang Theo dõi và bấm Kiểm tra để tạo run sửa.",
+                evidence,
+                owner=pipeline_owner(settings.store_path, parent),
+                quiet_hours=cooldown,
+                now=now,
+            )
+            actions.append({"model": model, "action": "alert" if alert else "already_alerted", "rules": rules})
+            continue
         try:
             started = launch(parent, evidence)
         except RunQuotaExceeded as exc:  # chủ pipeline hết lượt run (đã ghi cảnh báo): hoãn, xét tiếp pipeline khác

@@ -85,11 +85,14 @@ async def test_drift_endpoint(client, tmp_path, monkeypatch):
     config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
     app.dependency_overrides[auth.settings] = lambda: config
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
-    monkeypatch.setattr(
-        connectors,
-        "postgres_columns",
-        lambda _c, schema, decl=None: {"orders": [{"name": "order_id", "type": "integer"}]},
-    )
+    seen = {}
+
+    def columns(_config, schema, decl=None):
+        seen["schema"] = schema
+        seen["decl"] = decl
+        return {"orders": [{"name": "order_id", "type": "integer"}]}
+
+    monkeypatch.setattr(connectors, "postgres_columns", columns)
     monkeypatch.setattr(connectors, "postgres_keys", lambda _c, schema, decl=None: ({}, []))
     monkeypatch.setattr(connectors, "postgres_row_estimates", lambda _c, schema, decl=None: {})
     save_run_report(config.store_path, report("dep", 0, "DEPLOYED"))
@@ -100,5 +103,6 @@ async def test_drift_endpoint(client, tmp_path, monkeypatch):
         assert [p["run_id"] for p in body["pipelines"]] == ["dep"]
         assert body["pipelines"][0]["status"] == "breaking"
         assert body["pipelines"][0]["sources"][0]["missing_columns"] == ["amount_text"]
+        assert seen["schema"] == "sales_raw" and seen["decl"] is not None
     finally:
         app.dependency_overrides.pop(auth.settings, None)

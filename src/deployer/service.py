@@ -8,7 +8,8 @@ Dagster production, backend chỉ mount đọc. Mỗi chu kỳ (`run_once`):
 3. Lấy các `pipelines/<model>/` đổi so với commit đã áp dụng gần nhất (lần đầu: mọi pipeline).
 4. Mỗi pipeline: chỉ file thường theo `git ls-tree`, manifest.json khớp bộ file (manifest.py), run_report.json khớp
    chữ ký; sai thì không cài và báo failed. Đúng thì install_project (nguyên tử, có rollback); install ghi lại
-   workspace.yaml, đó là tín hiệu để scripts/dagster_local.py khởi động lại Dagster nạp workspace mới. Lỗi lúc cài
+   `.generation`, đó là tín hiệu để scripts/dagster_local.py nạp lại code location hợp nhất (không khởi động lại
+   Dagster, run đang chạy giữ nguyên). Lỗi lúc cài
    (môi trường: dbt parse, đĩa) thử lại ở chu kỳ sau, quá INSTALL_ATTEMPTS lần mới báo failed. Sau khi cài, chạy thử
    đúng một job trên Dagster: chỉ SUCCESS mới giữ bản mới; lỗi/hủy/quá hạn thì khôi phục bản trước và báo failed.
 5. Báo backend từng kết quả (POST /api/v1/deployments/callback, ký HMAC theo .harness/plans/DEPLOY-PR.md); chỉ ghi
@@ -45,6 +46,7 @@ from http.client import HTTPException
 from pathlib import Path
 from uuid import uuid4
 
+from src.dagster_runtime import GENERATION_FILE
 from src.deployer import install, release, verify
 from src.deployer.manifest import (
     MANIFEST_FILE,
@@ -59,6 +61,7 @@ log = logging.getLogger(__name__)
 
 CALLBACK_PATH = "/api/v1/deployments/callback"
 SIGNATURE_HEADER = "X-Atomesus-Signature"
+TIMESTAMP_HEADER = "X-Atomesus-Timestamp"
 CALLBACK_ATTEMPTS = 3
 CALLBACK_TIMEOUT_SEC = 10
 # Backend đã nhận và từ chối hẳn (sai định dạng, run không khớp chữ ký): gửi lại cũng vậy nên không gửi lại, pipeline
@@ -328,7 +331,13 @@ def http_post(url: str, body: bytes, headers: dict[str, str]) -> int:
 def deliver(config: Config, payload: dict, post=http_post, sleep=time.sleep) -> str | None:
     """Báo một kết quả; trả ACCEPTED (backend nhận), REFUSED (từ chối hẳn) hoặc None (cần báo lại chu kỳ sau)."""
     body = _body(payload)
-    headers = {"Content-Type": "application/json", SIGNATURE_HEADER: sign(config.secret, body)}
+    timestamp = str(int(time.time()))
+    signed = timestamp.encode() + b"." + body
+    headers = {
+        "Content-Type": "application/json",
+        TIMESTAMP_HEADER: timestamp,
+        SIGNATURE_HEADER: sign(config.secret, signed),
+    }
     what = f"{payload['model_name']} ({payload['status']})"
     for attempt in range(1, CALLBACK_ATTEMPTS + 1):
         try:
@@ -486,8 +495,12 @@ def apply_bundle(
             raise ManifestError(f"Chỉ cài file thường UTF-8; bundle {name} có {', '.join(irregular)}.")
         if manifest_text is None:
             raise ManifestError(f"Thiếu {MANIFEST_FILE} trong bundle {name}.")
+        report_text = files.pop(REPORT_FILE, None)
+        if report_text is None:
+            raise ManifestError(f"Thiếu {REPORT_FILE} trong bundle {name}.")
         manifest = load_json(manifest_text, MANIFEST_FILE)
         verify_manifest(manifest, files)
+        verify_report(manifest, load_json(report_text, REPORT_FILE))
         if release.bundle_name(manifest["run_id"], manifest["version"]) != name:
             raise ManifestError(
                 f"Manifest ghi run {manifest['run_id']} v{manifest['version']} nhưng bundle tên {name}."
@@ -542,8 +555,8 @@ def run_inbox(config: Config, *, post=http_post, sleep=time.sleep) -> dict:
     """Một chu kỳ ở chế độ direct: cài các bundle trong hộp thư release. Tóm tắt cùng dạng run_once: `head` luôn None,
     `models` là bundle vừa kiểm/cài, `unresolved` là bundle còn chờ cài lại ({tên bundle: "retry"})."""
     state = load_state(config)
-    if not (Path(config.deploy_dir) / "workspace.yaml").exists():
-        install.write_workspace(config.deploy_dir)
+    if not (Path(config.deploy_dir) / GENERATION_FILE).exists():
+        install.write_generation(config.deploy_dir)
     if not _flush(config, state, post, sleep):
         log.warning("Còn %d kết quả chưa báo được backend; chưa cài bundle mới.", len(state["pending"]))
         return {"head": None, "applied": None, "models": [], "pending": len(state["pending"]), "unresolved": {}}
@@ -575,8 +588,8 @@ def run_once(config: Config, *, reinstall: bool = False, post=http_post, sleep=t
     if config.mode == "direct":
         return run_inbox(config, post=post, sleep=sleep)
     state = load_state(config)
-    if not (Path(config.deploy_dir) / "workspace.yaml").exists():
-        install.write_workspace(config.deploy_dir)  # Dagster cần workspace.yaml (rỗng) ngay cả khi chưa có pipeline
+    if not (Path(config.deploy_dir) / GENERATION_FILE).exists():
+        install.write_generation(config.deploy_dir)  # mốc ban đầu cho supervisor Dagster, kể cả khi chưa có pipeline
     if not _flush(config, state, post, sleep):
         log.warning("Còn %d kết quả chưa báo được backend; chưa cài commit mới.", len(state["pending"]))
         unresolved = {model: record["status"] for model, record in state["models"].items() if record["status"] != DONE}

@@ -14,9 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from src.dagster_runtime.contract import is_project_dir
 from src.deployer import install, release, service, verify
 from src.deployer.manifest import build_manifest
-from src.deployer.service import CALLBACK_PATH, SIGNATURE_HEADER, Config, DeployerError
+from src.deployer.service import CALLBACK_PATH, SIGNATURE_HEADER, TIMESTAMP_HEADER, Config, DeployerError
 from tests.test_deployer.test_verify import Clock, Dagster
 
 SECRET = "khoa-ky-callback-cho-test"
@@ -170,10 +171,11 @@ def test_first_run_installs_pipeline_and_reports_signed_callback(config, remote,
     project = Path(config.deploy_dir) / "fct_x"
     assert (project / "dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 1 as n\n"
     assert not (project / "manifest.json").exists() and not (project / "run_report.json").exists()
-    assert "location_name: fct_x" in (Path(config.deploy_dir) / "workspace.yaml").read_text(encoding="utf-8")
+    assert (Path(config.deploy_dir) / ".generation").is_file(), "supervisor Dagster được báo nạp lại"
     [(url, body, headers)] = backend.calls
     assert url == "http://backend:8000" + CALLBACK_PATH
-    expected = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    timestamp = headers[TIMESTAMP_HEADER]
+    expected = "sha256=" + hmac.new(SECRET.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
     assert headers[SIGNATURE_HEADER] == expected and headers["Content-Type"] == "application/json"
     payload = json.loads(body)
     manifest = json.loads(signed(files_v(1), 1)["manifest.json"])
@@ -197,9 +199,8 @@ def test_new_version_replaces_the_single_location_without_leftovers(config, remo
 
     assert summary["applied"] == head and summary["models"] == ["fct_x"]
     root = Path(config.deploy_dir)
-    assert live_entries(config) == ["fct_x", "workspace.yaml"], "không còn thư mục .old-/.tmp-"
+    assert live_entries(config) == [".generation", "fct_x"], "không còn thư mục .old-/.tmp-"
     assert (root / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 2 as n\n"
-    assert (root / "workspace.yaml").read_text(encoding="utf-8").count("location_name:") == 1
     assert [(p["version"], p["status"]) for p in backend.payloads()] == [(2, "deployed")]
 
 
@@ -224,7 +225,7 @@ def test_only_changed_pipelines_are_installed(config, remote, installs):
     run(config, backend)
 
     assert installs == ["fct_x", "fct_y"] and [p["model_name"] for p in backend.payloads()] == ["fct_y"]
-    assert live_entries(config) == ["fct_x", "fct_y", "workspace.yaml"]
+    assert live_entries(config) == [".generation", "fct_x", "fct_y"]
 
 
 def test_tampered_file_is_rejected_and_running_version_kept(config, remote, installs):
@@ -325,7 +326,7 @@ def test_install_failure_is_retried_then_reported_failed_and_keeps_previous(conf
     assert installs == ["fct_x"] * (1 + service.INSTALL_ATTEMPTS)
     sql = Path(config.deploy_dir) / "fct_x/dbt_project/models/gold/fct_x.sql"
     assert sql.read_text(encoding="utf-8") == "select 1 as n\n"
-    assert live_entries(config) == ["fct_x", "workspace.yaml"]
+    assert live_entries(config) == [".generation", "fct_x"]
     [payload] = backend.payloads()
     assert payload["status"] == "failed" and "dbt parse" in payload["detail"]
     assert summary["applied"] == first and summary["unresolved"] == {"fct_x": "failed"}
@@ -497,7 +498,9 @@ def test_http_post_sends_signed_json_to_backend(config, remote, installs):
 
     assert summary["pending"] == 0
     [(path, headers, body)] = received
-    assert path == CALLBACK_PATH and headers[SIGNATURE_HEADER] == service.sign(SECRET, body)
+    timestamp = headers[TIMESTAMP_HEADER]
+    assert path == CALLBACK_PATH
+    assert headers[SIGNATURE_HEADER] == service.sign(SECRET, timestamp.encode() + b"." + body)
     assert json.loads(body)["status"] == "deployed"
 
 
@@ -688,7 +691,7 @@ def test_verification_failure_rolls_back_and_waits_for_new_pipeline_content(
     old_files = {
         path.relative_to(root / "fct_x"): path.read_bytes() for path in (root / "fct_x").rglob("*") if path.is_file()
     }
-    old_workspace = install.write_workspace(config.deploy_dir).read_bytes()
+    old_generation = install.write_generation(config.deploy_dir).read_bytes()
     backend.calls.clear()
     dagster.calls.clear()
     if failure in {"FAILURE", "CANCELED"}:
@@ -707,8 +710,8 @@ def test_verification_failure_rolls_back_and_waits_for_new_pipeline_content(
     summary = run(config, backend)
 
     assert summary["applied"] == previous and summary["unresolved"] == {"fct_x": "failed"}
-    assert (root / "workspace.yaml").read_bytes() == old_workspace
-    assert live_entries(config) == (["workspace.yaml"] if first_install else ["fct_x", "workspace.yaml"])
+    assert (root / ".generation").read_bytes() != old_generation, "rollback báo Dagster nạp lại bản trước"
+    assert live_entries(config) == ([".generation"] if first_install else [".generation", "fct_x"])
     restored_files = {
         path.relative_to(root / "fct_x"): path.read_bytes() for path in (root / "fct_x").rglob("*") if path.is_file()
     }
@@ -752,7 +755,7 @@ def test_keeps_backup_and_defers_deployed_callback_until_success(config, remote,
         [backup] = list(root.glob("fct_x.old-*"))
         assert (backup / "dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 1 as n\n"
         assert (root / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(encoding="utf-8") == "select 2 as n\n"
-        assert ".old-" not in (root / "workspace.yaml").read_text(encoding="utf-8")
+        assert not is_project_dir(backup.name), "loader không nạp bản sao lưu"
         seen.append(True)
 
     dagster.on_status = check
@@ -790,7 +793,7 @@ def test_slow_dagster_restart_succeeds_without_rollback(config, remote, installs
     assert (Path(config.deploy_dir) / "fct_x/dbt_project/models/gold/fct_x.sql").read_text(
         encoding="utf-8"
     ) == "select 2 as n\n"
-    assert live_entries(config) == ["fct_x", "workspace.yaml"]
+    assert live_entries(config) == [".generation", "fct_x"]
     assert not any(body["query"] == verify.TERMINATE for _, body, _ in dagster.calls)
 
 
@@ -825,7 +828,7 @@ def test_failed_verification_callback_retries_without_reinstall_or_launch(config
 
     summary = run(config, Backend(*[503] * service.CALLBACK_ATTEMPTS))
 
-    assert summary["pending"] == 1 and live_entries(config) == ["workspace.yaml"]
+    assert summary["pending"] == 1 and live_entries(config) == [".generation"]
     assert service.load_state(config)["pending"][0]["payload"]["status"] == "failed"
     backend = Backend()
     assert run(config, backend)["unresolved"] == {"fct_x": "failed"}
@@ -858,7 +861,22 @@ def bundle(config, files: dict[str, str], version: int, run_id: str = "run-1", m
         reviewer="an",
         approved_at=datetime(2026, 10, 10, tzinfo=UTC),
     )
-    return release.write_bundle(config.release_dir, manifest, files)
+    report = {
+        "run_id": run_id,
+        "version": version,
+        "files_hash": manifest["files_hash"],
+        "status": "APPROVED",
+        "spec": {"transform": {"model_name": model}},
+        "approval": {
+            "decision": "approved",
+            "reviewer": "an",
+            "files_hash": manifest["files_hash"],
+            "version": version,
+            "at": "2026-10-10T00:00:00Z",
+            "comment": "",
+        },
+    }
+    return release.write_bundle(config.release_dir, manifest, files, json.dumps(report, indent=2) + "\n")
 
 
 def released(config, folder: str) -> list[str]:
@@ -889,7 +907,9 @@ def test_direct_installs_valid_bundle_reports_deployed_and_moves_it_to_done(dire
     assert released(direct, "inbox") == [] and released(direct, "done") == ["run-1-v1"]
     [(url, body, headers)] = backend.calls
     assert url == "http://backend:8000" + CALLBACK_PATH
-    assert headers[SIGNATURE_HEADER] == "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    timestamp = headers[TIMESTAMP_HEADER]
+    expected = "sha256=" + hmac.new(SECRET.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+    assert headers[SIGNATURE_HEADER] == expected
     payload = json.loads(body)
     manifest = json.loads((Path(direct.release_dir) / "done/run-1-v1/manifest.json").read_text(encoding="utf-8"))
     assert payload["status"] == "deployed" and payload["commit_sha"] is None
@@ -934,6 +954,22 @@ def test_direct_bundle_without_readable_manifest_is_rejected_without_callback(di
     run(direct, backend)
 
     assert installs == [] and backend.calls == [] and released(direct, "rejected") == ["run-1-v1"]
+
+
+def test_direct_bundle_with_tampered_run_report_is_rejected_before_install(direct, installs, dagster):
+    path = bundle(direct, files_v(1), 1)
+    report_path = path / "run_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["approval"]["reviewer"] = "attacker"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    backend = Backend()
+
+    run(direct, backend)
+
+    assert installs == [] and dagster.launches == []
+    assert released(direct, "rejected") == ["run-1-v1"]
+    assert backend.payloads()[0]["status"] == "failed"
+    assert "run_report.json" in backend.payloads()[0]["detail"]
 
 
 def test_direct_rerun_does_not_install_or_report_twice(direct, installs, dagster, monkeypatch):

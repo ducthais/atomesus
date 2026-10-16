@@ -43,6 +43,38 @@ def test_stale_copy_cannot_confirm_the_same_plan_twice(tmp_path):
         start_confirm(planned, "minh", agent, store)
 
 
+@pytest.mark.parametrize("raises", [False, True])
+def test_invoke_cleans_only_its_checkpoint_thread(monkeypatch, raises):
+    from src.agents import service
+
+    class Checkpointer:
+        def __init__(self):
+            self.checkpoints = {"other:planner": "keep"}
+
+        def delete_thread(self, thread_id):
+            self.checkpoints.pop(thread_id, None)
+
+    checkpointer = Checkpointer()
+
+    class Graph:
+        def stream(self, initial, config, stream_mode):
+            thread_id = config["configurable"]["thread_id"]
+            checkpointer.checkpoints[thread_id] = "run data"
+            yield initial
+            if raises:
+                raise RuntimeError("graph failed")
+
+    monkeypatch.setattr(service, "build_graph", lambda *args, **kwargs: Graph())
+    state = service._invoke(
+        SimpleNamespace(checkpointer=checkpointer),
+        {"run_id": "finished", "status": "GENERATING"},
+        stop_after_spec=False,
+    )
+
+    assert checkpointer.checkpoints == {"other:planner": "keep"}
+    assert state["status"] == ("INTERNAL_ERROR" if raises else "GENERATING")
+
+
 def test_daily_reservation_is_atomic(tmp_path):
     settings = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
     barrier = threading.Barrier(3)
@@ -419,3 +451,27 @@ def test_phase_timeout_kills_active_subprocess(tmp_path):
 
     assert update["status"] == "INFRA_ERROR"
     assert not marker.exists()
+
+
+DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
+
+
+def test_every_deploy_target_runs_with_app_env_production():
+    import yaml
+
+    dockerfile = (DEPLOY / "hf-space" / "Dockerfile").read_text(encoding="utf-8")
+    assert "APP_ENV=production" in dockerfile and "APP_ENV=staging" not in dockerfile
+    compose = yaml.safe_load((DEPLOY / "compose.yml").read_text(encoding="utf-8"))
+    assert compose["services"]["dagster"]["environment"]["APP_ENV"] == "${APP_ENV:-production}"
+    vm = (DEPLOY / "setup-vm.sh").read_text(encoding="utf-8")
+    assert "\nAPP_ENV=production\n" in vm and "APP_ENV=staging" not in vm
+
+
+def test_hf_space_refuses_to_start_without_the_connection_key():
+    # production bắt buộc PIPELINE_CONNECTION_KEY (PipelineSettings.validate_connection_key): Space báo thiếu secret
+    # ngay, thay vì để backend chết lúc khởi động.
+    start = (DEPLOY / "hf-space" / "start.sh").read_text(encoding="utf-8")
+    required = next(line for line in start.splitlines() if line.startswith("for key in ")).split()
+    assert "PIPELINE_CONNECTION_KEY" in required
+    with pytest.raises(RuntimeError, match="PIPELINE_CONNECTION_KEY"):
+        PipelineSettings(_env_file=None).validate_connection_key("production")

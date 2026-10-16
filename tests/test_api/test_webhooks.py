@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -419,26 +420,48 @@ def callback_body(report: RunReport, status: str = "deployed", **changes) -> dic
     }
 
 
-async def callback(client, payload: dict, signature: str | None = None):
+async def callback(
+    client,
+    payload: dict,
+    signature: str | None = None,
+    timestamp: str | None = None,
+    include_timestamp: bool = True,
+):
     body = json.dumps(payload).encode()
+    timestamp = timestamp or str(int(time.time()))
     headers = {
         "Content-Type": "application/json",
-        "X-Atomesus-Signature": sign(body, DEPLOYER_SECRET) if signature is None else signature,
+        "X-Atomesus-Signature": (
+            sign(timestamp.encode() + b"." + body, DEPLOYER_SECRET) if signature is None else signature
+        ),
     }
+    if include_timestamp:
+        headers["X-Atomesus-Timestamp"] = timestamp
     response = await client.post(CALLBACK, content=body, headers=headers)
     assert DEPLOYER_SECRET not in response.text and TOKEN not in response.text
     return response
 
 
 @pytest.mark.asyncio
-async def test_callback_deployed_moves_run_to_deployed_and_repeat_is_idempotent(client, approved, store_path):
+async def test_callback_deployed_moves_run_to_deployed_and_exact_signed_replay_is_idempotent(
+    client, approved, store_path
+):
     await send(client, "pull_request", pull_closed(merged=True))
 
-    response = await callback(client, callback_body(approved))
+    body = json.dumps(callback_body(approved)).encode()
+    timestamp = str(int(time.time()))
+    headers = {
+        "Content-Type": "application/json",
+        "X-Atomesus-Timestamp": timestamp,
+        "X-Atomesus-Signature": sign(timestamp.encode() + b"." + body, DEPLOYER_SECRET),
+    }
+
+    response = await client.post(CALLBACK, content=body, headers=headers)
     after_first = stored(store_path)
-    again = await callback(client, callback_body(approved))
+    again = await client.post(CALLBACK, content=body, headers=headers)
 
     assert response.status_code == 200, response.text
+    assert DEPLOYER_SECRET not in response.text and DEPLOYER_SECRET not in again.text
     report = get_run_report(store_path, RUN_ID)
     assert report.status == "DEPLOYED" and report.stage_reached == "deploy"
     assert report.deployment.state == "merged", "callback không ghi đè thay đổi của webhook merge"
@@ -505,6 +528,41 @@ async def test_callback_rejects_missing_or_wrong_signature(client, approved, sto
     before = stored(store_path)
 
     response = await callback(client, callback_body(approved), signature=signature)
+
+    assert response.status_code == 401
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("timestamp", "include_timestamp"),
+    [(None, False), ("not-a-timestamp", True), (str(int(time.time()) - 301), True)],
+    ids=["missing", "malformed", "expired"],
+)
+async def test_callback_rejects_missing_invalid_or_expired_timestamp(
+    client, approved, store_path, timestamp, include_timestamp
+):
+    before = stored(store_path)
+
+    response = await callback(
+        client,
+        callback_body(approved),
+        timestamp=timestamp,
+        include_timestamp=include_timestamp,
+    )
+
+    assert response.status_code == 401
+    assert stored(store_path) == before
+
+
+@pytest.mark.asyncio
+async def test_callback_signature_binds_timestamp(client, approved, store_path):
+    before = stored(store_path)
+    signed_at = str(int(time.time()))
+    body = json.dumps(callback_body(approved)).encode()
+    signature = sign(signed_at.encode() + b"." + body, DEPLOYER_SECRET)
+
+    response = await callback(client, callback_body(approved), signature=signature, timestamp=str(int(signed_at) + 1))
 
     assert response.status_code == 401
     assert stored(store_path) == before
@@ -579,7 +637,12 @@ async def test_callback_commit_sha_never_carries_a_secret(client, approved, stor
     app.dependency_overrides[deployer_settings] = lambda: DeployerSettings(_env_file=None, secret=configured)
     before = stored(store_path)
     body = json.dumps(callback_body(approved, status, commit_sha=commit_sha, detail="x")).encode()
-    headers = {"Content-Type": "application/json", "X-Atomesus-Signature": sign(body, configured)}
+    timestamp = str(int(time.time()))
+    headers = {
+        "Content-Type": "application/json",
+        "X-Atomesus-Timestamp": timestamp,
+        "X-Atomesus-Signature": sign(timestamp.encode() + b"." + body, configured),
+    }
 
     response = await client.post(CALLBACK, content=body, headers=headers)
 

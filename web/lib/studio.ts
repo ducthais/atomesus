@@ -64,7 +64,22 @@ const CHECK_LABEL: Record<string, string> = {
 
 export const shortId = (id: string) => id.startsWith('pending-') ? 'đang tạo' : id.slice(0, 8);
 export const stageIndex = (stage: string) => Math.max(0, STAGE_IDS.indexOf(stage as typeof STAGE_IDS[number]));
-const traceText = (item: RunReport['error_trace'][number]) => item.error ?? item.message ?? JSON.stringify(item);
+export function friendlyTechnicalError(message: string): string {
+  const known = message
+    .replaceAll('src/codegen/guard.py', 'bộ kiểm tra biểu thức')
+    .replaceAll('src/codegen/reference.py', 'bộ đối chiếu kết quả')
+    .replaceAll('policy/budgets.yml', 'cấu hình hạn mức')
+    .replaceAll('budgets.yml', 'cấu hình hạn mức')
+    .replaceAll('policy/objectives.yml', 'cấu hình chất lượng')
+    .replaceAll('objectives.yml', 'cấu hình chất lượng')
+    .replaceAll('policy/domains.yml', 'danh mục nguồn dữ liệu')
+    .replaceAll('domains.yml', 'danh mục nguồn dữ liệu');
+  return known
+    .replace(/\b(?:src|web|scripts|policy)\/[A-Za-z0-9_./-]+\.(?:py|ya?ml|ts|tsx|js)\b/g, 'thành phần hệ thống')
+    .replace(/[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]+\.(?:py|ya?ml|ts|tsx|js)\b/g, 'thành phần hệ thống');
+}
+const traceText = (item: RunReport['error_trace'][number]) =>
+  friendlyTechnicalError(item.error ?? item.message ?? JSON.stringify(item));
 const num = (value: unknown) => typeof value === 'number' ? value.toLocaleString('vi-VN') : '—';
 
 function toCheck(check: RunReport['checks'][number]): Check {

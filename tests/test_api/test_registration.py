@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from src.main import app
 from src.pipeline import api, auth, store
@@ -306,3 +307,129 @@ async def test_direct_registration_keeps_duplicate_and_ip_limits(registration):
     assert (
         await client.post("/api/v1/pipeline/register", json=payload_for("minh.data"), headers=other_ip)
     ).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_production_blocks_built_in_account_with_default_password(tmp_path, monkeypatch):
+    config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
+    app.dependency_overrides[auth.settings] = lambda: config
+    environment = SimpleNamespace(app_env="production")
+    monkeypatch.setattr(auth, "get_settings", lambda: environment)
+    monkeypatch.setattr(api, "get_settings", lambda: environment)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="https://test") as production_client:
+            response = await production_client.post(
+                "/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}
+            )
+
+        assert response.status_code == 503
+        assert "production" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(auth.settings, None)
+
+
+@pytest.mark.asyncio
+async def test_production_allows_changed_built_in_passwords_and_registered_accounts(tmp_path, monkeypatch):
+    config = PipelineSettings(
+        _env_file=None,
+        store_path=str(tmp_path / "runs.sqlite3"),
+        engineer_password="EngineerChanged9",
+        admin_password="AdminChanged9",
+    )
+    app.dependency_overrides[auth.settings] = lambda: config
+    environment = SimpleNamespace(app_env="production")
+    monkeypatch.setattr(auth, "get_settings", lambda: environment)
+    monkeypatch.setattr(api, "get_settings", lambda: environment)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="https://test") as production_client:
+            registered = await production_client.post(
+                "/api/v1/pipeline/register", json=payload_for("production.user")
+            )
+            assert registered.status_code == 201, registered.text
+            registered_user = registered.json()
+            assert (await production_client.get("/api/v1/pipeline/session")).json() == registered_user
+
+            await production_client.delete("/api/v1/pipeline/session")
+            registered_login = await production_client.post(
+                "/api/v1/pipeline/session",
+                json={"username": "production.user", "password": "StrongPass9"},
+            )
+            assert registered_login.status_code == 200
+
+            await production_client.delete("/api/v1/pipeline/session")
+            engineer_login = await production_client.post(
+                "/api/v1/pipeline/session",
+                json={"username": "engineer", "password": "EngineerChanged9"},
+            )
+            assert engineer_login.status_code == 200
+            assert (await production_client.get("/api/v1/pipeline/session")).json()["role"] == "Engineer"
+
+            await production_client.delete("/api/v1/pipeline/session")
+            admin_login = await production_client.post(
+                "/api/v1/pipeline/session", json={"username": "admin", "password": "AdminChanged9"}
+            )
+            assert admin_login.status_code == 200
+            promoted = await production_client.patch(
+                f"/api/v1/pipeline/users/{registered_user['id']}/role", json={"role": "Reviewer"}
+            )
+            assert promoted.status_code == 200
+            assert promoted.json()["role"] == "Reviewer"
+    finally:
+        app.dependency_overrides.pop(auth.settings, None)
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limit_is_scoped_by_ip_and_username(registration):
+    client, _config = registration
+    wrong = {"username": "engineer", "password": "WrongPassword9"}
+
+    for _ in range(api.MAX_LOGIN_ATTEMPTS - 1):
+        assert (await client.post("/api/v1/pipeline/session", json=wrong)).status_code == 401
+
+    blocked = await client.post("/api/v1/pipeline/session", json=wrong)
+    assert blocked.status_code == 429
+    assert 0 < int(blocked.headers["Retry-After"]) <= api.LOGIN_WINDOW_SECONDS
+    assert (
+        await client.post(
+            "/api/v1/pipeline/session",
+            json={"username": "engineer", "password": "Engineer@123"},
+        )
+    ).status_code == 429
+
+    # Username khác trên cùng IP và cùng username từ IP khác có hạn mức độc lập.
+    assert (
+        await client.post(
+            "/api/v1/pipeline/session",
+            json={"username": "reviewer", "password": "Reviewer@123"},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            "/api/v1/pipeline/session",
+            json={"username": "engineer", "password": "Engineer@123"},
+            headers={"X-Forwarded-For": "203.0.113.9"},
+        )
+    ).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_successful_login_clears_failures_and_expired_lock_resets(registration):
+    client, config = registration
+    headers = {"X-Forwarded-For": "198.51.100.10"}
+    wrong = {"username": "ENGINEER", "password": "WrongPassword9"}
+    correct = {"username": "engineer", "password": "Engineer@123"}
+
+    for _ in range(api.MAX_LOGIN_ATTEMPTS - 1):
+        assert (await client.post("/api/v1/pipeline/session", json=wrong, headers=headers)).status_code == 401
+    assert (await client.post("/api/v1/pipeline/session", json=correct, headers=headers)).status_code == 200
+
+    # Sau lần đăng nhập đúng, bộ đếm bắt đầu lại từ đầu; username được chuẩn hóa không phân biệt hoa thường.
+    for _ in range(api.MAX_LOGIN_ATTEMPTS - 1):
+        assert (await client.post("/api/v1/pipeline/session", json=wrong, headers=headers)).status_code == 401
+    assert (await client.post("/api/v1/pipeline/session", json=wrong, headers=headers)).status_code == 429
+
+    with store.database(config.store_path) as conn:
+        conn.execute("UPDATE login_failures SET first_at = first_at - ?", (api.LOGIN_WINDOW_SECONDS + 1,))
+    assert (await client.post("/api/v1/pipeline/session", json=correct, headers=headers)).status_code == 200

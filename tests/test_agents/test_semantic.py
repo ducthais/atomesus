@@ -1,4 +1,8 @@
-"""Cổng semantic (P3, FR-05): `customer` có ba nghĩa ở sales, marketing và rental (Pagila) trong policy/domains.yml."""
+"""Cổng semantic (P3, FR-05): `customer` có nghĩa khác nhau ở marketing và rental (Pagila) trong policy/domains.yml.
+
+Sales cũng định nghĩa `customer` nhưng là domain ẩn (`hidden: true`): lần quét mới bỏ qua nó, run cũ đã chọn nguồn sales
+vẫn dùng định nghĩa của sales.
+"""
 
 from src.agents.semantic import entity_scan
 from src.policy.loader import load_policy
@@ -11,11 +15,23 @@ BOTH = [*SALES_ONLY, {"source_ref": "mkt_api", "tables": ["leads"]}]
 def test_ambiguous_entity_is_blocked_with_both_definitions():
     gate, message = entity_scan("Đếm số khách hàng mới mỗi tuần", None, load_policy())
     assert gate.result == "fail" and message == gate.detail
-    assert "Phát hiện thực thể `customer` ở 3 domain" in message
-    assert "Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng Postgres)" in message
+    assert "Phát hiện thực thể `customer` ở 2 domain" in message
     assert "Marketing định nghĩa là người để lại email (2 endpoint REST)" in message
-    assert "an@company.vn" in message and "binh@company.vn" in message
-    assert set(gate.observed["customer"]["domains"]) == {"sales", "marketing", "rental"}
+    assert "Rental định nghĩa là khách có tài khoản thuê DVD tại một cửa hàng (1 bảng Postgres)" in message
+    assert "binh@company.vn" in message and "an@company.vn" not in message, "steward của sales không bị gọi"
+    assert set(gate.observed["customer"]["domains"]) == {"marketing", "rental"}
+
+
+def test_hidden_domain_is_ignored_by_new_scans_even_with_the_full_policy():
+    # Xác nhận kế hoạch / chạy tiếp dùng chính sách đủ domain (agent_deps); payment chỉ còn ở rental khi bỏ sales.
+    gate, message = entity_scan("Tổng thanh toán theo ngày (payment)", None, load_policy())
+    assert message is None and gate.result == "pass"
+    assert set(load_policy().domains.domains) >= {"sales", "bench"}, "chính sách đủ domain, sales chỉ bị bỏ khi quét"
+
+
+def test_bench_is_unaffected_by_hiding_sales():
+    gate, message = entity_scan("Tổng tiền sự kiện theo ngày", [{"source_ref": "landing_bench"}], load_policy())
+    assert message is None and gate.result == "pass" and gate.observed["resolved"] == {}
 
 
 def test_english_entity_name_is_matched_too():

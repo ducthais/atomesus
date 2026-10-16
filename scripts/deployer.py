@@ -3,7 +3,7 @@
 Chạy trong container `deployer` của deploy/compose.yml (xem docs/deploy.md, mục bật deployer). Mỗi
 DEPLOYER_INTERVAL_SEC giây (mặc định 60) chạy một chu kỳ src/deployer/service.py; lỗi một chu kỳ (mạng, git) chỉ ghi
 log, chu kỳ sau thử lại. Chưa cấu hình (thiếu biến môi trường) thì vòng lặp ghi lỗi rồi nằm chờ thay vì thoát, để
-container không khởi động lại liên tục; workspace.yaml rỗng vẫn có để Dagster chạy với danh sách pipeline rỗng.
+container không khởi động lại liên tục; Dagster vẫn chạy với code location hợp nhất rỗng.
 
 Chạy: python scripts/deployer.py            (vòng lặp)
       python scripts/deployer.py --once     (một chu kỳ rồi thoát; mã 1 nếu lỗi, còn kết quả chưa báo hoặc còn
@@ -23,7 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)  # đường dẫn mặc định (data/dagster_local, data/deployer) tính từ gốc repo như scripts/dagster_local.py
 
-from src.deployer.install import write_workspace  # noqa: E402
+from src.dagster_runtime import GENERATION_FILE  # noqa: E402
+from src.deployer.install import write_generation  # noqa: E402
 from src.deployer.service import Config, DeployerError, run_once  # noqa: E402
 
 log = logging.getLogger("deployer")
@@ -54,10 +55,10 @@ def cycle(config: Config, reinstall: bool) -> dict | None:
 
 
 def idle(error: DeployerError) -> NoReturn:
-    """Chưa cấu hình: Dagster vẫn cần workspace.yaml (rỗng) trong volume code location, rồi nằm chờ người sửa .env."""
+    """Chưa cấu hình: ghi mốc `.generation` ban đầu trong volume code location, rồi nằm chờ người sửa .env."""
     deploy_dir = Path(os.environ.get("PIPELINE_DEPLOY_DIR", "data/dagster_local"))
-    if not (deploy_dir / "workspace.yaml").exists():
-        write_workspace(str(deploy_dir))
+    if not (deploy_dir / GENERATION_FILE).exists():
+        write_generation(str(deploy_dir))
     while True:
         log.error("Deployer chưa bật: %s Xem docs/deploy.md mục 6, sửa .env rồi `up -d deployer`.", error)
         time.sleep(IDLE_SEC)

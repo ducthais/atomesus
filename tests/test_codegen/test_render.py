@@ -102,8 +102,11 @@ def test_single_source_pipeline_content(policy):
 
     dagster = files["infra/dagster/generated/fct_daily_orders_asset.py"]
     assert 'cron_schedule="0 2 * * *"' in dagster
-    assert "from ingestion.fct_daily_orders_pipeline import pipeline, source" in dagster
-    assert 'dlt.run(context=context, loader_file_format="parquet")' in dagster
+    # Template v2 (code location hợp nhất): không import ingestion lúc nạp; dlt chạy trong subprocess với credential
+    # của đúng pipeline này (src/dagster_runtime/execute.py), bảng bronze khai báo tĩnh từ Spec.
+    assert "RUNTIME_CONTRACT = 2" in dagster and "from ingestion" not in dagster
+    assert "yield from run_ingestion(context, MODEL, REPO_ROOT)" in dagster
+    assert "BRONZE_TABLES = ['raw_orders']" in dagster
 
 
 def test_multi_source_pipeline_content(policy):
@@ -154,6 +157,10 @@ def test_dlt_name_matches_dlt_normalizer():
         ("transform/filters", ["status <> '{{ env_var(\"OPENAI_API_KEY\") }}'"]),
         ("transform/filters", ["status <> 'x'; drop table orders"]),
         ("transform/filters", ["order_id in (select 1)"]),
+        ("transform/filters", ["amount > 0; DROP TABLE orders"]),
+        ("transform/filters", ["amount > 0 /* hidden statement */"]),
+        ("transform/filters", ["amount > 0 -- hidden statement\n"]),
+        ("transform/filters", ["amount > ("]),
         ("transform/filters", ["read_csv('/etc/passwd') is not null"]),
         ("transform/filters", ["status <> 'x' -- bỏ phần sau"]),
         ("sources/0/staging/reject_if", ["getenv('HOME') is null"]),
@@ -179,6 +186,18 @@ def test_guard_allows_normal_expressions():
         SINGLE, **{"transform/filters": ["CAST(amount_text AS decimal(18,2)) > 0", "cast(status as varchar(20)) <> ''"]}
     )
     assert expression_violations(casts) == []
+
+
+def test_guard_allows_nested_scalar_expressions_and_rejects_unverified_sql():
+    allowed = load(
+        SINGLE,
+        **{"transform/filters": ["coalesce(amount, 0) > 0", "status IN ('paid', 'select')"]},
+    )
+    assert expression_violations(allowed) == []
+
+    for expression in ("amount > 0; SELECT 1", "amount > 0 /* comment */", "amount > ("):
+        blocked = load(SINGLE, **{"transform/filters": [expression]})
+        assert expression_violations(blocked)
 
 
 def test_post_run_fails_when_gold_is_empty_but_staging_is_not():

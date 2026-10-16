@@ -148,9 +148,6 @@ class ColumnTest(_Spec):
     test: Literal["not_null", "unique", "not_negative"]
 
 
-TIME_UNITS = ("day", "week", "month", "quarter", "year")
-
-
 class TimeGrain(_Spec):
     """Gộp một cột thời gian của grain theo kỳ (date_trunc), thay vì theo từng thời điểm chính xác."""
 

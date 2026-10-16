@@ -5,6 +5,7 @@ Mỗi run một dòng, khóa theo `run_id`; bản ghi được kiểm tra bằng
 
 import json
 import sqlite3
+import threading
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,76 @@ FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "run_reports"
 HISTORY_LIMIT = 100
 # GitHub chỉ cho gửi lại delivery trong vài ngày; giữ lâu hơn hẳn mức đó.
 DELIVERY_RETENTION_DAYS = 30
+_SCHEMA_LOCK = threading.Lock()
+_INITIALIZED_DATABASES: dict[str, tuple[int, int]] = {}
+
+
+def _database_identity(path: str) -> tuple[str, tuple[int, int] | None]:
+    """Return a stable cache key and file identity; in-memory databases need initialization per connection."""
+    if path == ":memory:":
+        return path, None
+    resolved = Path(path).resolve()
+    stat = resolved.stat()
+    return str(resolved), (stat.st_dev, stat.st_ino)
+
+
+def _initialize_schema(conn: sqlite3.Connection) -> None:
+    """Create and migrate the RunReport schema once for a database file."""
+    with conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS run_reports ("
+            " run_id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL, report TEXT NOT NULL,"
+            " updated_at TEXT)"
+        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(run_reports)")}
+        if "updated_at" not in columns:
+            conn.execute("ALTER TABLE run_reports ADD COLUMN updated_at TEXT")
+        conn.execute("UPDATE run_reports SET updated_at = created_at WHERE updated_at IS NULL")
+        # created_at lưu ở UTC để sắp xếp theo chuỗi đúng thứ tự thời gian.
+        conn.execute("CREATE INDEX IF NOT EXISTS run_reports_created_at ON run_reports (created_at)")
+        # Nội dung đầy đủ file sinh ra theo (run_id, version), để xem diff sau khi sandbox đã xóa (SPEC §8.2).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS run_files ("
+            " run_id TEXT NOT NULL, version INTEGER NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,"
+            " PRIMARY KEY (run_id, version, path))"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS budget_ledger ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, version INTEGER NOT NULL,"
+            " category TEXT NOT NULL, usd REAL NOT NULL, spent_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS budget_reservations ("
+            " run_id TEXT NOT NULL, version INTEGER NOT NULL, category TEXT NOT NULL, usd REAL NOT NULL,"
+            " reserved_at TEXT NOT NULL, PRIMARY KEY (run_id, version, category))"
+        )
+        # Lượt run mới đã giữ cho chủ (hạn mức số run/ngày, src/run_report/quota.py), ghi trước khi run vào sổ.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS run_slots ("
+            " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL)"
+        )
+        # Delivery webhook GitHub đã xử lý (X-GitHub-Delivery), để gửi lại không áp hai lần. `pending`: sự kiện
+        # liên quan đến chưa có run nào khớp (Deploy chưa lưu pull request), áp lại khi deployment được lưu.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS webhook_deliveries ("
+            " delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, run_id TEXT, received_at TEXT NOT NULL,"
+            " head_sha TEXT, pending TEXT)"
+        )
+        delivery_columns = {row[1] for row in conn.execute("PRAGMA table_info(webhook_deliveries)")}
+        for column in ("head_sha", "pending"):
+            if column not in delivery_columns:
+                conn.execute(f"ALTER TABLE webhook_deliveries ADD COLUMN {column} TEXT")
+
+
+def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
+    key, identity = _database_identity(path)
+    with _SCHEMA_LOCK:
+        if identity is not None and _INITIALIZED_DATABASES.get(key) == identity:
+            return
+        conn.execute("PRAGMA journal_mode = WAL")
+        _initialize_schema(conn)
+        if identity is not None:
+            _INITIALIZED_DATABASES[key] = identity
 
 
 @contextmanager
@@ -26,51 +97,9 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=10)
     try:
+        conn.execute("PRAGMA synchronous = NORMAL")
+        _ensure_schema(conn, path)
         with conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS run_reports ("
-                " run_id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL, report TEXT NOT NULL,"
-                " updated_at TEXT)"
-            )
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(run_reports)")}
-            if "updated_at" not in columns:
-                conn.execute("ALTER TABLE run_reports ADD COLUMN updated_at TEXT")
-            conn.execute("UPDATE run_reports SET updated_at = created_at WHERE updated_at IS NULL")
-            # created_at lưu ở UTC để sắp xếp theo chuỗi đúng thứ tự thời gian.
-            conn.execute("CREATE INDEX IF NOT EXISTS run_reports_created_at ON run_reports (created_at)")
-            # Nội dung đầy đủ file sinh ra theo (run_id, version), để xem diff sau khi sandbox đã xóa (SPEC §8.2).
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS run_files ("
-                " run_id TEXT NOT NULL, version INTEGER NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,"
-                " PRIMARY KEY (run_id, version, path))"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS budget_ledger ("
-                " id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, version INTEGER NOT NULL,"
-                " category TEXT NOT NULL, usd REAL NOT NULL, spent_at TEXT NOT NULL)"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS budget_reservations ("
-                " run_id TEXT NOT NULL, version INTEGER NOT NULL, category TEXT NOT NULL, usd REAL NOT NULL,"
-                " reserved_at TEXT NOT NULL, PRIMARY KEY (run_id, version, category))"
-            )
-            # Lượt run mới đã giữ cho chủ (hạn mức số run/ngày, src/run_report/quota.py), ghi trước khi run vào sổ.
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS run_slots ("
-                " run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL)"
-            )
-            # Delivery webhook GitHub đã xử lý (X-GitHub-Delivery), để gửi lại không áp hai lần. `pending`: sự kiện
-            # liên quan đến chưa có run nào khớp (Deploy chưa lưu pull request), áp lại khi deployment được lưu.
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS webhook_deliveries ("
-                " delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, run_id TEXT, received_at TEXT NOT NULL,"
-                " head_sha TEXT, pending TEXT)"
-            )
-            delivery_columns = {row[1] for row in conn.execute("PRAGMA table_info(webhook_deliveries)")}
-            for column in ("head_sha", "pending"):
-                if column not in delivery_columns:
-                    conn.execute(f"ALTER TABLE webhook_deliveries ADD COLUMN {column} TEXT")
-            conn.commit()  # schema/migration work must finish before callers request BEGIN IMMEDIATE
             yield conn
     finally:
         conn.close()
@@ -390,14 +419,6 @@ def reserve_budget_batch(
             return False, current
         conn.executemany("INSERT OR REPLACE INTO budget_reservations VALUES (?, ?, ?, ?, ?)", pending)
         return True, current
-
-
-def release_budget(path: str, run_id: str, version: int, category: str) -> None:
-    with _database(path) as conn:
-        conn.execute(
-            "DELETE FROM budget_reservations WHERE run_id = ? AND version = ? AND category = ?",
-            (run_id, version, category),
-        )
 
 
 def rollback_batch_start(path: str, run_ids: list[str]) -> None:

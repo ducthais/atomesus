@@ -17,7 +17,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from src.deployer.manifest import MANIFEST_FILE, ManifestError
+from src.deployer.manifest import MANIFEST_FILE, REPORT_FILE, ManifestError, load_json, verify_report
 
 INBOX, DONE, REJECTED = "inbox", "done", "rejected"
 TEMP_PREFIX = ".tmp-"
@@ -50,14 +50,18 @@ def find_bundle(release_dir: str, name: str) -> Path | None:
     return None
 
 
-def _same_manifest(path: Path, expected: str) -> bool:
+def _same_bundle(path: Path, expected_manifest: str, manifest: dict) -> bool:
     try:
-        return (path / MANIFEST_FILE).read_bytes() == expected.encode()
-    except OSError:
+        if (path / MANIFEST_FILE).read_bytes() != expected_manifest.encode():
+            return False
+        report = load_json((path / REPORT_FILE).read_text(encoding="utf-8"), REPORT_FILE)
+        verify_report(manifest, report)
+        return True
+    except (OSError, ManifestError, UnicodeDecodeError):
         return False
 
 
-def write_bundle(release_dir: str, manifest: dict, files: dict[str, str]) -> Path:
+def write_bundle(release_dir: str, manifest: dict, files: dict[str, str], report_text: str) -> Path:
     """Ghi nguyên tử bundle của bộ file đã duyệt (manifest đã dựng bằng build_manifest cho đúng `files`).
 
     Gọi lại với cùng manifest thì trả bundle đã có (ở inbox/, done/ hay rejected/), không ghi lại. Đã có bundle cùng
@@ -65,8 +69,11 @@ def write_bundle(release_dir: str, manifest: dict, files: dict[str, str]) -> Pat
     """
     name = bundle_name(manifest["run_id"], manifest["version"])
     expected = manifest_text(manifest)
+    if not isinstance(report_text, str) or not report_text:
+        raise ManifestError("run_report.json bị thiếu hoặc không hợp lệ.")
+    verify_report(manifest, load_json(report_text, REPORT_FILE))
     if (existing := find_bundle(release_dir, name)) is not None:
-        if _same_manifest(existing, expected):
+        if _same_bundle(existing, expected, manifest):
             return existing
         raise ReleaseError(
             f"Hộp thư release đã có bundle {name} khác bản đã duyệt này (bộ file hoặc chữ ký) nên không ghi đè."
@@ -81,11 +88,12 @@ def write_bundle(release_dir: str, manifest: dict, files: dict[str, str]) -> Pat
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content.encode())
         (temporary / MANIFEST_FILE).write_bytes(expected.encode())
+        (temporary / REPORT_FILE).write_bytes(report_text.encode())
         try:
             os.rename(temporary, inbox / name)
         except OSError:
             # Request Deploy khác vừa ghi cùng bundle: dùng bản đó nếu đúng cùng manifest.
-            if (existing := find_bundle(release_dir, name)) is not None and _same_manifest(existing, expected):
+            if (existing := find_bundle(release_dir, name)) is not None and _same_bundle(existing, expected, manifest):
                 return existing
             raise
     finally:

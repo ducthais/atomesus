@@ -53,7 +53,7 @@ export function RunResultView({ result, summary, request, goldId, deployed }: { 
         <thead><tr>{columns.map(c => <th key={c} className={metricNames.has(c) ? 'metric' : ''}>{c}</th>)}</tr></thead>
         <tbody>{result.sample.map((row, i) => <tr key={i}>{columns.map(c => <td key={c} className={`mono ${metricNames.has(c) ? 'metric' : ''}`}>{row[c] ?? <span className="null">NULL</span>}</td>)}</tr>)}</tbody>
       </table></div> : <p className="muted pad">Run dừng trước bước chạy thử nên chưa có dữ liệu kết quả.</p>}
-      <p className="muted small pad">{deployed ? 'Bảng đầy đủ nằm trong warehouse Dagster (data/warehouse/warehouse.duckdb), cập nhật theo lịch chạy.' : `Đây là dữ liệu chạy thử (sổ bằng chứng lưu tối đa 20 dòng). Bảng đầy đủ có sau khi Reviewer duyệt và pipeline chạy trên Dagster.`}</p>
+      <p className="muted small pad">{deployed ? 'Bảng đầy đủ nằm trong file DuckDB riêng của pipeline này trên Dagster (data/warehouse/<model>.duckdb), cập nhật theo lịch chạy.' : `Đây là dữ liệu chạy thử (sổ bằng chứng lưu tối đa 20 dòng). Bảng đầy đủ có sau khi Reviewer duyệt và pipeline chạy trên Dagster.`}</p>
     </section>
   </div>;
 }

@@ -227,7 +227,7 @@ def test_run_slots_are_atomic_and_admin_is_not_limited(tmp_path):
 
 
 @pytest.fixture
-def quota_env(client, tmp_path, monkeypatch):
+def quota_env(client, tmp_path, monkeypatch, sales_visible):
     """Engineer minh đã dùng hết 1 lượt run trong ngày; mọi đường tạo run không được chạy agent."""
     config = _settings(tmp_path)
     policy = _with_per_user(load_policy(), max_runs_per_day=1)

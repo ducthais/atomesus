@@ -5,5 +5,5 @@
   "request": "Số khách hàng mới theo ngày",
   "sources": null,
   "expected": { "status": "BLOCKED_SEMANTIC_CONFLICT" },
-  "note": "\"khách hàng\" là thực thể không chuẩn ở cả sales (tài khoản đã ký hợp đồng), marketing (người để lại email) và rental: agent phải chặn, không tự chọn một nghĩa"
+  "note": "\"khách hàng\" là thực thể không chuẩn ở marketing (người để lại email) và rental (khách có tài khoản thuê DVD); sales cũng có nhưng là domain ẩn nên lần quét mới bỏ qua: agent phải chặn, không tự chọn một nghĩa"
 }

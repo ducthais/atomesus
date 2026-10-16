@@ -141,10 +141,6 @@ def run_visible(user: dict, store_path: str, run_id: str) -> bool:
     return access.owners is None or access.allows(run_owner(store_path, run_id))
 
 
-def can_view_run(user: dict, report: RunReport, store_path: str) -> bool:
-    return run_visible(user, store_path, report.run_id)
-
-
 def visible_run_ids(user: dict, store_path: str) -> set[str] | None:
     """run_id mà `user` thấy; None = mọi run (Admin). Đọc metadata một lần cho cả danh sách."""
     access = scope(user, store_path)

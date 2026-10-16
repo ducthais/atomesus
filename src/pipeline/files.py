@@ -16,7 +16,6 @@ from src.pipeline.postgres import SourceUnavailableError
 from src.policy.models import SourceDecl
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SAMPLE_LIMIT = 1000  # số dòng đầu đọc để lấy danh sách cột (SPEC §12.1)
 
 
 class FilesUnavailableError(SourceUnavailableError):

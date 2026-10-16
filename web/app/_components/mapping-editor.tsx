@@ -2,12 +2,39 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { CircleAlert, LoaderCircle, Play, Plus } from 'lucide-react';
-import { COLUMN_TYPES, type AgentSpec, type TimeUnit } from '@/lib/postgres-api';
+import { COLUMN_TYPES, DATE_FORMATS, type AgentSpec, type TimeUnit } from '@/lib/postgres-api';
 import { PERIOD_LABEL } from '@/lib/catalog/explain';
 import { applyMapping, mappingErrors, suggestColumn, type SourceMapping } from '@/lib/catalog/mapping';
 import { continueRun, type ActionState } from '../actions';
 
 type SourceColumns = Record<string, { table: string; sourceRef: string; columns: { name: string; type: string }[] }>;
+
+const DATE_FORMAT_LABELS: Record<string, string> = {
+  '%Y-%m-%d': 'Năm-tháng-ngày',
+  '%d/%m/%Y': 'Ngày/tháng/năm',
+  '%Y/%m/%d': 'Năm/tháng/ngày',
+  '%d-%m-%Y': 'Ngày-tháng-năm',
+  '%Y-%m-%d %H:%M:%S': 'Ngày và giờ',
+};
+
+function DateFormatPicker({ formats, disabled, label, onChange }: {
+  formats: string[]; disabled: boolean; label: string; onChange: (formats: string[]) => void;
+}) {
+  const available = DATE_FORMATS.filter(format => !formats.includes(format));
+  return <div className="date-format-picker">
+    <select value="" disabled={disabled || available.length === 0} aria-label={label}
+      onChange={event => event.target.value && onChange([...formats, event.target.value])}>
+      <option value="">{formats.length ? 'Thêm định dạng…' : 'Chọn định dạng…'}</option>
+      {available.map(format => <option key={format} value={format}>{DATE_FORMAT_LABELS[format]} · {format}</option>)}
+    </select>
+    {formats.length > 0 && <div className="date-format-list">
+      {formats.map(format => <button key={format} type="button" className="date-format-chip" disabled={disabled}
+        onClick={() => onChange(formats.filter(item => item !== format))} aria-label={`Bỏ định dạng ${format}`}>
+        <span>{DATE_FORMAT_LABELS[format] ?? 'Định dạng tùy chỉnh'}</span><code>{format}</code><span aria-hidden>×</span>
+      </button>)}
+    </div>}
+  </div>;
+}
 
 /**
  * Bản nháp: Engineer xem và sửa mapping cột (tên, kiểu, định dạng ngày, thêm / bỏ cột) và luật loại dòng
@@ -58,8 +85,8 @@ export function MappingEditor({ runId, spec, sourceColumns, canEdit }: { runId: 
               {[...new Set([c.type, ...COLUMN_TYPES])].map(t => <option key={t}>{t}</option>)}</select></td>
             {/* Định dạng ngày chỉ cần khi nguồn là chuỗi; cột nguồn đã là date / timestamp thì ép kiểu trực tiếp. */}
             <td>{['date', 'timestamp'].includes(c.type) && (c.date_formats?.length || !/^(date|timestamp)/.test(sourceType(c.from)))
-              ? <input value={(c.date_formats ?? []).join(', ')} placeholder="%Y-%m-%d, %d/%m/%Y" disabled={!canEdit || !c.keep}
-                  onChange={e => setColumn(src.id, c.from, { date_formats: e.target.value.split(',').map(v => v.trim()).filter(Boolean) })} aria-label={`Định dạng ngày của ${c.from}`} />
+              ? <DateFormatPicker formats={c.date_formats ?? []} disabled={!canEdit || !c.keep}
+                  onChange={date_formats => setColumn(src.id, c.from, { date_formats })} label={`Định dạng ngày của ${c.from}`} />
               : <span className="muted">—</span>}</td>
           </tr>)}</tbody>
         </table></div>
