@@ -63,6 +63,7 @@ def system_launch(env):
 
 
 def test_slow_pipeline_gets_one_fix_run_per_cooldown(env):
+    assert env.policy.domains.domains["sales"].hidden is True
     now = record(env, [16.0] * 7, [100 + i for i in range(7)])  # trung vị +60% so với cơ sở 10 giây
 
     first = day2.check(env.settings, env.policy, system_launch(env), now=now)

@@ -188,6 +188,7 @@ async def test_reconcile_deployed_endpoint(client, tmp_path, monkeypatch):
 
     def fake_reconcile(spec, gold, policy, settings):
         seen["gold"] = gold
+        seen["sales_hidden"] = policy.domains.domains["sales"].hidden
         return False, {"mismatch_count": 1}
 
     monkeypatch.setattr(reference, "reconcile", fake_reconcile)
@@ -199,6 +200,7 @@ async def test_reconcile_deployed_endpoint(client, tmp_path, monkeypatch):
         body = (await client.post("/api/v1/catalog/datasets/sales/fct_daily_sales/reconcile")).json()
         assert body["available"] is True and body["matched"] is False and body["run_id"] == "dep"
         assert seen["gold"] == [{"ordered_at": date(2026, 1, 1), "revenue": Decimal("1000.00")}]
+        assert seen["sales_hidden"] is True
         missing = await client.post("/api/v1/catalog/datasets/sales/fct_khac/reconcile")
         assert missing.status_code == 404
     finally:
