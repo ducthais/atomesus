@@ -31,7 +31,7 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
       <p>Mỗi run là một lần agent lập kế hoạch, sinh code và chạy thử để tạo hoặc cập nhật dataset. Đọc từ sổ bằng chứng.</p>
     </PageHeader>
     <div className="budget"><span>Chi phí warehouse hôm nay</span><strong className="mono">${spent.toFixed(4)} / ${policy.limits.max_usd_per_day.toFixed(2)}</strong>
-      <div className="meter" role="meter" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label="Đã dùng so với trần ngày"><span style={{ width: `${Math.max(pct, 1)}%` }} /></div><small className="muted">Trần per_day.max_usd trong budgets.yml</small></div>
+      <div className="meter" role="meter" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label="Đã dùng so với trần ngày"><span style={{ width: `${Math.max(pct, 1)}%` }} /></div><small className="muted">Trần chi phí mỗi ngày theo giới hạn của hệ thống</small></div>
     <DriftPanel drift={drift} goldIds={goldIds} />
     <nav className="segmented" aria-label="Lọc theo trạng thái">{FILTERS.map(f => <Link key={f.id} href={f.id === 'all' ? '/runs' : `/runs?status=${f.id}`} aria-current={f === filter ? 'page' : undefined} scroll={false}>{f.label}<span className="count">{runs.filter(f.test).length}</span></Link>)}</nav>
     {shown.length ? <section className="panel flush"><div className="table-scroll"><table>

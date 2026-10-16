@@ -10,7 +10,7 @@ const EXAMPLES = [
   { label: 'Doanh thu khách hàng', request: 'Tổng doanh thu và số đơn hàng của từng khách hàng, kèm tên khách hàng' },
   { label: 'Nguồn chưa hỗ trợ', request: 'Ghép đơn hàng Postgres với thanh toán từ REST API, tính doanh thu theo ngày' },
 ];
-const STEPS = ['Kết nối nguồn, liệt kê bảng đang có', 'Lập kế hoạch chỉ trên các bảng bạn chọn', 'Đọc schema + 20 dòng mẫu, viết Spec', 'Kiểm tra Spec; sai thì tự sửa (trần trong budgets.yml)', 'Sinh dlt, dbt, Dagster từ template', 'Chạy dlt → dbt trong sandbox, đối soát'];
+const STEPS = ['Kết nối nguồn, liệt kê bảng đang có', 'Lập kế hoạch chỉ trên các bảng bạn chọn', 'Đọc schema + 20 dòng mẫu, viết Spec', 'Kiểm tra Spec; sai thì tự sửa (theo giới hạn của hệ thống)', 'Sinh dlt, dbt, Dagster từ template', 'Chạy dlt → dbt trong sandbox, đối soát'];
 
 export default async function NewRequestPage({ searchParams }: { searchParams: Promise<{ dataset?: string; request?: string; parent?: string; tables?: string }> }) {
   const { dataset: datasetId, request, parent: parentId, tables } = await searchParams;

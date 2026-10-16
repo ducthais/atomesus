@@ -68,7 +68,7 @@ export default async function DatasetPage({ params, searchParams }: { params: Pr
       </>}>
       <p>{dataset.description}</p>
     </PageHeader>
-    {dataset.unavailable && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>{dataset.unavailable} Dataset vẫn có trong catalog vì được khai báo trong <Link href="/policy">domains.yml</Link>.</span></div>}
+    {dataset.unavailable && <div className="callout warn"><CircleAlert size={16} aria-hidden /><span>{dataset.unavailable} Dataset vẫn có trong catalog vì được khai báo trong danh mục nguồn dữ liệu của hệ thống.</span></div>}
 
     {drifted.map(p => <div key={p.runId} className={`callout ${p.status === 'breaking' ? 'bad' : 'warn'}`} role="alert"><CircleAlert size={16} aria-hidden />
       <div><strong>Schema nguồn đổi · pipeline gold.{p.model}</strong> <DriftBadge status={p.status} /><ul className="drift-lines">{driftLines(p).map(l => <li key={l}>{l}</li>)}</ul>

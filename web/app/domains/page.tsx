@@ -8,7 +8,7 @@ export default async function DomainsPage() {
   const cat = await getCatalog();
   return <>
     <PageHeader kicker="Data Catalog" title="Domain" icon={<Network size={22} />}>
-      <p>Mỗi domain có một steward, danh sách nguồn được phép đọc và các thực thể nghiệp vụ. Khai báo trong <Link href="/policy">policy/domains.yml</Link>.</p>
+      <p>Mỗi domain có một steward, danh sách nguồn được phép đọc và các thực thể nghiệp vụ. Khai báo trong danh mục nguồn dữ liệu của hệ thống.</p>
     </PageHeader>
     <div className="card-grid">{cat.domains.map(domain => {
       const datasets = cat.domainDatasets(domain.id);

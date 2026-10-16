@@ -152,7 +152,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <div><span>Gọi LLM</span><strong className="mono">${run.llmUsd.toFixed(4)}</strong><small className="muted">{run.llmTokens.toLocaleString('vi-VN')} token{run.llmUnpriced ? ` · ${run.llmUnpriced} lần chưa có giá` : ''}</small></div>
             <div><span>Quét dữ liệu</span><strong className="mono">${run.usd.toFixed(6)}</strong><small className="muted">ước tính</small></div>
           </div>
-          <p className="muted small">Trần đọc từ budgets.yml.</p>
+          <p className="muted small">Trần theo giới hạn của hệ thống.</p>
         </Panel>
       </div>
     </div>}
