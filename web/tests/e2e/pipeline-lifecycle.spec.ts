@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 async function login(page: Page, username: 'engineer' | 'reviewer', password: string) {
   await page.goto('/explore'); // `/` là landing công khai; trang cần đăng nhập hiện màn đăng nhập rồi quay lại đúng trang
   await page.getByLabel('Tên đăng nhập').fill(username);
-  await page.getByLabel('Mật khẩu').fill(password);
+  await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Đăng nhập' }).click();
   await expect(page.getByRole('heading', { name: 'Khám phá dữ liệu' })).toBeVisible();
 }

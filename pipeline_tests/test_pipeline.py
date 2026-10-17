@@ -128,6 +128,9 @@ def client(tmp_path, monkeypatch):
     config = PipelineSettings(_env_file=None, store_path=str(tmp_path / "runs.sqlite3"))
     app.dependency_overrides[auth.settings] = lambda: config
     monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="test"))
+    # Domain sales đã ẩn nên API làm sạch từ chối run mới (422); hành vi đó có test riêng ở
+    # tests/test_api/test_hidden_domains.py. Ở đây kiểm cơ chế làm sạch trên DuckDB thật nên bỏ chặn.
+    monkeypatch.setattr(api, "_require_new_domain", lambda: None)
     monkeypatch.setattr(
         postgres, "source_schema", lambda settings: [{"name": column["from"], "type": "text"} for column in COLUMNS]
     )
@@ -222,11 +225,10 @@ def test_expired_session_and_production_login(client, monkeypatch):
     with store.database(config.store_path) as conn:
         conn.execute("UPDATE sessions SET expires = 0")
     assert browser.get("/api/v1/runs").status_code == 401
-    monkeypatch.setattr(auth, "get_settings", lambda: SimpleNamespace(app_env="production"))
-    assert (
-        browser.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"}).status_code
-        == 403
-    )
+    # Production không cho dùng mật khẩu mặc định công khai của tài khoản cài sẵn (503, nêu biến cần đặt).
+    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(app_env="production"))
+    blocked = browser.post("/api/v1/pipeline/session", json={"username": "engineer", "password": "Engineer@123"})
+    assert blocked.status_code == 503 and "PIPELINE_ENGINEER_PASSWORD" in blocked.json()["detail"]
 
 
 def test_login_rejects_invalid_credentials(client):
