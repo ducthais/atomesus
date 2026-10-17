@@ -329,6 +329,13 @@ def run_case(case: dict, store: str) -> dict:
         if not scored and last:
             problems.append(str(last.get("error", ""))[:300])
         mapping = scored and {"key": scored["key"], "measures": scored["measures"]}
+    elif case["group"] == "optimize" and (report.status != "READY_FOR_REVIEW" or not report.spec):
+        # Pipeline gốc không tới bước duyệt thì không có gì để tối ưu: ca không đạt, không chạy UC-3.
+        matched = False
+        problems = [f"pipeline gốc dừng ở {report.status} ({report.stage_reached}), không chạy UC-3"]
+        if last:
+            problems.append(str(last.get("error", ""))[:300])
+        mapping = {"p13": _view(report)["optimizer"], "uc3": None}
     elif case["group"] == "optimize":
         uc3 = _run_manual_optimize(report, case, deps, store)
         scored = score_optimize(case, _view(report), _view(uc3), uc3_policy_gain(deps, case))
