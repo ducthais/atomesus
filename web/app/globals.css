@@ -432,10 +432,8 @@ a.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
 .login-trust-list small { color: var(--login-muted); font-size: 12px; }
 .login-preview { max-width: 590px; display: grid; gap: 13px; padding: 18px 20px; border: 1px solid var(--login-border); border-radius: 16px; background: rgb(255 255 255 / 72%); box-shadow: 0 8px 32px rgb(23 23 23 / 5%); backdrop-filter: blur(12px); }
 .login-preview > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.login-preview span, .login-preview b, .login-preview p, .login-preview small { font-family: var(--mono); font-size: 9px; letter-spacing: .16em; }
+.login-preview span, .login-preview p, .login-preview small { font-family: var(--mono); font-size: 9px; letter-spacing: .16em; }
 .login-preview span { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
-.login-preview b { display: inline-flex; align-items: center; gap: 7px; color: #059669; }
-.login-preview b i { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 4px rgb(16 185 129 / 12%); }
 .login-preview p { padding-top: 12px; border-top: 1px solid #f1f5f9; color: #475569; }
 .login-preview small { color: #94a3b8; }
 .login-panel { min-width: 0; display: grid; gap: 14px; }
@@ -837,10 +835,10 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
   gap: 18px;
   align-items: stretch;
 }
-.source-import-grid > section[aria-label='Tải file nguồn lên'],
-.source-import-grid > section[aria-label='Tải file nguồn lên'] > .detail-grid { display: contents; }
-.source-import-grid > section[aria-label='Tải file nguồn lên'] > .detail-grid > .panel:first-child { grid-area: upload; }
-.source-import-grid > section[aria-label='Tải file nguồn lên'] > .detail-grid > .panel:last-child { grid-area: uploaded; }
+.source-import-grid > .upload-panel,
+.source-import-grid > .upload-panel > .detail-grid { display: contents; }
+.source-import-grid .upload-pick { grid-area: upload; }
+.source-import-grid .upload-list { grid-area: uploaded; }
 .source-import-create { grid-area: create; min-width: 0; }
 .source-import-saved { grid-area: saved; min-width: 0; }
 .source-import-grid .panel { height: 100%; margin: 0; }
@@ -973,7 +971,6 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 .shell .sidebar-foot { margin-top: auto; padding: 17px 10px 0; }
 .shell .sidebar-foot p { font-size: 10px; line-height: 1.5; }
 .shell .live-tag, .shell .mock-tag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; font: 600 9px/1.5 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
-.shell .live-tag i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px var(--good-soft); }
 
 .shell .topbar {
   min-height: 72px;
