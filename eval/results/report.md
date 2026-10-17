@@ -1,136 +1,154 @@
 # Evaluation Report
 
 > Báo cáo đánh giá chất lượng sản phẩm theo tiêu chí BTC và SPEC §18. Mọi số đều kèm mẫu số; không làm tròn thành phần
-> trăm khi mẫu số nhỏ (SPEC §18.3).
+> trăm khi mẫu số nhỏ (SPEC §18.3). Chiến lược kiểm thử đầy đủ: [docs/testing.md](../../docs/testing.md).
 
-- Bản demo: **https://c4-app-045.id.vn** (deploy trên Azure)
-- Nhánh / commit đo: `refactor/project-restructure` @ `ceb0666` cộng các thay đổi của lượt này
-- Ngày đo: 2026-10-10
+- Bản demo: **https://c4-app-045.id.vn** (Azure VM B2s)
+- Commit đo: `main` sau `75a368b`, cộng hai bản sửa của đợt này (mục 2.2), cùng commit với báo cáo này
+- Ngày đo: 2026-10-17 → 2026-10-18 (giờ UTC trong bảng)
+- Lượt benchmark chính thức: lượt 5, 19:37 UTC 17/10 — bảng từng ca ở [`latest.md`](latest.md), số liệu thô [`latest.json`](latest.json)
 
 ---
 
 ## 1. Metrics
 
-Số liệu của lượt chấm cuối (09:37 UTC, sau ba bản sửa ở mục 2.1). Lượt đầu cùng ngày, trước khi sửa, đạt 10/15.
-
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| Response accuracy: khớp golden output (ca hợp lệ) | >80% | **6/6** ca | ✅ |
+| Response accuracy: khớp golden output (ca hợp lệ) | >80% | **6/7** ca | ✅ |
 | Response accuracy: chặn đúng ca vi phạm chính sách | >80% | **6/6** ca | ✅ |
 | Response accuracy: hỏi lại khi yêu cầu mơ hồ | >80% | **3/3** ca | ✅ |
-| Response accuracy: tổng 15 ca | >80% | **15/15** ca (lượt cuối); 14/15 ở ba lượt trước đó, xem mục 2.1 | ✅ |
-| Response latency | <3s | Không áp dụng cho run: một run sinh pipeline mất 22–35 giây (LLM + dlt + dbt); chặn chính sách hoặc hỏi lại mất 0,2–9 giây | — |
-| User satisfaction | >4/5 | Chưa thu (xem mục 3) | ⏳ |
-| Test coverage (`src/`) | >60% | **89%** (5.252 dòng, 575 dòng chưa chạy tới) | ✅ |
+| Optimizer đúng hành vi (P13 + UC-3) | >80% | **4/4** ca | ✅ |
+| Response accuracy: tổng 20 ca | >80% | **19/20** ca (lượt chính thức); 19/20 ở lượt 3 với seed cũ | ✅ |
+| Cải thiện thời gian so với bản gốc (ca 3 triệu dòng) | giữ bản nhanh hơn ≥ 10%, gold giống hệt | **nhanh hơn 34,2%** (P13), **32,1%** (UC-3) | ✅ |
+| Chi phí LLM mỗi lượt 20 ca | — | **$0,0235** (~0,1 cent mỗi run) | — |
+| Response latency | <3s | Không áp dụng cho run sinh pipeline: một run hợp lệ mất 20–66 giây (LLM + dlt + dbt + đối chiếu + optimizer); chặn chính sách hoặc hỏi lại mất 0,9–12 giây | — |
+| Test backend | xanh | **1.629 passed, 2 skipped** | ✅ |
+| Test coverage (`src/`) | >60% | **93%** (9.277 câu lệnh, 637 câu chưa chạy tới) | ✅ |
+| Test web | xanh | **104/104** unit, **4/4** E2E Playwright | ✅ |
+| Test tích hợp Postgres thật | xanh | **28/28** | ✅ |
+| User satisfaction | >4/5 | Chưa thu (mục 3) | ⏳ |
 
 ## 2. Test Results
 
-### 2.1. Đánh giá 15 ca (SPEC §18.2)
+### 2.1. Benchmark 20 ca (`python eval/run_eval.py`)
 
-Chạy `python eval/run_eval.py` bằng LLM thật (OpenAI) và nguồn thật (Postgres, mock REST API, file CSV). Bảng đầy đủ
-từng ca của lượt cuối: [`latest.md`](latest.md); số liệu thô: [`latest.json`](latest.json).
+Agent thật (OpenAI, `temperature=0`) trên nguồn thật: Postgres `sales_raw` (seed bẩn có chủ đích) và `pagila`, mock
+REST API, thư mục CSV, bộ sự kiện 3 triệu dòng sinh lúc chạy. Mỗi ca: lập kế hoạch → tự xác nhận (P2) → viết Spec → chạy
+thử trong sandbox → chấm.
 
-| Nhóm | Số ca | Đạt khi | Lượt cuối |
+| Nhóm | Số ca | Đạt khi | Lượt chính thức |
 |---|---|---|---|
-| Hợp lệ | 6 | tới READY_FOR_REVIEW và bảng gold khớp golden từng dòng | **6/6** (postgres 1/1, rest_api 1/1, filesystem 1/1, đa nguồn 3/3) |
-| Vi phạm | 6 | dừng đúng mã `BLOCKED_*` | **6/6** (semantic 2/2, budget 2/2, ast_guard 2/2) |
-| Mơ hồ | 3 | dừng NEEDS_HUMAN ở bước lập kế hoạch kèm câu hỏi | **3/3** |
+| Hợp lệ | 7 | tới `READY_FOR_REVIEW` và bảng gold khớp golden từng dòng (sai số ≤ 0,01%) | **6/7** (filesystem 1/1, postgres 1/1, rest_api 1/1, đa nguồn 3/4) |
+| Vi phạm | 6 | dừng đúng mã `BLOCKED_*` | **6/6** (ast_guard 2/2, budget 2/2, semantic 2/2) |
+| Mơ hồ | 3 | dừng `NEEDS_HUMAN` ở bước lập kế hoạch kèm câu hỏi | **3/3** |
+| Optimizer | 4 | P13 và UC-3 đo khi luật áp, bỏ kèm lý do khi không; UC-3 `llm_calls = 0`; chỉ giữ bản vừa đúng vừa nhanh hơn | **4/4** |
 
-- Chạy được ngay lần viết Spec đầu: 6/6 ca hợp lệ (0 lần tự sửa Spec).
-- Tiền LLM cả lượt 15 ca: $0,0155; tổng thời gian 236,1 giây.
-- Ca `budget`: dữ liệu seed không có bảng đủ lớn để vượt trần thật (5 GB / 0,05 USD mỗi run), nên một ca hạ
-  `per_run.max_bytes_scanned` xuống 1.000 byte, ca kia đặt chi phí đã dùng trong ngày bằng trần `per_day.max_usd`. Cả
-  hai chỉ áp cho riêng ca đó (khai báo trong `eval/cases/*.json`).
+- Chạy được ngay lần viết Spec đầu: 6/7 ca hợp lệ; tự sửa Spec trung bình 0,43 lần mỗi ca.
+- Tiền LLM cả lượt: $0,0235; tổng thời gian 1.594,6 giây (ca 3 triệu dòng chiếm 969 giây).
+- Ca `budget`: dữ liệu seed không đủ lớn để vượt trần thật (5 GB / 0,05 USD mỗi run), nên một ca hạ
+  `per_run.max_bytes_scanned` xuống 1.000 byte, ca kia đặt chi phí đã dùng trong ngày bằng trần `per_day.max_usd`; chỉ áp
+  cho riêng ca đó (khai báo trong `eval/cases/*.json`).
 
-**Năm lượt chấm trong ngày và các bản sửa**
+**Ca không đạt ở lượt chính thức:** `valid_postgres_rest_api_reviews_by_customer` (`pagila_pg` + `review_api`: số lượt
+thuê, số phản hồi, điểm trung bình mỗi khách). Cổng `join_fanout` phát hiện đúng `AVG(feedback.rating)` bị nhân dòng khi
+ghép `customer → rental → feedback`, nhưng LLM không viết lại thành gộp trước bảng phản hồi trong 2 vòng sửa
+(`max_spec_attempts`). Ca này trượt ở cả 5 lượt hôm nay: 3 lượt dừng ở cổng; 2 lượt qua cổng nhưng lệch golden (một lượt
+dùng INNER JOIN làm mất lượt thuê không có phản hồi, một lượt gold thiếu 1 khách) — là điểm yếu ổn định của agent, xem mục 5.
 
-| Lượt (UTC) | Thay đổi trước lượt | Hợp lệ | Vi phạm | Mơ hồ | Tổng |
-|---|---|---|---|---|---|
-| 1 · 08:33 | (code ban đầu) | 3/6 | 6/6 | 1/3 | 10/15 |
-| 2 | Sửa định dạng ngày; prompt planner hỏi lại khi không nêu chỉ số / so với dữ liệu không có | 6/6 | 5/6 | 3/3 | 14/15 |
-| 3 · 09:23 | Xung đột thực thể được chặn trước câu hỏi làm rõ | 6/6 | 6/6 | 2/3 | 14/15 |
-| 4 · 09:30 | Kế hoạch không có khái niệm nào nằm trong yêu cầu thì hỏi lại (tất định) | 5/6 | 6/6 | 3/3 | 14/15 |
-| 5 · 09:37 | Cổng `ast_guard` không chặn nhầm `CAST(x AS decimal(18,2))` | **6/6** | **6/6** | **3/3** | **15/15** |
+### 2.2. Năm lượt chạy và hai lỗi được sửa
 
-Các ca trượt ở lượt 2–4 đến từ việc LLM trả lời khác nhau giữa các lần gọi, mỗi lần làm lộ một chỗ code chưa chặt; mỗi
-chỗ được sửa tất định (có test) thay vì sửa prompt cho riêng ca đó. Các bản sửa:
+| Lượt (UTC) | Trạng thái code / dữ liệu | Hợp lệ | Vi phạm | Mơ hồ | Optimizer | Tổng |
+|---|---|---|---|---|---|---|
+| 1 · 16:51 | code `main`; Postgres máy dev còn seed sạch cũ | — | — | — | — | dừng ở ca cuối: bộ chấm lỗi khi pipeline gốc không tới bước duyệt |
+| 2 · 17:49 | + sửa bộ chấm | 5/7 | 4/6 | 3/3 | 3/4 | 15/20 |
+| 3 · 18:28 | + **sửa planner** (khái niệm thời gian) | 6/7 | 6/6 | 3/3 | 4/4 | 19/20 |
+| 4 · 19:05 | nạp lại seed bẩn hiện tại của repo | 2/7 | 6/6 | 3/3 | 2/4 | 13/20 |
+| 5 · 19:37 | + **sửa định dạng ngày `%Y/%m/%d`** | **6/7** | **6/6** | **3/3** | **4/4** | **19/20** |
 
-| Lỗi | Nguyên nhân | Cách sửa |
+| Lỗi | Nguyên nhân | Cách sửa (có test) |
 |---|---|---|
-| 3 ca có nguồn file hỏng (lượt 1) | Cột `refunded_at` trộn `2026-01-05` với `21/01/2026`. Profile dòng mẫu chỉ ghi định dạng khớp **mọi** giá trị nên trả `[]`; LLM chép `[]` (Spec bị từ chối) hoặc chỉ chọn một định dạng (46% dòng bị tách) | `codegen.covering_formats`: chọn ít định dạng nhất phủ mọi giá trị mẫu (ngày trước tháng khi hòa); `_fix_date_formats` bổ sung định dạng LLM còn thiếu, `[]` → đủ định dạng |
-| 2 ca mơ hồ bị đoán (lượt 1) | Prompt planner dặn "đừng hỏi khi có thể chọn mặc định"; LLM tự chọn doanh thu cho "báo cáo về bán hàng", bỏ qua "chỉ tiêu" | Prompt: chỉ mặc định phần kỹ thuật, không tự chọn chỉ số; thứ đem ra so sánh là một khái niệm. Thêm luật tất định: không khái niệm nào của kế hoạch có trong câu yêu cầu → hỏi lại |
-| 1 ca semantic thành câu hỏi (lượt 2) | Planner hỏi lại nên cổng semantic (chạy sau) không được chạy | Khi planner định hỏi, quét thực thể trước; xung đột giữa domain thắng câu hỏi (người dùng trả lời không gỡ được xung đột định nghĩa) |
-| 1 ca hợp lệ bị chặn AST (lượt 4) | Cổng coi `decimal(` trong `CAST(... AS decimal(18,2))` là lời gọi hàm không được phép | Bỏ qua tham số kiểu chỉ gồm chữ số đứng ngay sau `AS`; biến thể khác (`decimal(...)` không có AS, tham số không phải số) vẫn bị chặn, có test |
+| Bộ chấm dừng giữa lượt (lượt 1) | Ca optimizer chạy UC-3 trên run không có Spec khi pipeline gốc dừng sớm | `eval/run_eval.py`: pipeline gốc không tới `READY_FOR_REVIEW` thì chấm không đạt kèm lý do, không chạy UC-3 |
+| 2 ca AST + 1 ca optimizer hỏi lại yêu cầu rõ (lượt 1–2) | Planner có luật: khái niệm không gắn cột thì hỏi lại. Bảng `orders` lưu ngày dạng chuỗi; LLM đặt đúng `grain = ordered_at_text` nhưng ghi khái niệm "theo ngày" là không có cột | `planner._grain_covers_time`: khái niệm kỳ thời gian ("theo ngày", "từng tháng") được coi là có cột khi grain gộp theo một cột ngày giờ có thật; khái niệm khác (biên lợi nhuận, chỉ tiêu) vẫn phải hỏi. 3 test mới |
+| **Hồi quy sản phẩm:** mọi pipeline trên `sales_raw.orders` dừng `NEEDS_HUMAN` (lượt 4) | Từ khi LLM không còn được xem giá trị nguồn (chỉ xem profile cột), định dạng ngày trong Spec chỉ lấy từ `DATE_FORMATS`, mà danh sách này thiếu `%Y/%m/%d`; 4/30 đơn ghi `2026/01/05` bị tách ở staging (13% > trần 1%) | Thêm `%Y/%m/%d` vào `DATE_FORMATS` (`src/agents/nodes/codegen.py`); test profile gửi LLM và bước tự bổ sung định dạng. Ảnh hưởng cả file / Postgres của người dùng có ngày kiểu này — **cần deploy** |
 
-### 2.2. Cổng ngân sách với số đo thật trên Azure (thay `dry_run` của BigQuery)
+Lượt 2–3 chạy trên Postgres máy dev còn seed sạch từ trước ngày 06/10 nên không lộ lỗi định dạng ngày; từ lượt 4 dùng
+đúng seed của repo (`infra/postgres/init/001_seed.sql`). Bài học: benchmark phải chạy trên đúng dữ liệu của repo — đã
+ghi vào mục cách chạy ở `docs/testing.md`.
 
-Nhóm deploy trên Azure nên không dùng BigQuery. Azure không có `dry_run`; Synapse serverless SQL tính tiền theo dữ liệu
-đọc từ Storage (5 USD / TB, `policy/budgets.yml: pricing.usd_per_tb`), và Parquet được đọc theo cột. Cổng budget
-(`src/agents/azure_storage.py`) lấy kích thước nén của đúng các cột pipeline đọc từ **footer** của từng file Parquet
-trên Blob Storage, không tải dữ liệu.
+### 2.3. Optimizer: trước → sau (lượt chính thức)
 
-Kiểm chứng trên Azurite (giả lập Blob Storage chính thức của Microsoft, chạy bằng docker) sau khi chép 30 bảng nguồn
-bằng `scripts/azure_mirror.py`:
+Giây là trung vị thời gian chạy lại model gold (5 lần) của bản gốc và bản ứng viên. Chỉ giữ bản có gold giống hệt, nhanh
+hơn ít nhất 10% (`budgets.yml optimizer.min_gain_pct`) và các lần đo của bản ứng viên (bỏ một lần chậm nhất) đều nhanh
+hơn mọi lần của bản gốc.
+
+| Ca | Lượt | Luật | Trước (giây) | Sau (giây) | Nhanh hơn | Giữ / bỏ |
+|---|---|---|---|---|---|---|
+| `optimize_large_events_by_day` (3 triệu dòng) | P13 | `missing_partition_filter` | 0,2476 | 0,1629 | **34,2%** | **giữ** |
+| `optimize_large_events_by_day` (3 triệu dòng) | UC-3 | `table_to_incremental` | 0,2409 | 0,1636 | **32,1%** | **giữ** |
+| `optimize_incremental_tried_on_real_dbt` (30 dòng) | P13 | `missing_partition_filter` | 0,1406 | 0,1477 | chậm hơn 5,0% | bỏ |
+| `optimize_incremental_tried_on_real_dbt` (30 dòng) | UC-3 | `table_to_incremental` | 0,1319 | 0,1479 | chậm hơn 12,1% | bỏ |
+| `optimize_pagila_rentals_by_day` (16.044 dòng) | P13 | `missing_partition_filter` | 0,1168 | 0,1511 | chậm hơn 29,4% | bỏ |
+| `optimize_pagila_rentals_by_day` (16.044 dòng) | UC-3 | `missing_partition_filter` | 0,1428 | 0,1474 | chậm hơn 3,2% | bỏ |
+| `optimize_small_table_skipped` (30 dòng) | P13 | `missing_partition_filter` | 0,1368 | 0,1457 | chậm hơn 6,5% | bỏ |
+| `optimize_small_table_skipped` (30 dòng) | UC-3 | `table_to_incremental` | — | — | — | không thử: 30 dòng dưới ngưỡng 10.000 |
+
+- Trên bảng nhỏ, bản incremental **không** nhanh hơn (overhead dbt lớn hơn phần tiết kiệm) và bị bỏ — đúng hành vi.
+- Ca 3 triệu dòng giữ bản tối ưu ở cả P13 và UC-3 trong cả 4 lượt chấm xong (2–5); mức cải thiện 23,0–43,2% tùy lượt (máy dev).
+- Mọi run UC-3 có `llm_calls = 0`.
+- Lượt 2 có một lần UC-3 giữ `table_to_incremental` trên bảng 30 dòng (nhanh hơn 27,9%); các lượt sau đo cùng ca chậm hơn
+  và bỏ. Luật chống nhiễu hiện tại vẫn có thể giữ nhầm khi máy đang nhàn rỗi — ghi ở mục 5.
+
+### 2.4. Cổng ngân sách với số đo thật trên Azure (thay `dry_run` của BigQuery)
+
+Nhóm deploy trên Azure nên không dùng BigQuery. Synapse serverless SQL tính tiền theo dữ liệu đọc từ Storage (5 USD/TB,
+`policy/budgets.yml: pricing.usd_per_tb`), Parquet đọc theo cột. Cổng budget (`src/agents/azure_storage.py`) lấy kích
+thước nén của đúng các cột pipeline đọc từ **footer** của từng file Parquet trên Blob Storage, không tải dữ liệu.
 
 | Bảng (số cột Spec đọc) | Ước tính cũ (`pg_relation_size`) | Đo từ metadata Parquet | Byte thực sự tải về |
 |---|---|---|---|
 | `sales_raw.orders` (5 cột) | 8.192 byte | 629 byte | 575 byte (footer) |
 | `pagila.rental` (4 cột) | 2.457.600 byte | 389.807 byte | 890 byte (footer) |
 
-- Ước tính cũ đếm cả trang dữ liệu Postgres và mọi cột; số đo mới chỉ gồm các cột câu truy vấn đọc, đúng cách Synapse
-  serverless tính tiền.
-- Chưa đo trên tài khoản Azure Storage thật của nhóm: cần đặt `PIPELINE_AZURE_STORAGE_CONNECTION_STRING` và
-  `PIPELINE_AZURE_STORAGE_CONTAINER` trên máy chủ rồi chạy `scripts/azure_mirror.py`. Code không đổi giữa Azurite và Azure.
-- Lượt chấm 15 ca ở mục 2.1 chạy với cấu hình mặc định (không bật Azure), nên cổng budget dùng ước tính kiểu DuckDB.
-- Chưa đo được "sai số giữa ước tính và chi phí thật" (SPEC §18.3) vì pipeline chạy trên DuckDB, không chạy query trên
-  Synapse.
+Production đã đặt `PIPELINE_AZURE_STORAGE_*` và chép 30 bảng lên container `pipeline-sources` (12/10). Benchmark chạy
+không bật Azure nên cổng budget dùng ước tính kiểu DuckDB.
 
-### 2.3. Tám luật cứng (SPEC §19)
+### 2.5. Tám bất biến (SPEC §19, chỉnh theo ADR-0001)
 
-`tests/test_invariants.py`, không phụ thuộc deploy:
+`tests/test_invariants.py` — **8/8 xanh**:
 
 | # | Luật | Test |
 |---|---|---|
 | 1 | Sandbox mới cho mỗi run, xóa sau khi xong (kể cả khi lỗi) | ✅ |
 | 2 | Không có credential production trong môi trường chạy code sinh ra | ✅ |
-| 3 | File deploy truy về `run_id` và chữ ký; **không ai tự duyệt run của mình** (API trả 403, hợp đồng RunReport cũng chặn) | ✅ |
-| 4 | Không node LLM nào chạy lệnh shell (quét AST code agent và chat) | ✅ |
+| 3 | File deploy truy về `run_id` và chữ ký; không ai tự duyệt run của mình | ✅ |
+| 4 | Không node LLM nào chạy lệnh shell | ✅ |
 | 5 | Mọi phiên bản Spec nằm trong `spec_history` | ✅ |
 | 6 | Chữ ký phải khớp `files_hash`, sai thì 409 và không deploy | ✅ |
-| 7 | `llm_calls ≤ budgets.per_run.max_llm_calls`, trần đọc từ budgets.yml, không ghi cứng | ✅ |
-| 8 | Mọi thay đổi lên production qua pull request | ⏳ `xfail`: duyệt xong vẫn ghi thẳng ra Dagster local (giai đoạn Deploy) |
+| 7 | `llm_calls ≤ budgets.per_run.max_llm_calls`, không ghi cứng | ✅ |
+| 8 | App không có quyền merge; client GitHub chỉ có thao tác tối thiểu | ✅ (bản 10/10 còn `xfail`) |
 
-### 2.4. Unit và integration test
+### 2.6. Unit, integration, E2E
 
 ```
-$ python -m pytest tests --cov=src
-TOTAL                              5252    575    89%
-460 passed, 1 xfailed, 5 warnings in 336.96s (0:05:36)
+$ python -m pytest tests -q --cov=src
+TOTAL                              9277    637    93%
+1629 passed, 2 skipped in 778.84s (0:12:58)
+
+$ python -m pytest pipeline_tests            # Postgres nguồn thật, PIPELINE_TEST_DATABASE_URL
+28 passed
+
+$ cd web && npm run typecheck && npm test && npm run test:e2e
+tsc: không lỗi · 104 pass · 4 passed (Playwright: đăng nhập → tạo mẻ → duyệt → Deploy; màn duyệt 1440px / 390px)
 ```
 
-`xfailed` là bất biến 8 (pull request), đánh dấu chủ động ở mục 2.3. Gồm test của agent, cổng, sandbox (dlt + dbt
-thật trên DuckDB), API, chat, monitor Day 2, chấm eval, cổng budget trên Azure (`tests/test_agents/test_azure_storage.py`)
-và các bản sửa ở mục 2.1 (`tests/test_agents/test_graph.py`, `tests/test_codegen/test_render.py`).
+Đợt này sửa hai bộ test đã cũ so với code (không nằm trong gate nên trước đây không ai thấy):
 
-### 2.5. Optimizer P13 và tối ưu thủ công UC-3 (SPEC §9.3, §3.3, FR-14)
+- E2E: nút "Hiện mật khẩu" mới làm `getByLabel('Mật khẩu')` khớp hai phần tử → chọn đúng nhãn (`exact: true`).
+- `pipeline_tests`: API làm sạch cũ cố ý từ chối run mới trên domain `sales` đã ẩn (đã có test riêng ở
+  `tests/test_api/test_hidden_domains.py`) → fixture bỏ chặn để kiểm cơ chế làm sạch; production chặn mật khẩu mặc định
+  bằng 503 (không phải 403 như test cũ).
 
-Chạy `python eval/run_eval.py --group optimize` lúc 2026-10-13, dbt + DuckDB + Postgres thật. Chi tiết từng luật:
-[`latest_optimize.md`](latest_optimize.md).
-
-| Ca | P13 lúc tạo pipeline | UC-3 (tối ưu thủ công) | Đạt |
-|---|---|---|---|
-| `optimize_pagila_rentals_by_day` (16.044 dòng) | `missing_partition_filter` đo thật, bỏ: 0,279s so với 0,215s | NO_IMPROVEMENT, `llm_calls = 0`; đo lại 0,165s so với 0,162s, bỏ | ✅ |
-| `optimize_incremental_tried_on_real_dbt` (bản deploy là `table`) | `missing_partition_filter` bỏ (chậm hơn) | `table_to_incremental` chạy thật trên dbt, bỏ: 0,233s so với 0,203s; `llm_calls = 0` | ✅ |
-| `optimize_small_table_skipped` (30 dòng, bản deploy là `table`) | `missing_partition_filter`: trung vị nhanh hơn 27% nhưng **dải đo chồng nhau → bỏ vì nhiễu** | NO_IMPROVEMENT, không chạy thử thêm; lý do "dưới ngưỡng 10,000" | ✅ |
-
-- **Đúng hành vi 3/3 ca**; mọi run UC-3 có `llm_calls = 0` (LLM bị thay bằng hàm ném lỗi, nên không thể gọi).
-- Trên dữ liệu seed (≤ 16 nghìn dòng), bản incremental **không nhanh hơn đo được** so với bản gốc: chưa ca thật nào giữ
-  bản ứng viên. Trường hợp giữ được kiểm bằng test với sandbox giả (`tests/test_agents/test_optimizer.py`).
-- Lượt đầu (cùng ngày, máy đang chạy song song cả bộ test) giữ nhầm một bản 30 dòng "nhanh hơn 26,9%" mà lượt sau đo
-  chậm hơn 41%. Từ đó optimizer chỉ giữ bản ứng viên khi trung vị nhanh hơn `min_gain_pct` **và** mọi lần chạy lại của
-  nó nhanh hơn mọi lần của bản gốc; `rerun_samples` tăng từ 3 lên 5.
-- Ghi nhận: model LLM viết gần như luôn là `incremental` thiếu `partition_by`, nên luật hay áp nhất là
-  `missing_partition_filter`; `table_to_incremental` áp cho pipeline deploy dạng `table`.
+Gate `scripts/harness.py verify-main` (pytest trong Docker, web, chụp UI) xanh trên bản production `ea7c2c1`.
 
 ## 3. User Feedback
 
@@ -142,14 +160,19 @@ Chưa tổ chức buổi lấy ý kiến người dùng; điền sau buổi demo
 
 ## 4. Demo Results
 
-- Bản demo: https://c4-app-045.id.vn
-- Ngày demo: chưa tổ chức
-- Kịch bản: `docs/demo.md`
+- Bản demo: https://c4-app-045.id.vn (production `ea7c2c1`, smoke test 9/9 xanh 17/10)
+- Luồng đã chạy thật trên production 17/10: Reviewer duyệt → Deploy → deployer cài lên Dagster; PR lưu vết
+  [ducthais/atomesus-pipelines#2](https://github.com/ducthais/atomesus-pipelines/pull/2) qua CI và được GitHub Actions tự merge.
+- Video demo và pitch deck: nhóm bổ sung.
 
 ## 5. Action Items
 
-- [ ] Chạy `python eval/run_eval.py` thêm vài lượt để đo độ ổn định (lượt 2–4 mỗi lượt trượt một ca do LLM trả lời khác nhau)
-- [ ] Bật đo byte trên Azure Storage thật của nhóm trên máy chủ, rồi chạy lại eval với Azure bật
-- [ ] Bất biến 8: duyệt xong mở pull request thay vì ghi thẳng Dagster local
-- [ ] Optimizer: đo trên bảng nguồn đủ lớn (vài triệu dòng, ví dụ sau `scripts/grow_data`) để có ca thật giữ bản ứng viên
-- [ ] Thu ý kiến người dùng sau buổi demo
+- [ ] **Deploy hai bản sửa** (định dạng ngày `%Y/%m/%d`, khái niệm thời gian của planner) lên production.
+- [ ] Ca review: hướng dẫn / luật tất định để Spec gộp trước bảng "nhiều" khi tính AVG qua chuỗi ghép 1–n (cổng
+      `join_fanout` đã bắt được, còn thiếu bước tự viết lại), và cảnh báo khi INNER JOIN làm mất dòng của bảng đang đếm.
+- [ ] Đối chiếu độc lập chỉ chứng minh pipeline đúng Spec; thêm kiểm tra ý định (ví dụ độ hạt của gold khớp khái niệm
+      "theo từng khách hàng" trong yêu cầu) — lượt 2 có một ca gộp theo ngày × khách thay vì theo khách.
+- [ ] Optimizer: tăng số mẫu hoặc yêu cầu khoảng tin cậy để không giữ nhầm bản "nhanh hơn" trên bảng rất nhỏ.
+- [ ] Đưa `pipeline_tests` và E2E Playwright vào gate `verify-main` để không cũ đi lần nữa.
+- [ ] Chạy benchmark định kỳ (nhiều lượt) để theo dõi độ ổn định của agent theo thời gian.
+- [ ] Thu ý kiến người dùng sau buổi demo.

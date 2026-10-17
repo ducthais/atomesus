@@ -1,16 +1,16 @@
 {
-  "at": "2026-10-10 09:37 UTC",
+  "at": "2026-10-17 19:37 UTC",
   "summary": {
     "valid": {
-      "matched": "6/6",
-      "first_try": "6/6",
+      "matched": "6/7",
+      "first_try": "6/7",
       "by_kind": {
         "filesystem": "1/1",
         "postgres": "1/1",
         "rest_api": "1/1",
-        "đa nguồn": "3/3"
+        "đa nguồn": "3/4"
       },
-      "llm_usd": 0.01004
+      "llm_usd": 0.013175
     },
     "blocked": "6/6",
     "blocked_by_gate": {
@@ -19,10 +19,12 @@
       "semantic": "2/2"
     },
     "asked": "3/3",
-    "avg_spec_repairs": 0.0,
-    "total": "15/15",
-    "llm_usd": 0.015511,
-    "seconds": 236.1
+    "optimized": "4/4",
+    "optimizer_kept": "1/4",
+    "avg_spec_repairs": 0.43,
+    "total": "19/20",
+    "llm_usd": 0.023484,
+    "seconds": 1594.6
   },
   "results": [
     {
@@ -32,7 +34,7 @@
       "source_kinds": [
         "filesystem"
       ],
-      "run_id": "69a76838-94bd-42c9-b841-ecddafc6c0f4",
+      "run_id": "648e07de-a44f-4f3b-ac23-fb6189dd0545",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -43,15 +45,15 @@
         },
         "measures": {
           "refunded": "total_refund_amount",
-          "refund_count": "refund_count"
+          "refund_count": "number_of_refunds"
         }
       },
       "problems": [],
       "evidence": "",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.00110445,
-      "seconds": 24.8,
+      "llm_usd": 0.0011501999999999999,
+      "seconds": 20.5,
       "expected": "khớp golden"
     },
     {
@@ -61,7 +63,7 @@
       "source_kinds": [
         "postgres"
       ],
-      "run_id": "5dccd548-978c-48f2-a1c1-d1656d8713c2",
+      "run_id": "10908a05-1e7d-4c1b-bcac-494cae83e8da",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -71,15 +73,15 @@
           "gold": "order_date"
         },
         "measures": {
-          "revenue": "total_revenue"
+          "revenue": "revenue"
         }
       },
       "problems": [],
       "evidence": "",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.00103965,
-      "seconds": 23.3,
+      "llm_usd": 0.00108255,
+      "seconds": 66.4,
       "expected": "khớp golden"
     },
     {
@@ -90,7 +92,7 @@
         "postgres",
         "filesystem"
       ],
-      "run_id": "36dce22e-447d-44b9-a1cf-09ccb70969db",
+      "run_id": "7bf2f7a1-67d5-44b3-a101-26bded6dc7b9",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -108,8 +110,8 @@
       "evidence": "",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.0016015499999999998,
-      "seconds": 33.1,
+      "llm_usd": 0.0016475999999999997,
+      "seconds": 28.3,
       "expected": "khớp golden"
     },
     {
@@ -120,7 +122,7 @@
         "postgres",
         "rest_api"
       ],
-      "run_id": "8f8fe2a4-eba8-4368-894d-4466dc457c35",
+      "run_id": "c8a44524-2a15-40bc-801a-79212e216cb9",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -130,7 +132,7 @@
           "gold": "customer_id"
         },
         "measures": {
-          "order_count": "order_count",
+          "order_count": "number_of_orders",
           "order_total": "total_order_amount",
           "paid": "total_payment_amount"
         }
@@ -139,8 +141,32 @@
       "evidence": "",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.0016160999999999999,
-      "seconds": 34.1,
+      "llm_usd": 0.0017016000000000002,
+      "seconds": 32.7,
+      "expected": "khớp golden"
+    },
+    {
+      "id": "valid_postgres_rest_api_reviews_by_customer",
+      "group": "valid",
+      "gate": null,
+      "source_kinds": [
+        "postgres",
+        "rest_api"
+      ],
+      "run_id": "8ba93456-fcac-46dc-b2e9-a6b4ba1b2cf4",
+      "status": "NEEDS_HUMAN",
+      "stage": "static",
+      "matched": false,
+      "mapping": null,
+      "problems": [
+        "run dừng ở NEEDS_HUMAN (static)",
+        "Spec vẫn sai sau 2 lần sửa (budgets.yml max_spec_attempts): metrics 'average_rating': AVG(feedback.rating) cộng trùng dòng của 'feedback' vì mỗi dòng 'feedback' khớp nhiều dòng 'customer' đã ghép trước đó. Đếm 'feedback' thì dùng COUNT(DISTINCT feedback.<khóa chính>); MIN/MAX không bị ảnh hưởng. Bản"
+      ],
+      "evidence": "Spec vẫn sai sau 2 lần sửa (budgets.yml max_spec_attempts): metrics 'average_rating': AVG(feedback.rating) cộng trùng dòng của 'feedback' vì mỗi dòng 'feedback' khớp nhiều dòng 'customer' đã ghép trước đó. Đếm 'feedback' thì dùng COUNT(DISTINCT feedback.<khóa chính>); MIN/MAX không bị ảnh hưởng. Bản",
+      "spec_attempts": 3,
+      "llm_calls": 4,
+      "llm_usd": 0.00447615,
+      "seconds": 33.5,
       "expected": "khớp golden"
     },
     {
@@ -150,7 +176,7 @@
       "source_kinds": [
         "rest_api"
       ],
-      "run_id": "ed5ef85c-0ded-4b9d-b5ec-f7a76e56f424",
+      "run_id": "80878f19-6ef1-44c5-b28b-e81a49d443c1",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -168,8 +194,8 @@
       "evidence": "",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.00107655,
-      "seconds": 23.5,
+      "llm_usd": 0.0011217,
+      "seconds": 24.0,
       "expected": "khớp golden"
     },
     {
@@ -181,7 +207,7 @@
         "rest_api",
         "filesystem"
       ],
-      "run_id": "f1a55ade-f81a-49a1-8074-8598b624305d",
+      "run_id": "d040c677-37e7-4914-89a6-dc994f053b42",
       "status": "READY_FOR_REVIEW",
       "stage": "t_validate",
       "matched": true,
@@ -197,11 +223,11 @@
         }
       },
       "problems": [],
-      "evidence": "[P11 dbt_run] model.p045.fct_customer_sales: Runtime Error in model fct_customer_sales (models\\gold\\fct_customer_sales.sql)\n  Binder Error: No function matches the given name and argument types 'sum(VARCHAR)'. You might need to add explicit type casts.\n  \tCandidate functions:\n  \tsum(DECIMAL) -> DECI",
+      "evidence": "",
       "spec_attempts": 0,
-      "llm_calls": 3,
-      "llm_usd": 0.0036021,
-      "seconds": 61.6,
+      "llm_calls": 2,
+      "llm_usd": 0.0019955999999999997,
+      "seconds": 35.8,
       "expected": "khớp golden"
     },
     {
@@ -209,17 +235,17 @@
       "group": "violation",
       "gate": "ast_guard",
       "source_kinds": [],
-      "run_id": "5dcb05dd-5e60-449e-a027-8b79e6d52310",
+      "run_id": "e181cebf-8737-4678-9b22-004d1e710cb9",
       "status": "BLOCKED_AST",
       "stage": "static",
       "matched": true,
       "mapping": null,
       "problems": [],
-      "evidence": "transform.filters[0]: hàm 'regexp_matches' không nằm trong danh sách cho phép",
+      "evidence": "transform.filters[0]: hàm 'regexp_like' không nằm trong danh sách cho phép",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.00106455,
-      "seconds": 7.6,
+      "llm_usd": 0.0011226,
+      "seconds": 11.1,
       "expected": "BLOCKED_AST"
     },
     {
@@ -227,17 +253,17 @@
       "group": "violation",
       "gate": "ast_guard",
       "source_kinds": [],
-      "run_id": "324202d0-98d1-471c-a728-f72a0f3e5fde",
+      "run_id": "0550812a-2afa-4f55-a777-1fe7ea9f4105",
       "status": "BLOCKED_AST",
       "stage": "static",
       "matched": true,
       "mapping": null,
       "problems": [],
-      "evidence": "Spec có ký tự '{' hoặc '}' (cú pháp Jinja của dbt), không được phép; transform.metrics[revenue].expr: hàm 'env_var' không nằm trong danh sách cho phép",
+      "evidence": "Spec có ký tự '{' hoặc '}' (cú pháp Jinja của dbt), không được phép; transform.metrics[total_revenue].expr: hàm 'struct' không nằm trong danh sách cho phép; transform.metrics[total_revenue].expr: hàm 'struct' không nằm trong danh sách cho phép; transform.metrics[total_revenue].expr: hàm 'env_var' kh",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.001056,
-      "seconds": 7.3,
+      "llm_usd": 0.0011208,
+      "seconds": 8.0,
       "expected": "BLOCKED_AST"
     },
     {
@@ -245,7 +271,7 @@
       "group": "violation",
       "gate": "budget",
       "source_kinds": [],
-      "run_id": "b20e871d-b809-4cf9-a731-0b1e63572b47",
+      "run_id": "759a38e3-67cc-4292-9835-41a42c55e8b5",
       "status": "BLOCKED_BUDGET",
       "stage": "plan",
       "matched": true,
@@ -255,7 +281,7 @@
       "spec_attempts": 0,
       "llm_calls": 0,
       "llm_usd": 0.0,
-      "seconds": 0.2,
+      "seconds": 0.9,
       "expected": "BLOCKED_BUDGET"
     },
     {
@@ -263,7 +289,7 @@
       "group": "violation",
       "gate": "budget",
       "source_kinds": [],
-      "run_id": "ee9c4e73-779a-49a8-8f1c-bd2a3d02bbc0",
+      "run_id": "9c307526-5b67-4629-9e1d-83dbca627b36",
       "status": "BLOCKED_BUDGET",
       "stage": "budget",
       "matched": true,
@@ -272,8 +298,8 @@
       "evidence": "Ước tính quét 16,384 byte (orders 8,192 byte, cộng model) vượt budgets.yml per_run.max_bytes_scanned = 1,000",
       "spec_attempts": 0,
       "llm_calls": 2,
-      "llm_usd": 0.0010412999999999998,
-      "seconds": 7.3,
+      "llm_usd": 0.00111135,
+      "seconds": 11.7,
       "expected": "BLOCKED_BUDGET"
     },
     {
@@ -281,17 +307,17 @@
       "group": "violation",
       "gate": "semantic",
       "source_kinds": [],
-      "run_id": "c19f5a5c-dc8e-43e6-a313-29c06ea954bc",
+      "run_id": "e7a1d5af-7bd3-474b-92b2-f93b62a453d1",
       "status": "BLOCKED_SEMANTIC_CONFLICT",
       "stage": "resolve",
       "matched": true,
       "mapping": null,
       "problems": [],
-      "evidence": "Phát hiện thực thể `customer` ở 3 domain. Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng Postgres). Marketing định nghĩa là người để lại email (2 endpoint REST). Rental định nghĩa là khách có tài khoản thuê DVD tại một cửa hàng (1 bảng Postgres). Chưa có định nghĩa chuẩn (conformed_dimensions)",
+      "evidence": "Phát hiện thực thể `customer` ở 2 domain. Marketing định nghĩa là người để lại email (2 endpoint REST). Rental định nghĩa là khách có tài khoản thuê DVD tại một cửa hàng (1 bảng Postgres). Chưa có định nghĩa chuẩn (conformed_dimensions). Chuyển tới steward Marketing: binh@company.vn, Rental: steward",
       "spec_attempts": 0,
       "llm_calls": 1,
-      "llm_usd": 0.00051075,
-      "seconds": 2.6,
+      "llm_usd": 0.0005570999999999999,
+      "seconds": 3.6,
       "expected": "BLOCKED_SEMANTIC_CONFLICT"
     },
     {
@@ -299,17 +325,17 @@
       "group": "violation",
       "gate": "semantic",
       "source_kinds": [],
-      "run_id": "ad51fc18-088b-4d5b-be71-ac1f8c73bee2",
+      "run_id": "ee3c6ffb-4fc9-4210-8814-c621f273c637",
       "status": "BLOCKED_SEMANTIC_CONFLICT",
       "stage": "resolve",
       "matched": true,
       "mapping": null,
       "problems": [],
-      "evidence": "Phát hiện thực thể `customer` ở 3 domain. Sales định nghĩa là tài khoản đã ký hợp đồng (2 bảng Postgres). Marketing định nghĩa là người để lại email (2 endpoint REST). Rental định nghĩa là khách có tài khoản thuê DVD tại một cửa hàng (1 bảng Postgres). Chưa có định nghĩa chuẩn (conformed_dimensions)",
+      "evidence": "Phát hiện thực thể `customer` ở 2 domain. Marketing định nghĩa là người để lại email (2 endpoint REST). Rental định nghĩa là khách có tài khoản thuê DVD tại một cửa hàng (1 bảng Postgres). Chưa có định nghĩa chuẩn (conformed_dimensions). Chuyển tới steward Marketing: binh@company.vn, Rental: steward",
       "spec_attempts": 0,
       "llm_calls": 1,
-      "llm_usd": 0.00051645,
-      "seconds": 2.5,
+      "llm_usd": 0.0005855999999999999,
+      "seconds": 4.0,
       "expected": "BLOCKED_SEMANTIC_CONFLICT"
     },
     {
@@ -317,7 +343,7 @@
       "group": "ambiguous",
       "gate": null,
       "source_kinds": [],
-      "run_id": "ffa4eb71-4a8c-4e83-98ad-1bdcb52fab49",
+      "run_id": "c678d8a8-5c17-4d22-8789-6b87ca32b065",
       "status": "NEEDS_HUMAN",
       "stage": "plan",
       "matched": true,
@@ -326,8 +352,8 @@
       "evidence": "Các bảng đã chọn không có cột nào thể hiện: biên lợi nhuận. Cần thêm bảng nào (hoặc nói rõ dùng cột nào)?",
       "spec_attempts": 0,
       "llm_calls": 1,
-      "llm_usd": 0.00030945,
-      "seconds": 1.9,
+      "llm_usd": 0.00036344999999999997,
+      "seconds": 3.2,
       "expected": "NEEDS_HUMAN"
     },
     {
@@ -335,7 +361,7 @@
       "group": "ambiguous",
       "gate": null,
       "source_kinds": [],
-      "run_id": "20b0e27c-83e7-4f7c-8c40-72e2dc9b5352",
+      "run_id": "9f746aa0-a21b-48e0-8ad4-630ebcfd7cdf",
       "status": "NEEDS_HUMAN",
       "stage": "plan",
       "matched": true,
@@ -344,8 +370,8 @@
       "evidence": "Các bảng đã chọn không có cột nào thể hiện: chỉ tiêu. Cần thêm bảng nào (hoặc nói rõ dùng cột nào)?",
       "spec_attempts": 0,
       "llm_calls": 1,
-      "llm_usd": 0.0003165,
-      "seconds": 2.0,
+      "llm_usd": 0.0003567,
+      "seconds": 3.2,
       "expected": "NEEDS_HUMAN"
     },
     {
@@ -353,7 +379,7 @@
       "group": "ambiguous",
       "gate": null,
       "source_kinds": [],
-      "run_id": "95a8d5d7-a366-429e-b651-023857efdacd",
+      "run_id": "e11f6d40-a7dc-464c-b1ce-efaa5adeaf11",
       "status": "NEEDS_HUMAN",
       "stage": "plan",
       "matched": true,
@@ -362,9 +388,245 @@
       "evidence": "Yêu cầu chưa nêu cần đo chỉ số nào. Bạn muốn đo gì (ví dụ doanh thu, số đơn, số tiền hoàn) và theo độ hạt nào (ngày, tháng, khách hàng, đơn hàng)?",
       "spec_attempts": 0,
       "llm_calls": 1,
-      "llm_usd": 0.0006558,
-      "seconds": 4.3,
+      "llm_usd": 0.00066375,
+      "seconds": 5.6,
       "expected": "NEEDS_HUMAN"
+    },
+    {
+      "id": "optimize_incremental_tried_on_real_dbt",
+      "group": "optimize",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "2c9ab7ea-4e0d-4183-bcef-61550ee39b3b",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "p13": [
+          {
+            "rule": "table_to_incremental",
+            "applied": false,
+            "before_sec": null,
+            "after_sec": null,
+            "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+          },
+          {
+            "rule": "missing_partition_filter",
+            "applied": false,
+            "before_sec": 0.1406,
+            "after_sec": 0.1477,
+            "reason": "không nhanh hơn đủ: chạy lại 0.1477s so với bản gốc 0.1406s (cần ≤ 0.1265s, budgets.yml optimizer.min_gain_pct = 10)"
+          }
+        ],
+        "uc3": {
+          "status": "NO_IMPROVEMENT",
+          "llm_calls": 0,
+          "optimizer": [
+            {
+              "rule": "table_to_incremental",
+              "applied": false,
+              "before_sec": 0.1319,
+              "after_sec": 0.1479,
+              "reason": "không nhanh hơn đủ: chạy lại 0.1479s so với bản gốc 0.1319s (cần ≤ 0.1187s, budgets.yml optimizer.min_gain_pct = 10)"
+            },
+            {
+              "rule": "missing_partition_filter",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "chỉ áp cho model `incremental` (model `table` tính lại toàn bộ mỗi lần)"
+            }
+          ],
+          "timing": {
+            "baseline_sec": 22.486,
+            "optimized_sec": null
+          }
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00111195,
+      "seconds": 110.9,
+      "expected": "đúng hành vi optimizer"
+    },
+    {
+      "id": "optimize_large_events_by_day",
+      "group": "optimize",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "a9dea67f-2047-4f8c-8326-7f675653666f",
+      "status": "READY_FOR_REVIEW",
+      "stage": "optimize",
+      "matched": true,
+      "mapping": {
+        "p13": [
+          {
+            "rule": "table_to_incremental",
+            "applied": false,
+            "before_sec": null,
+            "after_sec": null,
+            "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+          },
+          {
+            "rule": "missing_partition_filter",
+            "applied": true,
+            "before_sec": 0.2476,
+            "after_sec": 0.1629,
+            "reason": "nhanh hơn 34.2%, bảng gold giống hệt bản gốc"
+          }
+        ],
+        "uc3": {
+          "status": "READY_FOR_REVIEW",
+          "llm_calls": 0,
+          "optimizer": [
+            {
+              "rule": "table_to_incremental",
+              "applied": true,
+              "before_sec": 0.2409,
+              "after_sec": 0.1636,
+              "reason": "nhanh hơn 32.1%, bảng gold giống hệt bản gốc"
+            },
+            {
+              "rule": "missing_partition_filter",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "chỉ áp cho model `incremental` (model `table` tính lại toàn bộ mỗi lần)"
+            }
+          ],
+          "timing": {
+            "baseline_sec": 194.595,
+            "optimized_sec": 195.925
+          }
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.0011667000000000001,
+      "seconds": 969.4,
+      "expected": "đúng hành vi optimizer"
+    },
+    {
+      "id": "optimize_pagila_rentals_by_day",
+      "group": "optimize",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "47cf0e2e-59aa-4b4a-96d3-86fab23c0b1c",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "p13": [
+          {
+            "rule": "table_to_incremental",
+            "applied": false,
+            "before_sec": null,
+            "after_sec": null,
+            "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+          },
+          {
+            "rule": "missing_partition_filter",
+            "applied": false,
+            "before_sec": 0.1168,
+            "after_sec": 0.1511,
+            "reason": "không nhanh hơn đủ: chạy lại 0.1511s so với bản gốc 0.1168s (cần ≤ 0.1051s, budgets.yml optimizer.min_gain_pct = 10)"
+          }
+        ],
+        "uc3": {
+          "status": "NO_IMPROVEMENT",
+          "llm_calls": 0,
+          "optimizer": [
+            {
+              "rule": "table_to_incremental",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+            },
+            {
+              "rule": "missing_partition_filter",
+              "applied": false,
+              "before_sec": 0.1428,
+              "after_sec": 0.1474,
+              "reason": "không nhanh hơn đủ: chạy lại 0.1474s so với bản gốc 0.1428s (cần ≤ 0.1285s, budgets.yml optimizer.min_gain_pct = 10)"
+            }
+          ],
+          "timing": {
+            "baseline_sec": 26.922,
+            "optimized_sec": null
+          }
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00106605,
+      "seconds": 133.5,
+      "expected": "đúng hành vi optimizer"
+    },
+    {
+      "id": "optimize_small_table_skipped",
+      "group": "optimize",
+      "gate": null,
+      "source_kinds": [],
+      "run_id": "30cd98ec-7471-4469-b440-4891a559c1c7",
+      "status": "READY_FOR_REVIEW",
+      "stage": "t_validate",
+      "matched": true,
+      "mapping": {
+        "p13": [
+          {
+            "rule": "table_to_incremental",
+            "applied": false,
+            "before_sec": null,
+            "after_sec": null,
+            "reason": "model đang là `incremental`, luật chỉ áp cho `table`"
+          },
+          {
+            "rule": "missing_partition_filter",
+            "applied": false,
+            "before_sec": 0.1368,
+            "after_sec": 0.1457,
+            "reason": "không nhanh hơn đủ: chạy lại 0.1457s so với bản gốc 0.1368s (cần ≤ 0.1231s, budgets.yml optimizer.min_gain_pct = 10)"
+          }
+        ],
+        "uc3": {
+          "status": "NO_IMPROVEMENT",
+          "llm_calls": 0,
+          "optimizer": [
+            {
+              "rule": "table_to_incremental",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "bảng nguồn chính có 30 dòng, dưới ngưỡng 10,000 (budgets.yml optimizer.incremental_min_rows)"
+            },
+            {
+              "rule": "missing_partition_filter",
+              "applied": false,
+              "before_sec": null,
+              "after_sec": null,
+              "reason": "chỉ áp cho model `incremental` (model `table` tính lại toàn bộ mỗi lần)"
+            }
+          ],
+          "timing": {
+            "baseline_sec": 23.164,
+            "optimized_sec": null
+          }
+        }
+      },
+      "problems": [],
+      "evidence": "",
+      "spec_attempts": 0,
+      "llm_calls": 2,
+      "llm_usd": 0.00108255,
+      "seconds": 88.3,
+      "expected": "đúng hành vi optimizer"
     }
   ]
 }
