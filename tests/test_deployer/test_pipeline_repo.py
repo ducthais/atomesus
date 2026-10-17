@@ -206,6 +206,12 @@ def test_workflow_reads_base_uses_minimal_permissions_and_fixed_check():
     runs = "\n".join(s.get("run", "") for s in job["steps"])
     assert runs.index("check_pr.py") < runs.index("parse_project.py")
     assert "secrets." not in json.dumps(workflow)
+    # Tự merge do Actions của repo pipeline làm, chỉ sau khi pipeline-ci xanh và chỉ với nhánh Deploy của chính repo.
+    merge = workflow["jobs"]["auto-merge"]
+    assert merge["needs"] == "pipeline-ci" and merge["permissions"] == {"contents": "write", "pull-requests": "write"}
+    assert "head.repo.full_name == github.repository" in merge["if"] and "'pipeline/'" in merge["if"]
+    assert not any(s.get("uses", "").startswith("actions/checkout") for s in merge["steps"]), "không chạy code của PR"
+    assert all("--match-head-commit" in s["run"] for s in merge["steps"] if "run" in s)
 
 
 def test_check_accepts_actual_deploy_pr_and_reads_commit_not_worktree(pipeline_repo):
