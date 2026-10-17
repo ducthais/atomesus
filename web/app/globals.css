@@ -888,6 +888,8 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
   --rule-strong: #c9c5bb;
   --accent: #4338ca;
   --accent-soft: #eeedff;
+  --cta: #2563eb;
+  --cta-hover: #1d4ed8;
   --good: #047857;
   --good-soft: #ecfdf5;
   --wait: #b45309;
@@ -1020,8 +1022,12 @@ th.metric, td.metric { background: color-mix(in srgb, var(--gold-soft) 55%, tran
 .shell .result, .shell .card { transition: transform .2s, box-shadow .2s, border-color .2s; }
 
 .shell .button { min-height: 38px; border-radius: 9px; box-shadow: none; }
-.shell .button.primary { background: var(--ink); border-color: var(--ink); box-shadow: none; }
-.shell .button.primary:hover { background: var(--accent); border-color: var(--accent); }
+.shell .button.primary {
+  background: var(--cta);
+  border-color: var(--cta);
+  box-shadow: 0 1px 2px rgb(37 99 235 / 24%);
+}
+.shell .button.primary:hover { background: var(--cta-hover); border-color: var(--cta-hover); }
 .shell input, .shell select, .shell textarea { border-color: var(--rule); background: #fff; }
 .shell input:focus, .shell select:focus, .shell textarea:focus { border-color: var(--accent); }
 .shell .icon-button { border-radius: 50%; background: transparent; }
