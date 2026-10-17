@@ -148,7 +148,7 @@ function toAssets(report: RunReport): Asset[] {
     const rows = checks.find(c => c.name === 'row_reconcile' && c.source_id === source.id);
     const staged = checks.find(c => c.name === 'staging_reconcile' && c.source_id === source.id);
     assets.push({ name: `bronze.${source.target.table}`, layer: 'Bronze', kind: `${source.kind} · ${source.source_ref}`, rows: num(rows?.observed.bronze), state: rows ? rows.result === 'pass' ? 'Khớp nguồn' : 'Lệch nguồn' : 'Chưa chạy' });
-    assets.push({ name: `staging.stg_${spec!.transform.model_name}__${source.id}`, layer: 'Staging', kind: 'Model dbt', rows: num(staged?.observed.staging), state: staged ? `${num(staged.observed.rejected)} dòng rác` : 'Chưa chạy' });
+    assets.push({ name: `staging.stg_${spec!.transform.model_name}__${source.id}`, layer: 'Staging', kind: 'Model dbt', rows: num(staged?.observed.staging), state: staged ? `${num(staged.observed.rejected)} dòng bị loại` : 'Chưa chạy' });
   }
   if (spec) {
     const post = report.gates.find(g => g.name === 'post_run');

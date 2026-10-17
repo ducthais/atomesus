@@ -26,7 +26,7 @@ export function RunResultView({ result, summary, request, goldId, deployed }: { 
             {src.rows.source !== null && <> · <strong>{fmtNum(src.rows.source)}</strong> dòng</>}
             {src.columns.length > 0 && <p className="muted">Giữ {src.columns.length} cột: {src.columns.map((c, i) => <span key={c.as}>{i > 0 && ', '}{c.from === c.as ? <code>{c.as}</code> : <><code>{c.from}</code> → <code>{c.as}</code></>} ({typeLabel(c.type)})</span>)}.</p>}
             {(src.rejectIf.length > 0 || src.rows.rejected !== null) && <p className="muted">
-              Làm sạch: {src.rejectIf.length ? <>loại dòng nếu {src.rejectIf.map((r, i) => <span key={r}>{i > 0 && ' hoặc '}<code>{r}</code></span>)}</> : 'ép kiểu, khử trùng'}
+              Làm sạch: {src.rejectIf.length ? <>loại dòng nếu {src.rejectIf.map((r, i) => <span key={r}>{i > 0 && ' hoặc '}<code>{r}</code></span>)}</> : 'ép kiểu, loại bản ghi trùng'}
               {src.rows.staging !== null && <> → còn <strong>{fmtNum(src.rows.staging)}</strong> dòng sạch, {fmtNum(src.rows.rejected ?? 0)} dòng bị loại{src.rows.duplicates ? `, ${fmtNum(src.rows.duplicates)} dòng trùng` : ''}</>}.
             </p>}
           </div>

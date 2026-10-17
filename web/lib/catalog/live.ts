@@ -149,7 +149,7 @@ export function buildSnapshot(catalog: CatalogResponse, reports: RunReport[], po
       const stagedCheck = report.checks.find(c => c.name === 'staging_reconcile' && c.source_id === src.id);
       const staging = add({
         id: `${spec.domain}.staging.stg_${model}__${src.id}`, name: `staging.stg_${model}__${src.id}`, layer: 'staging', platform: 'duckdb', domain: spec.domain,
-        description: `Làm sạch ${source?.name ?? table}: ép kiểu ${stagedColumns.length} cột, khử trùng và tách dòng lỗi sang rejected.`, owner: report.created_by,
+        description: `Làm sạch ${source?.name ?? table}: ép kiểu ${stagedColumns.length} cột, loại bản ghi trùng và tách dòng lỗi sang rejected.`, owner: report.created_by,
         tags: ['dbt', ...tags], terms: source?.terms ?? [], columns: stagedColumns, rowCount: num(stagedCheck?.observed.staging), updatedAt: report.created_at,
         schedule: spec.schedule.cron, upstream: [bronze.id], sample: [], runs: [],
         quality: quality(run.checks, id => id === `staging_reconcile:${src.id}`, report),

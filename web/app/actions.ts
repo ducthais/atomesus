@@ -291,7 +291,7 @@ export async function signUp(_: RegistrationState, form: FormData): Promise<Regi
   const confirmPassword = String(form.get('confirm_password') ?? '');
   const inviteToken = String(form.get('invite_token') ?? '').trim() || undefined;
   if (inviteToken && !isInviteToken(inviteToken)) return { error: INVITE_INVALID };
-  if (name.length < 2) return { error: 'Họ tên phải có ít nhất 2 ký tự.' };
+  if (name.length < 2) return { error: 'Họ và tên phải có ít nhất 2 ký tự.' };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return { error: 'Email không hợp lệ.' };
   if (!/^[a-z][a-z0-9_.-]{2,31}$/.test(username)) return { error: 'Tên đăng nhập gồm 3–32 ký tự: chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang; bắt đầu bằng chữ.' };
   if (password !== confirmPassword) return { error: 'Mật khẩu nhập lại không khớp.' };
