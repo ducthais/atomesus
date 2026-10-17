@@ -18,7 +18,9 @@ from src.spec import SPEC_FIXTURES_DIR
 
 EXAMPLE_SPEC = SPEC_FIXTURES_DIR / "spec_02_sales_multi_source.json"
 TEMPORAL = {"date", "timestamp"}
-DATE_FORMATS = ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S")
+# `%Y/%m/%d` có trong seed `sales_raw.orders` (đơn chia hết cho 5). LLM không còn thấy giá trị nguồn, chỉ thấy profile tính
+# từ danh sách này, nên định dạng nào thiếu ở đây thì Spec cũng thiếu và staging tách nhầm dòng (eval 2026-10-18).
+DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S")
 
 
 def _parses(value: str, date_format: str) -> bool:

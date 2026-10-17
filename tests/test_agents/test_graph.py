@@ -241,6 +241,21 @@ def test_mixed_date_styles_get_every_format_they_need():
     assert column["date_formats"] == ["%Y-%m-%d", "%d/%m/%Y"], "giữ định dạng LLM chọn, thêm định dạng còn thiếu"
 
 
+def test_year_first_slash_dates_are_covered():
+    # Seed sales_raw.orders: YYYY-MM-DD, DD/MM/YYYY (đơn chia hết cho 3) và YYYY/MM/DD (chia hết cho 5).
+    from src.agents.nodes.codegen import _fix_date_formats, _value_profiles, covering_formats
+
+    ordered_at = ["2026-01-01", "03/01/2026", "2026/01/05", "06/01/2026", "2026/01/10", "2026-01-11"]
+    assert set(covering_formats(ordered_at)) == {"%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"}
+    column = {"from": "ordered_at_text", "as": "ordered_at", "type": "date", "date_formats": ["%Y-%m-%d", "%d/%m/%Y"]}
+    _fix_date_formats(column, ordered_at)
+    assert column["date_formats"] == ["%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"]
+    profile = _value_profiles(
+        {"columns": {"ordered_at_text": "text"}, "sample_rows": [{"ordered_at_text": v} for v in ordered_at]}
+    )
+    assert "%Y/%m/%d" in profile["ordered_at_text"]["date_formats"], "profile gửi LLM phải nêu đủ định dạng"
+
+
 def test_llm_call_cap_comes_from_budgets():
     policy = load_policy()
     per_run = policy.budgets.per_run.model_copy(update={"max_llm_calls": 1})
