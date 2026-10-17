@@ -26,6 +26,9 @@ VAGUE_QUESTION = (
     "Yêu cầu chưa nêu cần đo chỉ số nào. Bạn muốn đo gì (ví dụ doanh thu, số đơn, số tiền hoàn) "
     "và theo độ hạt nào (ngày, tháng, khách hàng, đơn hàng)?"
 )
+# Khái niệm chỉ là kỳ gộp theo thời gian ("theo ngày", "từng tháng") và cột trông như ngày giờ (`ordered_at_text`).
+TIME_TERM = re.compile(r"^(?:(?:theo|từng|mỗi|hằng|hàng)\s+)?(?:ngày|tuần|tháng|quý|năm|giờ)$")
+TEMPORAL_COLUMN = re.compile(r"date|time|day|week|month|year|(?:^|_)at(?:_|$)", re.IGNORECASE)
 
 
 def grounded(term: str, request: str) -> bool:
@@ -223,6 +226,20 @@ def _check_concepts(plan: Plan, catalog: dict) -> list[str]:
     return errors
 
 
+def _grain_covers_time(term: str, plan: Plan, catalog: dict) -> bool:
+    """Khái niệm thời gian ("theo ngày", "tháng") đã có cột khi `grain` gộp theo một cột ngày giờ có thật của nguồn.
+
+    LLM hay đặt grain đúng (`ordered_at_text`) mà vẫn ghi column null cho "theo ngày" khi cột ngày lưu dạng chuỗi; hỏi
+    lại người dùng lúc đó là sai (eval 2026-10-18: hai ca AST và một ca optimizer dừng ở "không có cột nào thể hiện: theo
+    ngày"). Khái niệm không phải kỳ thời gian (khu vực, chỉ tiêu, biên lợi nhuận) vẫn phải có cột riêng.
+    """
+    if not TIME_TERM.match(" ".join(term.lower().split())):
+        return False
+    columns = {c for s in plan.sources for c in (_columns(catalog, plan.domain, s.source_ref, s.object) or [])}
+    names = {token.rsplit(".", 1)[-1] for entry in plan.grain for token in re.findall(r"[A-Za-z_][\w.]*", entry)}
+    return any(name in columns and TEMPORAL_COLUMN.search(name) for name in names)
+
+
 def _unrelated_joins(plan: Plan, catalog: dict) -> list[str]:
     """Phép ghép giữa hai bảng cùng nguồn phải khớp một khóa ngoại (hoặc hai cột trùng tên).
 
@@ -371,7 +388,7 @@ def planner(deps: AgentDeps):
             # Không khái niệm nào có trong yêu cầu: người dùng chưa nói đo gì, LLM tự nghĩ ra chỉ số (eval 2026-10-10:
             # "báo cáo về bán hàng" → tự chọn tổng thanh toán, số đơn, tiền hoàn).
             plan = plan.model_copy(update={"question": VAGUE_QUESTION})
-        unmapped = [c.term for c in plan.concepts if not c.column]
+        unmapped = [c.term for c in plan.concepts if not c.column and not _grain_covers_time(c.term, plan, catalog)]
         if unmapped and not plan.question:  # LLM không được lặng lẽ thay khái niệm thiếu cột bằng phép tính khác
             plan = plan.model_copy(
                 update={

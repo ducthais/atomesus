@@ -146,3 +146,35 @@ def test_concept_retry_lists_valid_columns_of_selected_sources(column):
     assert set(hint.split(", ")) == expected
     assert "store.manager_staff_id" not in hint
     assert state["plan"]["concepts"][-1]["column"] == "inventory.store_id"
+
+
+@pytest.mark.parametrize("term", ["theo ngày", "Từng ngày", "ngày", "theo  tháng"])
+def test_time_grain_concept_is_covered_by_a_temporal_grain_column(term):
+    # LLM đặt grain đúng cột ngày (dạng chuỗi) nhưng ghi column null cho "theo ngày": không có gì để hỏi người dùng.
+    plan = {**PLAN, "concepts": [{"term": "doanh thu", "column": "orders.amount_text"}, {"term": term, "column": None}]}
+    state = run(FakeLLM(plan, SPEC))
+    assert state["status"] == "READY_FOR_REVIEW", state.get("error_trace")
+
+
+def test_time_grain_concept_still_asks_when_grain_has_no_date_column():
+    plan = {
+        **PLAN,
+        "grain": ["customer_id"],
+        "concepts": [{"term": "doanh thu", "column": "orders.amount_text"}, {"term": "theo ngày", "column": None}],
+    }
+    state = run(FakeLLM(plan))
+    assert (
+        state["status"] == "NEEDS_HUMAN"
+        and "không có cột nào thể hiện: theo ngày" in state["error_trace"][-1]["question"]
+    )
+
+
+def test_non_time_concept_without_a_column_still_asks_even_with_a_date_grain():
+    # "Biên lợi nhuận theo ngày": kỳ gộp có cột, nhưng biên lợi nhuận thì không → vẫn hỏi, chỉ nêu khái niệm thiếu.
+    plan = {
+        **PLAN,
+        "concepts": [{"term": "biên lợi nhuận", "column": None}, {"term": "theo ngày", "column": None}],
+    }
+    state = run(FakeLLM(plan))
+    question = state["error_trace"][-1]["question"]
+    assert state["status"] == "NEEDS_HUMAN" and "biên lợi nhuận" in question and "theo ngày" not in question
