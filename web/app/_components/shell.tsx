@@ -26,13 +26,13 @@ const ROLE_META: Record<Role, { label: string; short: string; description: strin
   Steward: { label: 'Không gian quản trị dữ liệu', short: 'Quản trị dữ liệu', description: 'Theo dõi chất lượng và chính sách', icon: BookOpenText },
 };
 
-const sectionForPath = (path: string) => {
+const sectionForPath = (path: string, role: Role) => {
   if (path.startsWith('/admin')) return 'Quản trị tài khoản';
   if (path.startsWith('/connections')) return 'Nguồn dữ liệu';
   if (path.startsWith('/reviewers') || path.startsWith('/runs/review')) return 'Kiểm duyệt';
   if (path.startsWith('/runs')) return 'Vòng đời pipeline';
   if (path.startsWith('/monitor')) return 'Vận hành';
-  if (path.startsWith('/policy')) return 'Chính sách';
+  if (path.startsWith('/policy')) return role === 'Admin' ? 'Chính sách' : 'Giới hạn';
   return 'Data Catalog';
 };
 
@@ -54,7 +54,7 @@ export function AppFrame({ children, user, reviewCount, live, backend, demoLogin
         <header className="topbar">
           <div className="topbar-context">
             <span>{ROLE_META[user.role].short}</span>
-            <strong>{sectionForPath(path)}</strong>
+            <strong>{sectionForPath(path, user.role)}</strong>
           </div>
           <form action="/explore" className="global-search" role="search">
             <Search size={16} aria-hidden />
