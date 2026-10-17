@@ -74,7 +74,7 @@ export function ReviewerList({ reviewers }: { reviewers: LinkedReviewer[] }) {
   return <section className="panel flush">
     <div className="panel-head"><h2><UserCheck size={17} aria-hidden />Reviewer của bạn</h2></div>
     <div className="table-scroll"><table>
-      <thead><tr><th>Họ tên</th><th>Tài khoản</th><th>Liên kết từ</th><th>Quản lý</th></tr></thead>
+      <thead><tr><th>Họ và tên</th><th>Tài khoản</th><th>Liên kết từ</th><th>Quản lý</th></tr></thead>
       <tbody>{reviewers.map(reviewer => <tr key={reviewer.id}>
         <td><strong>{reviewer.name ?? reviewer.id}</strong></td>
         <td><span className={reviewer.username ? 'mono' : 'muted'}>{reviewerAccount(reviewer)}</span></td>

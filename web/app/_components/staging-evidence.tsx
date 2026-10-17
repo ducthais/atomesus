@@ -39,14 +39,14 @@ export function StagingEvidenceView({ sources }: { sources: StagingEvidence[] })
               : <p className="muted">Không có dòng bị loại.</p>}
           </section>
           <section>
-            <h3><FilterX size={15} aria-hidden /> Dòng rác mẫu</h3>
+            <h3><FilterX size={15} aria-hidden /> Mẫu dòng bị loại</h3>
             {source.samples.length ? <div className="table-scroll"><table className="rejected-samples">
               <thead><tr><th>Lý do</th>{columns.map(column => <th key={column} className="mono">{column}</th>)}</tr></thead>
               <tbody>{source.samples.map((sample, index) => <tr key={`${sample.reason}-${index}`} className="row-rejected">
                 <td><span className="badge tone-bad">{reasonLabel(sample.reason)}</span></td>
                 {columns.map(column => <td key={column} className="mono">{value(sample.values[column])}</td>)}
               </tr>)}</tbody>
-            </table></div> : <p className="muted">Run không ghi nhận dòng rác mẫu.</p>}
+            </table></div> : <p className="muted">Run không ghi nhận mẫu dòng bị loại.</p>}
           </section>
         </div>
       </Panel>;

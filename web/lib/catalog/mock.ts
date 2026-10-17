@@ -167,7 +167,7 @@ export const DATASETS: Dataset[] = [
     quality: [q('row_reconcile:customers', 'Đối soát dòng', 'pass', '3.150 → 3.150', 'Số dòng nguồn → bronze khớp', '2026-10-01T09:12:05Z', 'b41f07d2')],
     sample: [], runs: ['b41f07d2'],
   },
-  // ── Staging (dbt làm sạch, ép kiểu, tách dòng rác) ──
+  // ── Staging (dbt làm sạch, ép kiểu, tách dòng bị loại) ──
   {
     id: 'sales.staging.stg_orders', name: 'staging.stg_daily_revenue__orders', layer: 'staging', platform: 'duckdb', domain: 'sales',
     description: 'Đơn hàng đã ép kiểu số tiền và ngày; dòng ép kiểu lỗi tách sang rejected.', owner: 'minh', tags: ['dbt'], terms: ['sales.order', 'sales.revenue'],
@@ -318,7 +318,7 @@ export const RUNS: CatalogRun[] = [
     specRetries: 1, sqlRetries: 0, llmCalls: 3, updatedAt: '2026-10-01T10:20:00Z', usd: 0.0031, llmUsd: 0, llmTokens: 0, llmUnpriced: 0, fileCount: 5,
     assets: [
       { name: 'bronze.raw_orders', layer: 'Bronze', kind: 'postgres · sales_pg', rows: '12.480', state: 'Khớp nguồn' },
-      { name: 'staging.stg_daily_revenue__orders', layer: 'Staging', kind: 'Model dbt', rows: '12.391', state: '89 dòng rác' },
+      { name: 'staging.stg_daily_revenue__orders', layer: 'Staging', kind: 'Model dbt', rows: '12.391', state: '89 dòng bị loại' },
       { name: 'gold.fct_daily_revenue', layer: 'Gold', kind: 'Model dbt', rows: '365', state: 'Đạt' },
     ],
     approval: { decision: 'approved', reviewer: 'lan', files_hash: 'sha256:5f2a9c81d04be7a3c6e1', version: 1, at: '2026-10-01T10:20:00Z', comment: 'Số khớp, ok deploy.' },
@@ -384,7 +384,7 @@ models:
     assets: [
       { name: 'bronze.raw_orders', layer: 'Bronze', kind: 'postgres · sales_pg', rows: '12.480', state: 'Khớp nguồn' },
       { name: 'bronze.raw_customers', layer: 'Bronze', kind: 'postgres · sales_pg', rows: '3.150', state: 'Khớp nguồn' },
-      { name: 'staging.stg_customer_revenue__customers', layer: 'Staging', kind: 'Model dbt', rows: '3.150', state: '0 dòng rác' },
+      { name: 'staging.stg_customer_revenue__customers', layer: 'Staging', kind: 'Model dbt', rows: '3.150', state: '0 dòng bị loại' },
       { name: 'gold.fct_customer_revenue', layer: 'Gold', kind: 'Model dbt', rows: '3.102', state: 'Đạt' },
     ],
     approval: null, error: null, question: null,

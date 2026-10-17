@@ -13,14 +13,19 @@ export default async function ConnectionsPage() {
   const engineer = user.role === 'Engineer';
   const result = await listUserConnections();
   const [uploads, limits] = engineer ? await Promise.all([listUserUploads(), getUploadLimits()]) : [null, null];
+  const connectionList = 'error' in result
+    ? <p className="callout bad" role="alert">{result.error}</p>
+    : <ConnectionList connections={result.data} engineer={engineer} />;
+  const egressIp = process.env.PIPELINE_EGRESS_IP?.trim() || process.env.NEXT_PUBLIC_EGRESS_IP?.trim() || undefined;
+
   return <div className="user-connections">
     <PageHeader kicker={user.role} title="Nguồn dữ liệu" icon={<Database size={22} aria-hidden />}>
       <p>{engineer ? 'Tải file CSV/XLSX hoặc kết nối Postgres. Chọn các bảng để tạo pipeline.' : 'Danh sách tên kết nối chỉ đọc. Chỉ Engineer được quản lý kết nối và chọn bảng.'}</p>
     </PageHeader>
-    {engineer && uploads && limits && <UploadPanel initialUploads={uploads} limits={limits} mock={MOCK} />}
-    <div className={engineer ? 'detail-grid' : undefined}>
-      {'error' in result ? <p className="callout bad" role="alert">{result.error}</p> : <ConnectionList connections={result.data} engineer={engineer} />}
-      {engineer && <ConnectionForm egressIp={process.env.PIPELINE_EGRESS_IP?.trim() || process.env.NEXT_PUBLIC_EGRESS_IP?.trim() || undefined} />}
-    </div>
+    {engineer && uploads && limits ? <div className="source-import-grid">
+      <UploadPanel initialUploads={uploads} limits={limits} mock={MOCK} />
+      <div className="source-import-saved">{connectionList}</div>
+      <div className="source-import-create"><ConnectionForm egressIp={egressIp} /></div>
+    </div> : connectionList}
   </div>;
 }

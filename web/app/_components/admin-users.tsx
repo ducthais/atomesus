@@ -23,7 +23,7 @@ export function AdminUsers({ users }: { users: User[] }) {
 
   return <section className="panel flush">
     <div className="table-scroll"><table>
-      <thead><tr><th>Tài khoản</th><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Quản lý</th></tr></thead>
+      <thead><tr><th>Tài khoản</th><th>Họ và tên</th><th>Email</th><th>Vai trò</th><th>Quản lý</th></tr></thead>
       <tbody>{users.map(user => <tr key={user.id}>
         <td><strong className="mono">{user.username ?? user.id}</strong><br /><small className="muted mono">{user.id}</small></td>
         <td>{user.name}</td>
