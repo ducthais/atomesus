@@ -29,6 +29,7 @@ const ROLE_META: Record<Role, { label: string; short: string; description: strin
 const sectionForPath = (path: string) => {
   if (path.startsWith('/admin')) return 'Quản trị tài khoản';
   if (path.startsWith('/connections')) return 'Nguồn dữ liệu';
+  if (path.startsWith('/results')) return 'Kết quả pipeline';
   if (path.startsWith('/reviewers') || path.startsWith('/runs/review')) return 'Kiểm duyệt';
   if (path.startsWith('/runs')) return 'Vòng đời pipeline';
   if (path.startsWith('/monitor')) return 'Vận hành';
@@ -94,7 +95,7 @@ export function Sidebar({ reviewCount, live, backend, role }: { reviewCount: num
     </div>)}</nav>
     {role === 'Engineer' && <Link href="/runs/new" className="button primary sidebar-new" aria-current={path === '/runs/new' ? 'page' : undefined}><Plus size={16} aria-hidden /> Yêu cầu pipeline</Link>}
     <div className="sidebar-foot">{live
-      ? <><span className="live-tag"><i /> Hệ thống trực tuyến</span><p>Đang đồng bộ với <code>{backend}</code></p></>
+      ? <><span className="live-tag">Backend thật</span><p>Đọc dữ liệu từ <code>{backend}</code></p></>
       : <><span className="mock-tag"><Sparkles size={11} aria-hidden /> Chế độ dữ liệu mẫu</span><p>Đang dùng catalog nội bộ để trình diễn.</p></>}</div>
   </aside>;
 }
@@ -114,18 +115,18 @@ function LoginStory() {
       <Layers3 size={28} aria-hidden /><span>Atomesus</span>
     </Link>
     <div className="login-story-copy">
-      <span className="login-kicker">VERIFIED PIPELINE STUDIO</span>
+      <span className="login-kicker">Pipeline được kiểm chứng</span>
       <h1>Biến yêu cầu dữ liệu thành <em>pipeline được kiểm chứng.</em></h1>
       <p>Lập kế hoạch, sinh mã và kiểm thử trên dữ liệu thực. Mọi thay đổi đều có bằng chứng trước khi được đưa vào vận hành.</p>
       <ul className="login-trust-list">
-        <li><CheckCircle2 size={18} aria-hidden /><span><strong>Typed Spec rõ ràng</strong><small>Con người xác nhận trước khi sinh mã.</small></span></li>
+        <li><CheckCircle2 size={18} aria-hidden /><span><strong>Spec định kiểu rõ ràng</strong><small>Con người xác nhận trước khi sinh mã.</small></span></li>
         <li><GitMerge size={18} aria-hidden /><span><strong>Luồng phê duyệt độc lập</strong><small>Reviewer kiểm tra bằng chứng và tác động.</small></span></li>
-        <li><LockKeyhole size={18} aria-hidden /><span><strong>Vận hành có kiểm soát</strong><small>Audit trail xuyên suốt vòng đời pipeline.</small></span></li>
+        <li><LockKeyhole size={18} aria-hidden /><span><strong>Vận hành có kiểm soát</strong><small>Lưu vết kiểm tra xuyên suốt vòng đời pipeline.</small></span></li>
       </ul>
     </div>
     <div className="login-preview" aria-label="Trạng thái Pipeline Studio">
-      <div><span><SquareTerminal size={16} aria-hidden />PIPELINE STUDIO</span><b><i />SYSTEM ONLINE</b></div>
-      <p>PLAN → SPEC → CODE → SANDBOX → REVIEW</p>
+      <div><span><SquareTerminal size={16} aria-hidden />PIPELINE STUDIO</span></div>
+      <p>KẾ HOẠCH → SPEC → SINH MÃ → SANDBOX → DUYỆT</p>
       <small>SOURCE → BRONZE → STAGING → GOLD</small>
     </div>
   </aside>;
@@ -155,7 +156,7 @@ export function LoginScreen({ demoLogin = false }: { demoLogin?: boolean }) {
       <LoginStory />
       <section className="login-panel">
         <div className="login-card">
-          <div className="login-card-heading"><span className="login-kicker">REVIEWER INVITE</span><h2>Lời mời không hợp lệ</h2>
+          <div className="login-card-heading"><span className="login-kicker">Lời mời Reviewer</span><h2>Lời mời không hợp lệ</h2>
             <p>Liên kết có thể đã hết hạn hoặc được sử dụng trước đó.</p></div>
           <p className="form-error" role="alert"><CircleAlert size={16} aria-hidden /> {INVITE_INVALID}</p>
           <Link className="landing-button primary login-submit" href="/runs">Về trang đăng nhập</Link>
@@ -179,7 +180,7 @@ export function LoginScreen({ demoLogin = false }: { demoLogin?: boolean }) {
     <section className="login-panel">
     <div className="login-card">
       <div className="login-card-heading">
-        <span className="login-kicker">{inviteToken ? 'REVIEWER INVITE' : 'SECURE ACCESS'}</span>
+        <span className="login-kicker">{inviteToken ? 'Lời mời Reviewer' : 'Đăng nhập an toàn'}</span>
         <h2>{inviteToken ? 'Lời mời làm Reviewer' : mode === 'login' ? 'Chào mừng trở lại' : 'Tạo tài khoản mới'}</h2>
         <p>{inviteToken
           ? 'Đăng ký Reviewer mới hoặc đăng nhập bằng tài khoản Reviewer có sẵn để chấp nhận lời mời.'

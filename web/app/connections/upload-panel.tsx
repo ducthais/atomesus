@@ -87,9 +87,9 @@ export function UploadPanel({ initialUploads, limits, mock }: {
     } catch { setState({ error: 'Không tải được file nguồn. Vui lòng thử lại.' }); }
     finally { setPending(false); }
   };
-  return <section aria-label="Tải file nguồn lên">
+  return <section className="upload-panel" aria-label="Tải file nguồn lên">
     <div className="detail-grid">
-      <Panel title="Tải file lên">
+      <Panel title="Tải file lên" className="upload-pick">
         <p className="muted section-note">CSV dùng UTF-8 hoặc UTF-8-BOM, có dòng tiêu đề. Mỗi sheet XLSX trở thành một bảng riêng.</p>
         {mock && <p className="callout info">Chế độ mock: bảng và số dòng bên dưới là dữ liệu minh họa.</p>}
         {'data' in limits ? <p className="section-note">Mỗi file tối đa {limits.data.max_file_mb} MB · Tổng tối đa {limits.data.max_total_mb_per_user} MB · Đã dùng {(limits.data.used_bytes / 1024 ** 2).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} MB</p>
@@ -115,7 +115,7 @@ export function UploadPanel({ initialUploads, limits, mock }: {
           {state?.message && <p className="success-text" role="status">{state.message}</p>}
         </form>
       </Panel>
-      <Panel title="File đã tải của tôi">
+      <Panel title="File đã tải của tôi" className="upload-list">
         {'error' in initialUploads && <p className="form-error" role="alert">{initialUploads.error}</p>}
         {!uploads.length && <p className="muted">Chưa có file nguồn nào.</p>}
         <ul className="plain connection-list">{uploads.map(upload => <UploadTables key={upload.id} upload={upload} onDelete={() => {

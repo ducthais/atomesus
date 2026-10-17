@@ -71,8 +71,8 @@ export function Empty({ icon, title, children }: { icon?: React.ReactNode; title
   return <div className="empty">{icon}<strong>{title}</strong>{children && <p>{children}</p>}</div>;
 }
 
-export function Panel({ title, actions, children, flush }: { title?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; flush?: boolean }) {
-  return <section className={`panel ${flush ? 'flush' : ''}`}>{title && <div className="panel-head"><h2>{title}</h2>{actions}</div>}{children}</section>;
+export function Panel({ title, actions, children, flush, className }: { title?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; flush?: boolean; className?: string }) {
+  return <section className={['panel', flush && 'flush', className].filter(Boolean).join(' ')}>{title && <div className="panel-head"><h2>{title}</h2>{actions}</div>}{children}</section>;
 }
 
 export function Facts({ items }: { items: [string, React.ReactNode][] }) {
