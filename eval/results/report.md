@@ -7,6 +7,8 @@
 - Commit đo: `main` sau `75a368b`, cộng hai bản sửa của đợt này (mục 2.2), cùng commit với báo cáo này
 - Ngày đo: 2026-10-17 → 2026-10-18 (giờ UTC trong bảng)
 - Lượt benchmark chính thức: lượt 5, 19:37 UTC 17/10 — bảng từng ca ở [`latest.md`](latest.md), số liệu thô [`latest.json`](latest.json)
+- Chạy lại trên production: 06:03 UTC 18/10, trong container `backend` của bản `1072104` — **18/19** (bỏ ca 3 triệu
+  dòng), mục 2.7 và [`production.md`](production.md)
 
 ---
 
@@ -69,7 +71,7 @@ dùng INNER JOIN làm mất lượt thuê không có phản hồi, một lượt
 |---|---|---|
 | Bộ chấm dừng giữa lượt (lượt 1) | Ca optimizer chạy UC-3 trên run không có Spec khi pipeline gốc dừng sớm | `eval/run_eval.py`: pipeline gốc không tới `READY_FOR_REVIEW` thì chấm không đạt kèm lý do, không chạy UC-3 |
 | 2 ca AST + 1 ca optimizer hỏi lại yêu cầu rõ (lượt 1–2) | Planner có luật: khái niệm không gắn cột thì hỏi lại. Bảng `orders` lưu ngày dạng chuỗi; LLM đặt đúng `grain = ordered_at_text` nhưng ghi khái niệm "theo ngày" là không có cột | `planner._grain_covers_time`: khái niệm kỳ thời gian ("theo ngày", "từng tháng") được coi là có cột khi grain gộp theo một cột ngày giờ có thật; khái niệm khác (biên lợi nhuận, chỉ tiêu) vẫn phải hỏi. 3 test mới |
-| **Hồi quy sản phẩm:** mọi pipeline trên `sales_raw.orders` dừng `NEEDS_HUMAN` (lượt 4) | Từ khi LLM không còn được xem giá trị nguồn (chỉ xem profile cột), định dạng ngày trong Spec chỉ lấy từ `DATE_FORMATS`, mà danh sách này thiếu `%Y/%m/%d`; 4/30 đơn ghi `2026/01/05` bị tách ở staging (13% > trần 1%) | Thêm `%Y/%m/%d` vào `DATE_FORMATS` (`src/agents/nodes/codegen.py`); test profile gửi LLM và bước tự bổ sung định dạng. Ảnh hưởng cả file / Postgres của người dùng có ngày kiểu này — **cần deploy** |
+| **Hồi quy sản phẩm:** mọi pipeline trên `sales_raw.orders` dừng `NEEDS_HUMAN` (lượt 4) | Từ khi LLM không còn được xem giá trị nguồn (chỉ xem profile cột), định dạng ngày trong Spec chỉ lấy từ `DATE_FORMATS`, mà danh sách này thiếu `%Y/%m/%d`; 4/30 đơn ghi `2026/01/05` bị tách ở staging (13% > trần 1%) | Thêm `%Y/%m/%d` vào `DATE_FORMATS` (`src/agents/nodes/codegen.py`); test profile gửi LLM và bước tự bổ sung định dạng. Ảnh hưởng cả file / Postgres của người dùng có ngày kiểu này — đã deploy 18/10 (`1072104`) |
 
 Lượt 2–3 chạy trên Postgres máy dev còn seed sạch từ trước ngày 06/10 nên không lộ lỗi định dạng ngày; từ lượt 4 dùng
 đúng seed của repo (`infra/postgres/init/001_seed.sql`). Bài học: benchmark phải chạy trên đúng dữ liệu của repo — đã
@@ -148,7 +150,29 @@ tsc: không lỗi · 104 pass · 4 passed (Playwright: đăng nhập → tạo m
   `tests/test_api/test_hidden_domains.py`) → fixture bỏ chặn để kiểm cơ chế làm sạch; production chặn mật khẩu mặc định
   bằng 503 (không phải 403 như test cũ).
 
-Gate `scripts/harness.py verify-main` (pytest trong Docker, web, chụp UI) xanh trên bản production `ea7c2c1`.
+Gate `scripts/harness.py verify-main` (pytest trong Docker, web, chụp UI) xanh trên bản production `1072104`.
+
+### 2.7. Chạy lại benchmark trên production (18/10)
+
+Sau khi deploy `1072104`, chạy lại `eval/run_eval.py` **ngay trong container `backend` của production**: cùng image,
+Postgres nguồn, mock REST API, Azure Storage và key OpenAI của bản đang phục vụ người dùng; sổ bằng chứng riêng
+(`data/eval/prod-bench.sqlite3`), không lẫn run của người dùng. Bỏ ca 3 triệu dòng để không quá tải VM 4 GB (RAM còn
+~1,7 GB trống trong lúc chạy).
+
+| Nơi chạy | Hợp lệ | Vi phạm | Mơ hồ | Optimizer | Tổng | Tiền LLM | Thời gian |
+|---|---|---|---|---|---|---|---|
+| Máy dev, lượt 5 (cùng 19 ca) | 6/7 | 6/6 | 3/3 | 3/3 | 18/19 | — | — |
+| **Production** `1072104` | **6/7** | **6/6** | **3/3** | **3/3** | **18/19** | $0,0211 | 592 giây |
+
+- Cùng một ca trượt (`valid_postgres_rest_api_reviews_by_customer`); mọi ca hợp lệ khác chạy được ngay lần viết Spec đầu.
+- Sáu ca hợp lệ khớp golden từng dòng → Postgres nguồn trên production đúng seed của repo (không lặp lại sự cố seed cũ ở
+  mục 2.2).
+- Các cổng gắn với hạ tầng production chạy đúng: trần chi phí theo ngày, đo byte quét bằng metadata Parquet trên Azure,
+  xung đột ngữ nghĩa giữa domain `marketing` và `rental`.
+- Ba ca optimizer bỏ bản ứng viên vì model gold chỉ ~0,1 giây (không nhanh hơn đủ 10%) — đúng hành vi; ca chứng minh
+  tối ưu thật là ca 3 triệu dòng ở mục 2.3.
+
+Bảng từng ca: [`production.md`](production.md), số liệu thô [`production.json`](production.json).
 
 ## 3. User Feedback
 
@@ -160,14 +184,16 @@ Chưa tổ chức buổi lấy ý kiến người dùng; điền sau buổi demo
 
 ## 4. Demo Results
 
-- Bản demo: https://c4-app-045.id.vn (production `ea7c2c1`, smoke test 9/9 xanh 17/10)
+- Bản demo: https://c4-app-045.id.vn (production `1072104`, smoke test 9/9 xanh 18/10; benchmark chạy trên production
+  18/19, mục 2.7)
 - Luồng đã chạy thật trên production 17/10: Reviewer duyệt → Deploy → deployer cài lên Dagster; PR lưu vết
   [ducthais/atomesus-pipelines#2](https://github.com/ducthais/atomesus-pipelines/pull/2) qua CI và được GitHub Actions tự merge.
 - Video demo và pitch deck: nhóm bổ sung.
 
 ## 5. Action Items
 
-- [ ] **Deploy hai bản sửa** (định dạng ngày `%Y/%m/%d`, khái niệm thời gian của planner) lên production.
+- [x] **Deploy hai bản sửa** (định dạng ngày `%Y/%m/%d`, khái niệm thời gian của planner) lên production: `1072104`,
+      18/10, smoke 9/9 xanh, benchmark trên production 18/19.
 - [ ] Ca review: hướng dẫn / luật tất định để Spec gộp trước bảng "nhiều" khi tính AVG qua chuỗi ghép 1–n (cổng
       `join_fanout` đã bắt được, còn thiếu bước tự viết lại), và cảnh báo khi INNER JOIN làm mất dòng của bảng đang đếm.
 - [ ] Đối chiếu độc lập chỉ chứng minh pipeline đúng Spec; thêm kiểm tra ý định (ví dụ độ hạt của gold khớp khái niệm

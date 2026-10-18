@@ -9,7 +9,7 @@ Repo pipeline (GitOps): https://github.com/ducthais/atomesus-pipelines
 | | |
 |---|---|
 | Kiểm thử | 1.629 test backend + 28 test tích hợp Postgres + 104 test web + 4 E2E Playwright, gate xanh trước mỗi lần deploy ([docs/testing.md](docs/testing.md)) |
-| Benchmark agent | **19/20** ca với LLM thật và nguồn thật; optimizer nhanh hơn ~33% trên 3 triệu dòng ([eval/results/report.md](eval/results/report.md)) |
+| Benchmark agent | **19/20** ca với LLM thật và nguồn thật; optimizer nhanh hơn ~33% trên 3 triệu dòng; chạy lại ngay trên production: **18/19** (bỏ ca 3 triệu dòng) ([eval/results/report.md](eval/results/report.md)) |
 | Kiến trúc | [ARCHITECTURE.md](ARCHITECTURE.md) · [9 sơ đồ](docs/architecture_diagram.md) · [ADR-0001](docs/adr/0001-mot-luong-va-nen-production.md) · [SPEC.md](SPEC.md) |
 | Nhật ký | [JOURNAL.md](JOURNAL.md) (tuần) · [docs/daily-log.md](docs/daily-log.md) (ngày) |
 
@@ -297,7 +297,7 @@ python scripts/harness.py verify-main                      # gate đầy đủ n
 ```
 
 Kết quả lần chạy gần nhất (2026-10-18): **1.629 passed, 2 skipped** (backend), **28/28** (tích hợp Postgres), **104/104**
-(web unit), **4/4** (E2E), ruff sạch, gate `verify-main` xanh trên bản production `ea7c2c1`. Chiến lược, bộ test theo module, 8 bất biến, cách đọc kết quả:
+(web unit), **4/4** (E2E), ruff sạch, gate `verify-main` xanh trên bản production `1072104`. Chiến lược, bộ test theo module, 8 bất biến, cách đọc kết quả:
 [docs/testing.md](docs/testing.md).
 
 ## Benchmark
@@ -324,6 +324,10 @@ Kết quả lượt chính thức (2026-10-17 19:37 UTC, seed hiện tại của
 Benchmark đợt này tìm ra và đã sửa một hồi quy (thiếu định dạng ngày `%Y/%m/%d`) và một lỗi planner; năm lượt chạy, nguyên
 nhân từng thay đổi và việc còn lại: [eval/results/report.md](eval/results/report.md). Bảng từng ca:
 [eval/results/latest.md](eval/results/latest.md).
+
+**Chạy lại trên production** (2026-10-18 06:03 UTC, trong container `backend` của https://c4-app-045.id.vn, commit
+`1072104`): **18/19** — hợp lệ 6/7, vi phạm 6/6, mơ hồ 3/3, optimizer 3/3; $0,0211; 592 giây. Bỏ ca 3 triệu dòng để không
+quá tải VM 4 GB. Trùng kết quả máy dev, cùng một ca trượt: [eval/results/production.md](eval/results/production.md).
 
 ## Ghi log sử dụng AI (yêu cầu của khóa học)
 

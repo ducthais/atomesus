@@ -214,6 +214,8 @@ Thành viên (theo tài khoản GitHub): **ducthais** (Đinh Đức Thái), **Ho
   benchmark 20 ca chạy 5 lượt, lượt chính thức **19/20**. Benchmark tìm ra và đã sửa hồi quy thiếu định dạng ngày
   `%Y/%m/%d` (mọi pipeline trên `sales_raw.orders` dừng NEEDS_HUMAN) và lỗi planner hỏi lại yêu cầu rõ; sửa bộ chấm và hai
   bộ test đã cũ (E2E sau nút hiện mật khẩu, `pipeline_tests` sau khi ẩn domain `sales`).
+- **18/10:** deploy `1072104` (hai bản sửa trên), smoke 9/9 xanh; chạy lại benchmark ngay trong container production:
+  **18/19** (bỏ ca 3 triệu dòng để không quá tải VM 4 GB), trùng kết quả máy dev.
 
 ### Khó khăn & Giải pháp
 | Khó khăn | Giải pháp | Kết quả |

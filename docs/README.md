@@ -33,6 +33,7 @@ Mục lục mọi tài liệu đặc tả, thiết kế, vận hành và kiểm 
 | [testing.md](testing.md) | Chiến lược, các tầng test, bộ test theo module, 8 bất biến, test giao diện, benchmark 20 ca, gate + smoke, cách chạy, kết quả, giới hạn |
 | [../eval/results/report.md](../eval/results/report.md) | Báo cáo đánh giá theo mẫu BTC: metrics, kết quả test, optimizer, phản hồi người dùng, việc cần làm |
 | [../eval/results/latest.md](../eval/results/latest.md) | Bảng từng ca của lượt benchmark đầy đủ gần nhất (`latest.json` là số liệu thô) |
+| [../eval/results/production.md](../eval/results/production.md) | Benchmark chạy ngay trong container production (`production.json` là số liệu thô) |
 
 ## Quản lý dự án
 

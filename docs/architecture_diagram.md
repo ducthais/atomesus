@@ -1,6 +1,6 @@
 # Sơ đồ kiến trúc — Atomesus (P-045)
 
-> Cập nhật 2026-10-18 theo code trên `main` (bản production `ea7c2c1`, https://c4-app-045.id.vn).
+> Cập nhật 2026-10-18 theo code trên `main` (bản production `1072104`, https://c4-app-045.id.vn).
 > Sơ đồ viết bằng Mermaid, GitHub hiển thị trực tiếp. Mô tả chữ từng thành phần ở [ARCHITECTURE.md](../ARCHITECTURE.md);
 > quyết định thiết kế ở [ADR-0001](adr/0001-mot-luong-va-nen-production.md); đặc tả gốc ở [SPEC.md](../SPEC.md).
 

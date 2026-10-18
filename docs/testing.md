@@ -242,9 +242,10 @@ seed của repo.
 | Web unit | **104/104**; `tsc --noEmit` không lỗi; `next build` thành công |
 | Web E2E (Playwright, Chrome) | **4/4** |
 | Tích hợp Postgres (`pipeline_tests`, có `PIPELINE_TEST_DATABASE_URL`) | **28/28** |
-| Gate `verify-main` trên bản production `ea7c2c1` | xanh: secrets, ruff, pytest (Docker), npm ci, typecheck, test, build, ui |
-| Smoke production sau deploy `ea7c2c1` | 9/9 xanh |
+| Gate `verify-main` trên bản production `1072104` | xanh: secrets, ruff, pytest (Docker), npm ci, typecheck, test, build, ui |
+| Smoke production sau deploy `1072104` (18/10) | 9/9 xanh |
 | **Benchmark 20 ca** (lượt chính thức) | **19/20**: hợp lệ 6/7, vi phạm 6/6, mơ hồ 3/3, optimizer 4/4; $0,0235; 1.595 giây |
+| **Benchmark trên production** (trong container `backend`, bỏ ca 3 triệu dòng) | **18/19**: hợp lệ 6/7, vi phạm 6/6, mơ hồ 3/3, optimizer 3/3; $0,0211; 592 giây — [production.md](../eval/results/production.md) |
 
 Benchmark qua 5 lượt trong đợt này (chi tiết và nguyên nhân từng thay đổi ở
 [eval/results/report.md §2.2](../eval/results/report.md)):
