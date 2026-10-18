@@ -164,7 +164,10 @@ Postgres nguồn, mock REST API, Azure Storage và key OpenAI của bản đang 
 | Máy dev, lượt 5 (cùng 19 ca) | 6/7 | 6/6 | 3/3 | 3/3 | 18/19 | — | — |
 | **Production** `1072104` | **6/7** | **6/6** | **3/3** | **3/3** | **18/19** | $0,0211 | 592 giây |
 
-- Cùng một ca trượt (`valid_postgres_rest_api_reviews_by_customer`); mọi ca hợp lệ khác chạy được ngay lần viết Spec đầu.
+- Cùng một ca trượt (`valid_postgres_rest_api_reviews_by_customer`) nhưng khác cách trượt: trên production vòng sửa SQL tự
+  xử lý lỗi ép kiểu `'N/A'`, rồi Spec dùng INNER JOIN giữa `rental` và `feedback` làm mất lượt thuê không có phản hồi;
+  đối chiếu độc lập vẫn khớp (pipeline đúng Spec) nên run **tới bước duyệt với số lệch golden** — đúng giới hạn "không
+  kiểm Spec đúng ý", Reviewer phải bắt. Mọi ca hợp lệ khác chạy được ngay lần viết Spec đầu.
 - Sáu ca hợp lệ khớp golden từng dòng → Postgres nguồn trên production đúng seed của repo (không lặp lại sự cố seed cũ ở
   mục 2.2).
 - Các cổng gắn với hạ tầng production chạy đúng: trần chi phí theo ngày, đo byte quét bằng metadata Parquet trên Azure,

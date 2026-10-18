@@ -13,7 +13,10 @@ Repo pipeline (GitOps): https://github.com/ducthais/atomesus-pipelines
 | Kiến trúc | [ARCHITECTURE.md](ARCHITECTURE.md) · [9 sơ đồ](docs/architecture_diagram.md) · [ADR-0001](docs/adr/0001-mot-luong-va-nen-production.md) · [SPEC.md](SPEC.md) |
 | Nhật ký | [JOURNAL.md](JOURNAL.md) (tuần) · [docs/daily-log.md](docs/daily-log.md) (ngày) |
 
-## Vấn đề
+## Bài toán cốt lõi
+
+**Một yêu cầu dữ liệu bằng lời phải trở thành pipeline chạy định kỳ mà người duyệt tin được là cho số đúng.** Viết code
+nhanh không phải là vấn đề chính; vấn đề là biết kết quả đúng trước khi đưa lên production.
 
 - Mỗi yêu cầu kiểu "doanh thu theo ngày", "doanh thu theo khách hàng" lặp lại cùng một chuỗi việc: tìm bảng, đọc
   schema, viết code tải dữ liệu, làm sạch, viết SQL gộp, viết test, lên lịch chạy, rồi kiểm tra số có khớp nguồn không.
@@ -22,18 +25,34 @@ Repo pipeline (GitOps): https://github.com/ducthais/atomesus-pipelines
 - Code do LLM viết tự do khó review, khó lặp lại; đưa thẳng lên production là rủi ro.
 - Khi nguồn đổi schema (đổi tên, xóa cột) thì pipeline đang chạy lỗi mà không ai biết trước.
 
+**Trọng tâm và phạm vi.** Atomesus chỉ làm một việc: yêu cầu → pipeline ELT batch **đã được kiểm chứng** → duyệt →
+chạy theo lịch. Mọi tính năng khác (catalog, theo dõi, đa người dùng) phục vụ việc đó.
+
+| Làm | Không làm |
+|---|---|
+| Pipeline ELT batch: tải (dlt) → làm sạch (dbt staging) → gộp (dbt gold) → lịch chạy (Dagster) | Streaming, ETL thời gian thực |
+| Nguồn Postgres, REST (OpenAPI), CSV/XLSX, Postgres của người dùng | Dashboard / BI, chatbot hỏi đáp dữ liệu |
+| Chứng minh kết quả đúng: sandbox trên dữ liệu thật, đối chiếu độc lập từng dòng | Thay người duyệt: Reviewer vẫn là người quyết định |
+| Hỏi lại khi yêu cầu mơ hồ, chặn khi vi phạm chính sách | Tự đoán khái niệm không có trong dữ liệu (biên lợi nhuận, chỉ tiêu…) |
+
 ## Giải pháp
+
+**Cốt lõi: ba ý giải quyết bài toán trên.**
 
 - **LLM chỉ viết Spec, không viết code.** Agent lập kế hoạch và viết **Spec** (bản thiết kế JSON có kiểu); code dlt /
   dbt / Dagster được **sinh tất định từ template**. Spec qua 11 cổng kiểm: đúng hợp đồng và chính sách, cột có thật ở
   nguồn, tiền tệ, join không nhân dòng, kỳ gộp đúng, giá trị lọc có thật, không mơ hồ giữa domain, biểu thức an toàn
   (AST guard), ngân sách, lịch chạy.
+- **Chứng minh trên dữ liệu thật trước khi duyệt.** Chạy thử trong sandbox (DuckDB riêng mỗi run) và ghi **sổ bằng
+  chứng**: đối soát số dòng và tập khóa nguồn → bronze, chạy lại không đổi (idempotent), tỷ lệ và mẫu dòng bị loại ở
+  staging, dbt test. **Đối chiếu độc lập:** Spec được dịch thành một câu SQL thứ hai chạy thẳng trên nguồn (không qua
+  dlt, dbt hay template) và so **từng dòng** với kết quả pipeline; lệch thì agent tự sửa (vòng spec / SQL) hoặc dừng kèm
+  chẩn đoán.
 - **Người trong vòng lặp ở hai chỗ:** Engineer **xác nhận kế hoạch** trước khi agent viết Spec (cổng P2) và có thể xem /
   sửa mapping trước khi chạy thử; **Reviewer (không phải người tạo)** duyệt đúng bộ file đã xem (chữ ký gắn `files_hash`).
-- **Chạy thử trong sandbox trên dữ liệu thật** (DuckDB riêng mỗi run) và ghi **sổ bằng chứng**: đối soát số dòng và tập
-  khóa nguồn → bronze, chạy lại không đổi (idempotent), tỷ lệ và mẫu dòng bị loại ở staging, dbt test.
-- **Đối chiếu độc lập:** Spec được dịch thành một câu SQL thứ hai chạy thẳng trên nguồn (không qua dlt, dbt hay
-  template) và so **từng dòng** với kết quả pipeline; lệch thì agent tự sửa (vòng spec / SQL) hoặc dừng kèm chẩn đoán.
+
+**Hỗ trợ để dùng được thật:**
+
 - **Optimizer P13:** sau khi chạy thử đạt, thử các luật tối ưu (incremental, lọc partition…), đo nhiều lần và **chỉ giữ
   bản cho kết quả giống hệt mà nhanh hơn**; tối ưu lại pipeline đã deploy không gọi LLM (`llm_calls = 0`).
 - **Deploy an toàn:** bấm Deploy → bundle có chữ ký vào hộp thư release → deployer kiểm sha256 từng file, cài vào Dagster,
@@ -45,7 +64,8 @@ Repo pipeline (GitOps): https://github.com/ducthais/atomesus-pipelines
   lần pipeline chạy theo lịch, cảnh báo chậm / nguồn ngừng cấp, phát hiện schema nguồn đổi, đối chiếu lại theo yêu cầu.
 
 **Giới hạn cần nói rõ:** đối chiếu độc lập kiểm tra **pipeline thực hiện đúng Spec**. Spec có đúng nhu cầu nghiệp vụ hay
-không do Engineer xác nhận và Reviewer duyệt; nếu Spec hiểu sai yêu cầu, hai đường tính vẫn có thể khớp nhau.
+không do Engineer xác nhận và Reviewer duyệt; nếu Spec hiểu sai yêu cầu, hai đường tính vẫn có thể khớp nhau (ví dụ thật
+ở mục [AI Agent](#ai-agent-dùng-ở-đâu-vì-sao-giá-trị-đo-được)).
 
 ## Người dùng
 
@@ -53,6 +73,76 @@ không do Engineer xác nhận và Reviewer duyệt; nếu Spec hiểu sai yêu 
 - **Reviewer**: kiểm tra bằng chứng và diff, duyệt / từ chối / yêu cầu sửa, bấm Deploy.
 - **Admin**: quản lý tài khoản, cấp quyền Reviewer, xem file chính sách.
 - Người dùng nghiệp vụ tra catalog để biết dữ liệu nằm ở đâu, nghĩa là gì.
+
+## Luồng sử dụng
+
+```mermaid
+flowchart LR
+    A(["Engineer: chọn nguồn,<br/>nhập yêu cầu bằng lời"]) --> B["Agent lập kế hoạch"]
+    B -->|mơ hồ / thiếu dữ liệu| Q["Hỏi lại Engineer"] --> A
+    B --> C{{"Engineer xác nhận<br/>kế hoạch (P2)"}}
+    C --> D["Agent viết Spec<br/>→ 11 cổng → sinh code"]
+    D --> E["Chạy thử trên dữ liệu thật<br/>+ đối chiếu độc lập"]
+    E -->|lỗi| F["Agent tự sửa"] --> D
+    E -->|đạt| G{{"Reviewer: bằng chứng + diff<br/>→ duyệt"}}
+    G --> H["Deploy → Dagster<br/>chạy theo lịch"] --> I(["Xem / tải kết quả,<br/>theo dõi"])
+```
+
+1. **Engineer → Yêu cầu pipeline:** chọn nguồn và bảng, nhập yêu cầu bằng lời (ví dụ "Tính doanh thu và số đơn hàng theo
+   từng ngày"); có thể gửi nhiều yêu cầu cùng lúc trong hạn mức ngày.
+2. Agent lập kế hoạch rồi **dừng chờ xác nhận** (P2): tab **Kế hoạch** hiện bảng nguồn, cách ghép, độ hạt, chỉ số, lịch.
+   Engineer sửa hoặc **Xác nhận kế hoạch**; để tích "Xem & chỉnh mapping" thì dừng tiếp ở bản nháp để sửa mapping.
+3. Agent viết Spec, sinh code, chạy thử trên dữ liệu thật, tự sửa nếu cần, chạy optimizer. Tab **Kết quả** diễn giải
+   pipeline bằng lời và hiện dữ liệu; tab **Bằng chứng** liệt kê mọi phép đo; tab **Staging** hiện dòng bị loại và lý do.
+4. Engineer **mời Reviewer** (trang Reviewer) nếu chưa có. Reviewer đọc **tóm tắt** ở đầu màn duyệt, xem diff, **So sánh**
+   với bản đang chạy, rồi **Phê duyệt**, **Từ chối** hoặc **Yêu cầu sửa** (agent chạy lại từ bước viết Spec).
+5. Reviewer bấm **Deploy**: khung Triển khai hiện từng bước (đã gửi deployer → chạy thử → production). PR lưu vết được mở
+   vào repo pipeline và tự merge khi CI xanh.
+6. Pipeline chạy theo lịch trên Dagster; **Theo dõi** hiện thời gian, chi phí, test dbt và cảnh báo; **Kết quả** cho xem
+   và tải bảng gold (CSV/XLSX); nút **Tối ưu** chạy lại optimizer không gọi LLM.
+
+## AI Agent: dùng ở đâu, vì sao, giá trị đo được
+
+**Ở đâu.** LLM chỉ được dùng ở hai node, cho đúng phần việc cần hiểu ngôn ngữ và ngữ nghĩa dữ liệu. Phần cần đúng và lặp
+lại được thì làm tất định.
+
+| Bước | Ai làm | Vì sao |
+|---|---|---|
+| Hiểu yêu cầu: chọn bảng, cách ghép, độ hạt, chỉ số; nhận ra khái niệm không có trong dữ liệu để hỏi lại | Agent `planner` (LLM rẻ, `gpt-4o-mini`) | Câu chữ của người dùng không khớp 1–1 với tên bảng / cột; luật cứng không ánh xạ được |
+| Viết Spec: mapping cột, ép kiểu, định dạng ngày, luật loại dòng, biểu thức chỉ số, test | Agent `codegen` (LLM mạnh) | Phần tốn công nhất khi làm tay, phụ thuộc dữ liệu thật (profile cột được gửi kèm) |
+| Tự sửa khi chạy thử không đạt: đọc lỗi dbt / cổng / đối chiếu rồi viết lại Spec hoặc chỉ sửa biểu thức SQL | `repair` định tuyến tất định → `codegen` | Vòng thử → đo → sửa trên dữ liệu thật, có trần số lần (`budgets.yml`) |
+| Sinh code, 11 cổng, sandbox, đối chiếu độc lập, optimizer, deploy | Tất định, không LLM | Code review được và lặp lại được; số đo không phụ thuộc LLM |
+| Xác nhận kế hoạch, duyệt bộ file | Con người | Chịu trách nhiệm về ý nghĩa nghiệp vụ |
+
+**So với cách làm thông thường.**
+
+| | Làm tay | LLM viết SQL (chatbot, text-to-SQL) | Atomesus |
+|---|---|---|---|
+| Ra sản phẩm gì | Tự viết từng phần | Một câu SQL | Pipeline đủ phần: tải, làm sạch, gộp, test, lịch chạy (5–8 file) |
+| Biết kết quả đúng không | Tự viết truy vấn kiểm tra | Không biết; lỗi join / ép kiểu qua được mắt | Đối chiếu độc lập từng dòng + sổ bằng chứng trước khi duyệt |
+| Yêu cầu mơ hồ | Hỏi lại người yêu cầu | Thường đoán | Dừng và hỏi lại (3/3 ca benchmark) |
+| Review, lặp lại | Tùy người viết | Mỗi lần sinh một kiểu | Spec có kiểu + template; Reviewer ký đúng bộ file |
+| Lên production | Tự làm | Không có | Deploy kiểm sha256, chạy thử, giữ bản cũ khi lỗi |
+
+**Giá trị đo được** (benchmark với LLM thật trên nguồn thật, chạy ngay trên production 18/10,
+[eval/results/production.md](eval/results/production.md)):
+
+- **6/7 yêu cầu hợp lệ ra pipeline đúng từng dòng** so với đáp án tính tay, trên Postgres, REST, CSV và đa nguồn. Mỗi
+  pipeline: **5–8 file, 258–657 dòng code** (dlt, dbt staging / gold / test, Dagster), **6–18 phép kiểm tự động**, trong
+  **17–64 giây**, 2 lần gọi LLM, **~0,001–0,002 USD**.
+- **Biết khi nào không được đoán:** 3/3 yêu cầu mơ hồ được hỏi lại; 6/6 yêu cầu vi phạm (hàm cấm, Jinja injection, vượt
+  ngân sách, xung đột định nghĩa giữa domain) bị chặn đúng cổng.
+- **Tự sửa trên dữ liệu thật:** ở production, cột `rating` có giá trị `'N/A'` làm dbt lỗi ép kiểu; vòng sửa SQL tự xử lý,
+  không cần người. Ở máy dev, cổng `join_fanout` bắt được `AVG` bị nhân dòng qua chuỗi ghép 1–n; agent sửa 2 lần không
+  được thì **dừng chờ kỹ sư thay vì đưa số sai** cho Reviewer.
+- **Optimizer:** bảng 3 triệu dòng nhanh hơn **34,2%** với kết quả giống hệt; bảng nhỏ thì bỏ bản "tối ưu" không nhanh hơn.
+- **Vì sao vẫn cần Reviewer (ca trượt thật):** cũng ca phản hồi ở trên, lượt chạy trên production agent ghép `feedback`
+  bằng INNER JOIN nên mất các lượt thuê không có phản hồi. Đối chiếu độc lập vẫn khớp, vì nó kiểm pipeline đúng Spec chứ
+  không kiểm Spec đúng ý, nên run tới bước duyệt với số lệch đáp án. Tab **Kết quả** diễn giải pipeline bằng lời, ghi rõ
+  "Ghép bảng (inner join)", để Reviewer bắt được lỗi này; tự phát hiện lỗi ý định là việc tiếp theo
+  ([report §5](eval/results/report.md)).
+- **Chưa đo:** thời gian làm tay cho cùng yêu cầu. Quy trình bấm giờ đã có ở [docs/time-study.md](docs/time-study.md),
+  bảng kết quả còn trống.
 
 ## Kiến trúc
 
@@ -190,23 +280,6 @@ Chạy cả sản phẩm như production bằng Docker Compose (Caddy, web, back
 
 Dữ liệu Postgres nằm sẵn trong repo (`infra/postgres/init/`). Volume cũ chưa có Pagila thì nạp bằng
 `python scripts/load_pagila.py`.
-
-## Luồng sử dụng
-
-1. **Engineer → Yêu cầu pipeline:** chọn nguồn và bảng, nhập yêu cầu bằng lời (ví dụ "Tính doanh thu và số đơn hàng theo
-   từng ngày"); có thể gửi nhiều yêu cầu cùng lúc trong hạn mức ngày.
-2. Agent lập kế hoạch rồi **dừng chờ xác nhận** (P2): tab **Kế hoạch** hiện bảng nguồn, cách ghép, độ hạt, chỉ số, lịch.
-   Engineer sửa hoặc **Xác nhận kế hoạch**; để tích "Xem & chỉnh mapping" thì dừng tiếp ở bản nháp để sửa mapping.
-3. Agent viết Spec, sinh code, chạy thử trên dữ liệu thật, tự sửa nếu cần, chạy optimizer. Tab **Kết quả** diễn giải
-   pipeline bằng lời và hiện dữ liệu; tab **Bằng chứng** liệt kê mọi phép đo; tab **Staging** hiện dòng bị loại và lý do.
-4. Engineer **mời Reviewer** (trang Reviewer) nếu chưa có. Reviewer đọc **tóm tắt** ở đầu màn duyệt, xem diff, **So sánh**
-   với bản đang chạy, rồi **Phê duyệt**, **Từ chối** hoặc **Yêu cầu sửa** (agent chạy lại từ bước viết Spec).
-5. Reviewer bấm **Deploy**: khung Triển khai hiện từng bước (đã gửi deployer → chạy thử → production). PR lưu vết được mở
-   vào repo pipeline và tự merge khi CI xanh.
-6. Pipeline chạy theo lịch trên Dagster; **Theo dõi** hiện thời gian, chi phí, test dbt và cảnh báo; **Kết quả** cho xem
-   và tải bảng gold (CSV/XLSX); nút **Tối ưu** chạy lại optimizer không gọi LLM.
-
-Đo thời gian làm tay so với dùng agent: [docs/time-study.md](docs/time-study.md).
 
 ## Cấu trúc thư mục
 

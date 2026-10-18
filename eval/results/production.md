@@ -9,7 +9,12 @@ Bỏ ca `optimize_large_events_by_day` (sinh 3 triệu dòng): ca này cần nhi
 có thể làm treo site. Kết quả ca đó trên máy dev: [`latest.md`](latest.md) (nhanh hơn 34,2% với gold giống hệt).
 
 So với lượt chính thức trên máy dev (cùng commit, cùng 19 ca): **18/19 = 18/19**, cùng một ca trượt
-(`valid_postgres_rest_api_reviews_by_customer`, AVG qua chuỗi ghép 1–n). Sáu ca hợp lệ khớp golden từng dòng nên dữ liệu
+(`valid_postgres_rest_api_reviews_by_customer`) nhưng **khác cách trượt**. Máy dev: cổng `join_fanout` bắt `AVG` bị nhân
+dòng, agent sửa 2 lần không được thì dừng `NEEDS_HUMAN`. Production: vòng sửa SQL tự xử lý lỗi ép kiểu `'N/A'` của cột
+`rating`, nhưng Spec ghép `rental` và `feedback` bằng INNER JOIN (thêm điều kiện `feedback.rental_id = rental.rental_id`)
+nên mất lượt thuê không có phản hồi và phản hồi trỏ tới lượt thuê không tồn tại; đối chiếu độc lập vẫn khớp (pipeline
+đúng Spec) nên run tới `READY_FOR_REVIEW` với cả ba chỉ số lệch golden. Đây là giới hạn đã nêu: đối chiếu không kiểm Spec
+đúng ý định, Reviewer phải bắt (tab Kết quả ghi "Ghép bảng (inner join)"). Sáu ca hợp lệ khớp golden từng dòng nên dữ liệu
 nguồn trên production đúng seed của repo. Ba ca optimizer "0/3 bản được giữ" là hành vi đúng: model gold chỉ chạy ~0,1
 giây, bản ứng viên không nhanh hơn đủ `optimizer.min_gain_pct` = 10% nên bị bỏ.
 
